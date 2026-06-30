@@ -1,0 +1,67 @@
+{
+  "common": {
+    "back": "返回",
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "create": "创建",
+    "confirm": "确认",
+    "loading": "加载中…",
+    "error": "出错了",
+    "success": "操作成功",
+    "retry": "重试",
+    "goHome": "回到首页",
+    "contactSupport": "联系支持"
+  },
+  "nav": {
+    "home": "首页",
+    "create": "创作",
+    "my": "我的",
+    "tasks": "任务",
+    "assets": "素材",
+    "settings": "设置"
+  },
+  "settings": {
+    "title": "设置",
+    "tabs": {
+      "preferences": "偏好",
+      "ai": "AI 服务",
+      "agents": "Agent 配置",
+      "skills": "Skills"
+    },
+    "preferences": {
+      "title": "偏好设置",
+      "theme": {
+        "label": "主题",
+        "description": "选择界面的显示主题",
+        "light": "浅色",
+        "dark": "深色",
+        "system": "跟随系统"
+      },
+      "language": {
+        "label": "语言",
+        "description": "选择界面显示语言",
+        "zh": "中文",
+        "en": "English"
+      }
+    }
+  },
+  "errors": {
+    "notFound": {
+      "title": "页面不存在",
+      "description": "你访问的页面已被删除或从未存在。",
+      "code": "404"
+    },
+    "serverError": {
+      "title": "服务出错了",
+      "description": "服务器遇到了意外问题，我们正在修复中。",
+      "code": "500"
+    },
+    "maintenance": {
+      "title": "系统维护中",
+      "description": "小窗正在进行系统维护，预计很快恢复。感谢你的耐心等待。",
+      "badge": "维护中"
+    }
+  }
+}

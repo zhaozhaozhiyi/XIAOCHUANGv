@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "sourceMap": false,
+    "declaration": true,
+    "declarationMap": false
+  },
+  "exclude": ["dist", "node_modules", "**/*.spec.ts"]
+}

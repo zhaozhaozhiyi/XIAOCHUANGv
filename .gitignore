@@ -1,0 +1,83 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+.next-*/
+admin/.next/
+next-app/.next/
+next-app/.next-*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*
+!.env.example
+!.env.local.example
+admin/.env.local
+next-app/.env
+next-app/.env.local
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+**/.DS_Store
+
+# Data (database and uploaded files)
+data/drama_generator.db
+data/drama_generator.db-wal
+data/drama_generator.db-shm
+data/public.sql
+data/*.bak*
+data/static/
+data/storage/
+
+# Config
+configs/config.yaml
+
+# Playwright (next-app)
+next-app/test-results/
+next-app/playwright-report/
+next-app/blob-report/
+next-app/playwright/.cache/
+*.tsbuildinfo
+
+# Local tooling
+.claude/
+.local/
+.pnpm-store/
+
+# Local reference repositories
+参考项目/cameo/
+参考项目/novelweave-full/
+参考项目/wuxianhuabu/
+docs/
+newdocs/
+参考图片/
+参考项目/
+
+# Misc
+tmp/
+temp/
+.superpowers/
+/CLAUDE.md
+/AGENTS.md
+Snipaste_*.png
+
+# Playwright (apps/web)
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
+apps/web/playwright/.cache/

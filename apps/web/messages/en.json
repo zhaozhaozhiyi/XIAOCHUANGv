@@ -1,0 +1,67 @@
+{
+  "common": {
+    "back": "Back",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "confirm": "Confirm",
+    "loading": "Loading…",
+    "error": "Something went wrong",
+    "success": "Success",
+    "retry": "Retry",
+    "goHome": "Go Home",
+    "contactSupport": "Contact Support"
+  },
+  "nav": {
+    "home": "Home",
+    "create": "Create",
+    "my": "My Content",
+    "tasks": "Tasks",
+    "assets": "Assets",
+    "settings": "Settings"
+  },
+  "settings": {
+    "title": "Settings",
+    "tabs": {
+      "preferences": "Preferences",
+      "ai": "AI Services",
+      "agents": "Agent Config",
+      "skills": "Skills"
+    },
+    "preferences": {
+      "title": "Preferences",
+      "theme": {
+        "label": "Theme",
+        "description": "Choose the display theme for the interface",
+        "light": "Light",
+        "dark": "Dark",
+        "system": "System"
+      },
+      "language": {
+        "label": "Language",
+        "description": "Choose the display language",
+        "zh": "中文",
+        "en": "English"
+      }
+    }
+  },
+  "errors": {
+    "notFound": {
+      "title": "Page Not Found",
+      "description": "The page you're looking for doesn't exist or has been removed.",
+      "code": "404"
+    },
+    "serverError": {
+      "title": "Server Error",
+      "description": "The server encountered an unexpected problem. We're working on it.",
+      "code": "500"
+    },
+    "maintenance": {
+      "title": "Under Maintenance",
+      "description": "XIAOCHUANG is currently undergoing maintenance and will be back shortly. Thank you for your patience.",
+      "badge": "Maintenance"
+    }
+  }
+}

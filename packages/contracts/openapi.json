@@ -1,0 +1,3486 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/v1/quick-video-sessions": {
+      "get": {
+        "operationId": "QuickVideoSessionsController_listSessions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      },
+      "post": {
+        "operationId": "QuickVideoSessionsController_createSession",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      }
+    },
+    "/api/v1/quick-video-sessions/{id}": {
+      "get": {
+        "operationId": "QuickVideoSessionsController_getSession",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      },
+      "patch": {
+        "operationId": "QuickVideoSessionsController_patchSession",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionPatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      },
+      "delete": {
+        "operationId": "QuickVideoSessionsController_deleteSession",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      }
+    },
+    "/api/v1/quick-video-sessions/{id}/rounds": {
+      "get": {
+        "operationId": "QuickVideoSessionsController_listRounds",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      },
+      "post": {
+        "operationId": "QuickVideoSessionsController_createRound",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      }
+    },
+    "/api/v1/quick-video-sessions/{id}/rounds/{roundId}": {
+      "patch": {
+        "operationId": "QuickVideoSessionsController_patchRound",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "roundId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundPatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      }
+    },
+    "/api/v1/quick-video-sessions/{id}/rounds/{roundId}/outputs": {
+      "get": {
+        "operationId": "QuickVideoSessionsController_listOutputs",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "roundId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      },
+      "post": {
+        "operationId": "QuickVideoSessionsController_createOutput",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "roundId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutputCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      }
+    },
+    "/api/v1/quick-video-sessions/{id}/rename-ai": {
+      "post": {
+        "operationId": "QuickVideoSessionsController_renameViaAi",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      }
+    },
+    "/api/v1/quick-video-sessions/{id}/rounds/{roundId}/branch": {
+      "post": {
+        "operationId": "QuickVideoSessionsController_branchFromRound",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "roundId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "quick-video-sessions"
+        ]
+      }
+    },
+    "/api/v1/auth/login/password-session": {
+      "post": {
+        "operationId": "AuthController_loginWithPassword",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/register/phone-code": {
+      "post": {
+        "operationId": "AuthController_sendRegisterCode",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/login/phone-code": {
+      "post": {
+        "operationId": "AuthController_sendLoginCode",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "operationId": "AuthController_register",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/login/phone-session": {
+      "post": {
+        "operationId": "AuthController_loginWithPhoneSession",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "operationId": "AuthController_getCurrentSession",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "AuthController_logout",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/ai/runs": {
+      "get": {
+        "operationId": "AiController_listRuns",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai"
+        ]
+      },
+      "post": {
+        "operationId": "AiController_run",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiRuntimeRunDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/ai/result-actions/{runId}/apply": {
+      "post": {
+        "operationId": "AiController_applyAction",
+        "parameters": [
+          {
+            "name": "runId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiRuntimeApplyActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/grid/status/{id}": {
+      "get": {
+        "operationId": "GridController_getStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "grid"
+        ]
+      }
+    },
+    "/api/v1/grid/prompt": {
+      "post": {
+        "operationId": "GridController_buildPrompt",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "grid"
+        ]
+      }
+    },
+    "/api/v1/grid/generate": {
+      "post": {
+        "operationId": "GridController_generate",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "grid"
+        ]
+      }
+    },
+    "/api/v1/grid/split": {
+      "post": {
+        "operationId": "GridController_split",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "grid"
+        ]
+      }
+    },
+    "/api/v1/images": {
+      "get": {
+        "operationId": "ImagesController_listImages",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "images"
+        ]
+      },
+      "post": {
+        "operationId": "ImagesController_createImage",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "images"
+        ]
+      }
+    },
+    "/api/v1/images/{id}": {
+      "get": {
+        "operationId": "ImagesController_getImage",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "images"
+        ]
+      },
+      "delete": {
+        "operationId": "ImagesController_deleteImage",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "images"
+        ]
+      }
+    },
+    "/api/v1/ai-configs": {
+      "get": {
+        "operationId": "AiConfigsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-configs"
+        ]
+      },
+      "post": {
+        "operationId": "AiConfigsController_create",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-configs"
+        ]
+      }
+    },
+    "/api/v1/ai-configs/{id}": {
+      "get": {
+        "operationId": "AiConfigsController_getOne",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-configs"
+        ]
+      },
+      "put": {
+        "operationId": "AiConfigsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-configs"
+        ]
+      },
+      "delete": {
+        "operationId": "AiConfigsController_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-configs"
+        ]
+      }
+    },
+    "/api/v1/ai-configs/test": {
+      "post": {
+        "operationId": "AiConfigsController_test",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-configs"
+        ]
+      }
+    },
+    "/api/v1/ai-configs/xiaochuang-preset": {
+      "post": {
+        "operationId": "AiConfigsController_xiaochuangPreset",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-configs"
+        ]
+      }
+    },
+    "/api/v1/ai-providers": {
+      "get": {
+        "operationId": "AiProvidersController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-providers"
+        ]
+      }
+    },
+    "/api/v1/ai-voices": {
+      "get": {
+        "operationId": "AiVoicesController_list",
+        "parameters": [
+          {
+            "name": "provider",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "config_id",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-voices"
+        ]
+      }
+    },
+    "/api/v1/ai-voices/sync": {
+      "post": {
+        "operationId": "AiVoicesController_sync",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ai-voices"
+        ]
+      }
+    },
+    "/api/v1/assets": {
+      "get": {
+        "operationId": "AssetsController_listAssets",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/api/v1/assets/{id}": {
+      "get": {
+        "operationId": "AssetsController_getAsset",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "assets"
+        ]
+      },
+      "delete": {
+        "operationId": "AssetsController_deleteAsset",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/api/v1/assets/from-task": {
+      "post": {
+        "operationId": "AssetsController_createFromTask",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "HealthController_getHealth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/v1/compose/episodes/{id}/compose-status": {
+      "get": {
+        "operationId": "ComposeController_getEpisodeComposeStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "compose"
+        ]
+      }
+    },
+    "/api/v1/compose/storyboards/{id}/compose": {
+      "post": {
+        "operationId": "ComposeController_composeStoryboard",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "compose"
+        ]
+      }
+    },
+    "/api/v1/compose/episodes/{id}/compose-all": {
+      "post": {
+        "operationId": "ComposeController_composeEpisode",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "compose"
+        ]
+      }
+    },
+    "/api/v1/audio/generate": {
+      "post": {
+        "operationId": "AudioController_generateAudio",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "audio"
+        ]
+      }
+    },
+    "/api/v1/characters/{id}/generate-voice-sample": {
+      "post": {
+        "operationId": "AudioController_generateVoiceSample",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "audio"
+        ]
+      }
+    },
+    "/api/v1/storyboards/{id}/generate-tts": {
+      "post": {
+        "operationId": "AudioController_generateStoryboardTts",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "audio"
+        ]
+      }
+    },
+    "/api/v1/merge/episodes/{id}/merge": {
+      "get": {
+        "operationId": "MergeController_getEpisodeMerge",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "merge"
+        ]
+      },
+      "post": {
+        "operationId": "MergeController_mergeEpisode",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "merge"
+        ]
+      }
+    },
+    "/api/v1/characters/batch-generate-images": {
+      "post": {
+        "operationId": "CharactersController_batchGenerateCharacterImages",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "characters"
+        ]
+      }
+    },
+    "/api/v1/characters/{id}": {
+      "put": {
+        "operationId": "CharactersController_updateCharacter",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "characters"
+        ]
+      },
+      "delete": {
+        "operationId": "CharactersController_deleteCharacter",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "characters"
+        ]
+      }
+    },
+    "/api/v1/dramas/stats": {
+      "get": {
+        "operationId": "DramasController_getDramaStats",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "dramas"
+        ]
+      }
+    },
+    "/api/v1/dramas": {
+      "get": {
+        "operationId": "DramasController_listDramas",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "dramas"
+        ]
+      },
+      "post": {
+        "operationId": "DramasController_createDrama",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "dramas"
+        ]
+      }
+    },
+    "/api/v1/dramas/from-writing": {
+      "post": {
+        "operationId": "DramasController_createDramaFromWriting",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "dramas"
+        ]
+      }
+    },
+    "/api/v1/dramas/{id}/split-episodes": {
+      "post": {
+        "operationId": "DramasController_splitEpisodes",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "dramas"
+        ]
+      }
+    },
+    "/api/v1/dramas/{id}": {
+      "get": {
+        "operationId": "DramasController_getDrama",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "dramas"
+        ]
+      },
+      "put": {
+        "operationId": "DramasController_updateDrama",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "dramas"
+        ]
+      },
+      "delete": {
+        "operationId": "DramasController_deleteDrama",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "dramas"
+        ]
+      }
+    },
+    "/api/v1/episodes/{id}": {
+      "get": {
+        "operationId": "EpisodesController_getEpisode",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "episodes"
+        ]
+      },
+      "put": {
+        "operationId": "EpisodesController_updateEpisode",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "episodes"
+        ]
+      }
+    },
+    "/api/v1/episodes/{id}/characters": {
+      "get": {
+        "operationId": "EpisodesController_listEpisodeCharacters",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "episodes"
+        ]
+      }
+    },
+    "/api/v1/episodes/{id}/pipeline-status": {
+      "get": {
+        "operationId": "EpisodesController_getEpisodePipelineStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "episodes"
+        ]
+      }
+    },
+    "/api/v1/episodes": {
+      "post": {
+        "operationId": "EpisodesController_createEpisode",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "episodes"
+        ]
+      }
+    },
+    "/api/v1/episodes/{id}/scenes": {
+      "get": {
+        "operationId": "ScenesController_listEpisodeScenes",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "scenes"
+        ]
+      }
+    },
+    "/api/v1/scenes": {
+      "get": {
+        "operationId": "ScenesController_listScenes",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "scenes"
+        ]
+      },
+      "post": {
+        "operationId": "ScenesController_createScene",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "scenes"
+        ]
+      }
+    },
+    "/api/v1/scenes/{id}": {
+      "put": {
+        "operationId": "ScenesController_updateScene",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "scenes"
+        ]
+      },
+      "delete": {
+        "operationId": "ScenesController_deleteScene",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "scenes"
+        ]
+      }
+    },
+    "/api/v1/skills": {
+      "get": {
+        "operationId": "SkillsController_listSkills",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "skills"
+        ]
+      },
+      "post": {
+        "operationId": "SkillsController_createSkill",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/api/v1/skills/{agent}/{skill}": {
+      "get": {
+        "operationId": "SkillsController_getSkill",
+        "parameters": [
+          {
+            "name": "agent",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "skill",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "skills"
+        ]
+      },
+      "put": {
+        "operationId": "SkillsController_updateSkill",
+        "parameters": [
+          {
+            "name": "agent",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "skill",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "skills"
+        ]
+      },
+      "delete": {
+        "operationId": "SkillsController_deleteSkill",
+        "parameters": [
+          {
+            "name": "agent",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "skill",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/api/v1/episodes/{id}/storyboards": {
+      "get": {
+        "operationId": "StoryboardsController_listEpisodeStoryboards",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "storyboards"
+        ]
+      }
+    },
+    "/api/v1/storyboards": {
+      "post": {
+        "operationId": "StoryboardsController_createStoryboard",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "storyboards"
+        ]
+      }
+    },
+    "/api/v1/storyboards/{id}": {
+      "put": {
+        "operationId": "StoryboardsController_updateStoryboard",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "storyboards"
+        ]
+      },
+      "delete": {
+        "operationId": "StoryboardsController_deleteStoryboard",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "storyboards"
+        ]
+      }
+    },
+    "/api/v1/tasks": {
+      "get": {
+        "operationId": "TasksController_listTasks",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{id}": {
+      "get": {
+        "operationId": "TasksController_getTask",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "tasks"
+        ]
+      },
+      "delete": {
+        "operationId": "TasksController_deleteTask",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/recover": {
+      "post": {
+        "operationId": "TasksController_recoverTasks",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{id}/retry": {
+      "post": {
+        "operationId": "TasksController_retryTask",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{id}/cancel": {
+      "post": {
+        "operationId": "TasksController_cancelTask",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/tasks/{id}/logs": {
+      "get": {
+        "operationId": "TasksController_listTaskLogs",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "tasks"
+        ]
+      },
+      "post": {
+        "operationId": "TasksController_appendTaskLog",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/v1/videos": {
+      "get": {
+        "operationId": "VideosController_listVideos",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "videos"
+        ]
+      },
+      "post": {
+        "operationId": "VideosController_createVideo",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "videos"
+        ]
+      }
+    },
+    "/api/v1/videos/{id}": {
+      "get": {
+        "operationId": "VideosController_getVideo",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "videos"
+        ]
+      },
+      "delete": {
+        "operationId": "VideosController_deleteVideo",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "videos"
+        ]
+      }
+    },
+    "/api/v1/quick-videos": {
+      "post": {
+        "operationId": "VideosController_createQuickVideo",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "videos"
+        ]
+      }
+    },
+    "/api/v1/webhooks/{provider}": {
+      "post": {
+        "operationId": "WebhooksController_handleWebhook",
+        "parameters": [
+          {
+            "name": "provider",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/writings": {
+      "get": {
+        "operationId": "WritingsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      },
+      "post": {
+        "operationId": "WritingsController_create",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}": {
+      "get": {
+        "operationId": "WritingsController_getDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      },
+      "patch": {
+        "operationId": "WritingsController_patchWriting",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/export": {
+      "get": {
+        "operationId": "WritingsController_exportMarkdown",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/documents/{documentId}": {
+      "get": {
+        "operationId": "WritingsController_getDocument",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "documentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      },
+      "patch": {
+        "operationId": "WritingsController_patchDocument",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "documentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/documents": {
+      "post": {
+        "operationId": "WritingsController_addDocument",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/ai-actions": {
+      "post": {
+        "operationId": "WritingsController_aiAction",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/proposal-impact": {
+      "get": {
+        "operationId": "WritingsController_getProposalImpact",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/proposals/batch-plan": {
+      "post": {
+        "operationId": "WritingsController_getBatchPlan",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/reference-network": {
+      "get": {
+        "operationId": "WritingsController_getReferenceNetwork",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/proposals": {
+      "get": {
+        "operationId": "WritingsController_listProposals",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      },
+      "post": {
+        "operationId": "WritingsController_createProposal",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/proposals/{proposalId}/reject": {
+      "post": {
+        "operationId": "WritingsController_rejectProposal",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "proposalId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/proposals/{proposalId}/apply": {
+      "post": {
+        "operationId": "WritingsController_applyProposal",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "proposalId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/proposals/batch-apply": {
+      "post": {
+        "operationId": "WritingsController_applyBatchProposals",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/batch-executions/detail": {
+      "get": {
+        "operationId": "WritingsController_getBatchExecutionDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/batch-executions/rollback-preview": {
+      "get": {
+        "operationId": "WritingsController_getBatchRollbackPreview",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/batch-executions": {
+      "get": {
+        "operationId": "WritingsController_listBatchExecutions",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      },
+      "patch": {
+        "operationId": "WritingsController_patchBatchExecution",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/batch-executions/rollback": {
+      "post": {
+        "operationId": "WritingsController_rollbackBatchExecutionRoute",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/knowledge-cards": {
+      "get": {
+        "operationId": "WritingsController_listKnowledgeCards",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      },
+      "post": {
+        "operationId": "WritingsController_createKnowledgeCard",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/knowledge-cards/{cardId}": {
+      "patch": {
+        "operationId": "WritingsController_patchKnowledgeCard",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cardId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/knowledge-cards/{cardId}/delete": {
+      "post": {
+        "operationId": "WritingsController_deleteKnowledgeCard",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cardId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/knowledge-cards/history": {
+      "get": {
+        "operationId": "WritingsController_listKnowledgeCardHistories",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/knowledge-cards/history/restore": {
+      "post": {
+        "operationId": "WritingsController_restoreKnowledgeCardHistory",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/object-histories": {
+      "get": {
+        "operationId": "WritingsController_listObjectHistories",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/object-histories/preview": {
+      "get": {
+        "operationId": "WritingsController_previewObjectHistory",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writings/{id}/object-histories/restore": {
+      "post": {
+        "operationId": "WritingsController_restoreObjectHistory",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writings"
+        ]
+      }
+    },
+    "/api/v1/writing-agent/chat": {
+      "get": {
+        "operationId": "WritingAgentController_debug",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writing-agent"
+        ]
+      },
+      "post": {
+        "operationId": "WritingAgentController_chat",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "writing-agent"
+        ]
+      }
+    },
+    "/api/v1/admin/overview": {
+      "get": {
+        "operationId": "AdminDashboardController_getOverview",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/dramas": {
+      "get": {
+        "operationId": "AdminDramasController_listDramas",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/subscriptions": {
+      "get": {
+        "operationId": "AdminSubscriptionsController_listSubscriptions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users": {
+      "get": {
+        "operationId": "AdminUsersController_listUsers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{id}": {
+      "get": {
+        "operationId": "AdminUsersController_getUserDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/agent-configs": {
+      "get": {
+        "operationId": "AgentConfigsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "agent-configs"
+        ]
+      },
+      "post": {
+        "operationId": "AgentConfigsController_create",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "agent-configs"
+        ]
+      }
+    },
+    "/api/v1/agent-configs/{id}": {
+      "get": {
+        "operationId": "AgentConfigsController_getOne",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "agent-configs"
+        ]
+      },
+      "put": {
+        "operationId": "AgentConfigsController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "agent-configs"
+        ]
+      },
+      "delete": {
+        "operationId": "AgentConfigsController_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "agent-configs"
+        ]
+      }
+    },
+    "/api/v1/canvases": {
+      "get": {
+        "operationId": "CanvasController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      },
+      "post": {
+        "operationId": "CanvasController_create",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/init": {
+      "post": {
+        "operationId": "CanvasController_init",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}": {
+      "get": {
+        "operationId": "CanvasController_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      },
+      "patch": {
+        "operationId": "CanvasController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      },
+      "delete": {
+        "operationId": "CanvasController_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/duplicate": {
+      "post": {
+        "operationId": "CanvasController_duplicate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/save": {
+      "post": {
+        "operationId": "CanvasController_save",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/run": {
+      "post": {
+        "operationId": "CanvasRunController_run",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/run-status": {
+      "get": {
+        "operationId": "CanvasRunController_runStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/run/cancel": {
+      "post": {
+        "operationId": "CanvasRunController_cancelRun",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/versions": {
+      "get": {
+        "operationId": "CanvasRunController_versions",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/versions/{vid}": {
+      "get": {
+        "operationId": "CanvasRunController_versionDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "vid",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/snapshots": {
+      "post": {
+        "operationId": "CanvasRunController_createSnapshot",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/snapshots/{sid}/restore": {
+      "post": {
+        "operationId": "CanvasRunController_restoreSnapshot",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sid",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/canvases/{id}/business-action": {
+      "post": {
+        "operationId": "CanvasBusinessActionController_trigger",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "canvas"
+        ]
+      }
+    },
+    "/api/v1/upload/image": {
+      "post": {
+        "operationId": "UploadsController_uploadImage",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "upload"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "XIAOCHUANG Backend API",
+    "description": "V2.0 unified backend for web and admin clients",
+    "version": "2.0.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "schemas": {
+      "SessionCreateDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionPatchDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ]
+          },
+          "cover_output_id": {
+            "type": "number",
+            "nullable": true
+          }
+        }
+      },
+      "RoundCreateDto": {
+        "type": "object",
+        "properties": {
+          "operation_type": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video",
+              "audio"
+            ]
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "config_snapshot": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "parent_round_id": {
+            "type": "number",
+            "nullable": true
+          },
+          "derive_from": {
+            "type": "string",
+            "enum": [
+              "edit",
+              "regenerate",
+              "image_to_video",
+              "branch"
+            ]
+          },
+          "task_id": {
+            "type": "number",
+            "nullable": true
+          },
+          "domain_id": {
+            "type": "number",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "canceled"
+            ]
+          }
+        },
+        "required": [
+          "operation_type",
+          "prompt"
+        ]
+      },
+      "RoundPatchDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "canceled"
+            ]
+          },
+          "task_id": {
+            "type": "number",
+            "nullable": true
+          },
+          "domain_id": {
+            "type": "number",
+            "nullable": true
+          },
+          "progress": {
+            "type": "number",
+            "nullable": true
+          },
+          "error_message": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "OutputCreateDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video",
+              "audio"
+            ]
+          },
+          "preview_url": {
+            "type": "string"
+          },
+          "thumb_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "task_id": {
+            "type": "number",
+            "nullable": true
+          },
+          "domain_id": {
+            "type": "number",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "processing",
+              "completed",
+              "failed"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "replace": {
+            "type": "boolean",
+            "description": "是否覆盖该 round 的现有 outputs"
+          }
+        },
+        "required": [
+          "kind",
+          "preview_url"
+        ]
+      },
+      "AiRuntimeApplyActionDto": {
+        "type": "object",
+        "properties": {
+          "action_index": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "action_index"
+        ]
+      },
+      "AiRuntimeTargetDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "writing_id": {
+            "type": "number"
+          },
+          "document_id": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "AiRuntimeInputDto": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "selection": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "AiRuntimeOptionsDto": {
+        "type": "object",
+        "properties": {
+          "stream": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AiRuntimeRunDto": {
+        "type": "object",
+        "properties": {
+          "skill_id": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/AiRuntimeTargetDto"
+          },
+          "input": {
+            "$ref": "#/components/schemas/AiRuntimeInputDto"
+          },
+          "options": {
+            "$ref": "#/components/schemas/AiRuntimeOptionsDto"
+          }
+        },
+        "required": [
+          "skill_id",
+          "target",
+          "input"
+        ]
+      }
+    }
+  }
+}

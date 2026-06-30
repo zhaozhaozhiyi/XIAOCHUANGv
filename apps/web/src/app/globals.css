@@ -1,0 +1,418 @@
+/* 字体使用本地/系统字体栈，避免构建期依赖外网字体服务。 */
+@import "tailwindcss";
+
+/* 画布节点 + 边动画（v0.2.0 PR2） */
+@import "../components/canvas/styles/canvas-anim.css";
+/* 画布语义 token + React Flow 主题桥接 */
+@import "../components/canvas/styles/canvas-theme.css";
+
+/* 多行 @source：覆盖 route groups（如 (default)/(studio)）与并列目录，避免单 glob 在部分环境下漏扫 */
+@source "../app/**/*.{js,ts,jsx,tsx,mdx}";
+@source "../components/**/*.{js,ts,jsx,tsx,mdx}";
+@source "../lib/**/*.{js,ts,jsx,tsx,mdx}";
+@source "../hooks/**/*.{js,ts,jsx,tsx,mdx}";
+
+@theme {
+  /* === Colors — UI 规范 v2.0 §2.7.0：白底主背景 + 品牌陶土橙 #B05B43 === */
+  --color-bg-page: #ffffff;
+  --color-bg-base: #ffffff;
+  --color-bg-zone: #fbfbfb;
+  --color-bg-0: #ffffff;
+  --color-bg-1: #ffffff;
+  --color-bg-2: #f9f7f4;
+  --color-bg-3: rgba(29, 27, 24, 0.035);
+  --color-bg-hover: #f6f5f3;
+  --color-bg-active: #f3f0ec;
+  --color-bg-selected: #f3f0ec;
+  --color-bg-input: #ffffff;
+  /* 顶栏、半透明浮层：微暖纸白 rgb(255,254,254)，与主底 #fff 区分 */
+  --color-bg-surface: #fffefe;
+  --color-bg-surface-glass: rgba(255, 254, 254, 0.92);
+  --color-bg-panel: rgba(255, 255, 255, 0.45);
+
+  --color-border: #e0e0e0;
+  --color-border-strong: #d4d4d4;
+  --color-border-focus: #b05b43;
+  --color-border-panel: #ebebeb;
+
+  --color-text-0: #333333;
+  --color-text-1: #444444;
+  --color-text-2: #666666;
+  --color-text-3: #666666;
+
+  /* Accent — brand terracotta (primary) */
+  --color-accent: #b05b43;
+  --color-accent-dark: #9e4e3a;
+  --color-accent-bg: rgba(176, 91, 67, 0.12);
+  --color-accent-text: #8d4a38;
+  --color-accent-glow: rgba(176, 91, 67, 0.22);
+  --color-on-accent: #ffffff;
+
+  --color-brand-mark: #b05b43;
+
+  /* Accent 2 — neutral warm (secondary) */
+  --color-accent2: #8a8178;
+  --color-accent2-bg: #f7f5f2;
+  --color-accent2-text: #5c5650;
+
+  /* Status */
+  --color-success: #3d6c52;
+  --color-success-bg: rgba(61, 108, 82, 0.14);
+  --color-error: #b23b3b;
+  --color-error-bg: rgba(178, 59, 59, 0.12);
+  --color-info: #5a7a8a;
+  --color-info-bg: rgba(90, 122, 138, 0.12);
+  --color-warning: #936b2d;
+  --color-warning-bg: rgba(147, 107, 45, 0.12);
+
+  /* Canvas port / minimap semantic colors */
+  --color-port-text: var(--color-info);
+  --color-port-image: var(--color-accent);
+  --color-port-video: var(--color-success);
+  --color-port-audio: #8b5cf6;
+  --color-port-character: var(--color-warning);
+  --color-port-scene: #3d9a72;
+  --color-port-storyboard: var(--color-accent-dark);
+  --color-sticky-text: #3d3428;
+
+  /* Canvas surface — Tailwind utilities (alias 全局 token，见 canvas-theme.css) */
+  --color-canvas-bg: var(--color-bg-page);
+  --color-canvas-surface: var(--color-bg-surface);
+  --color-canvas-text: var(--color-text-0);
+
+  /* Radix / shadcn semantic bridge */
+  --color-background: #ffffff;
+  --color-foreground: #333333;
+  --color-primary: #b05b43;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #f7f5f2;
+  --color-secondary-foreground: #5c5650;
+  --color-muted: #f6f5f3;
+  --color-muted-foreground: #666666;
+  --color-accent-foreground: #ffffff;
+  --color-destructive: #b23b3b;
+  --color-destructive-foreground: #ffffff;
+  --color-input: #ffffff;
+  --color-ring: #b05b43;
+  --color-card: #ffffff;
+  --color-card-foreground: #333333;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #333333;
+  /* 弹窗遮罩：暖棕半透明，与 DialogOverlay backdrop-blur 配套 */
+  --color-overlay: rgba(40, 28, 18, 0.32);
+
+  /* Shadows — warm, deep */
+  --shadow-xs: 0 1px 3px rgba(40, 28, 18, 0.07);
+  --shadow-sm: 0 4px 12px rgba(40, 28, 18, 0.09), 0 1px 3px rgba(40, 28, 18, 0.06);
+  --shadow-default: 0 8px 26px rgba(40, 28, 18, 0.10), 0 2px 6px rgba(40, 28, 18, 0.06);
+  --shadow-lg: 0 14px 34px rgba(40, 28, 18, 0.13), 0 4px 12px rgba(40, 28, 18, 0.08);
+  --shadow-xl: 0 20px 50px rgba(40, 28, 18, 0.15), 0 8px 18px rgba(40, 28, 18, 0.1);
+  --shadow-card: 0 8px 24px rgba(40, 28, 18, 0.09);
+  --shadow-elevated: 0 18px 50px rgba(40, 28, 18, 0.14), 0 6px 16px rgba(40, 28, 18, 0.09);
+  --shadow-inset: inset 0 1px 3px rgba(40, 28, 18, 0.07);
+  --shadow-panel: 0 18px 50px rgba(40, 28, 18, 0.12), 0 4px 14px rgba(40, 28, 18, 0.08);
+  --shadow-primary-glow: 0 8px 18px rgba(158, 78, 58, 0.22), 0 2px 6px rgba(176, 91, 67, 0.18);
+
+  /* Border radius */
+  --radius-xl: 28px;
+  --radius-lg: 24px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+  --radius-xs: 8px;
+  --radius-pill: 999px;
+
+  /* Typography：@theme 内避免嵌套 var()，减少解析差异；需要 next/font 时可在 layout 的 className 上覆盖 */
+  --font-display: 'Iowan Old Style', 'Georgia', serif;
+  --font-body: 'PingFang SC', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+
+  /* Transition */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Animations */
+  --animate-fade-in: fade-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-fade-up: fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-scale-in: scale-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-right: slide-right 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-shimmer: shimmer 1.5s infinite;
+  --animate-spin: spin 0.9s linear infinite;
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes scale-in {
+    from { opacity: 0; transform: scale(0.96); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  @keyframes slide-right {
+    from { opacity: 0; transform: translateX(-8px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+}
+
+/* === Dark mode overrides === */
+.dark {
+  --color-bg-page: #1a1512;
+  --color-bg-base: #1a1512;
+  --color-bg-0: #221c17;
+  --color-bg-1: #221c17;
+  --color-bg-2: #342c27;
+  --color-bg-3: rgba(255, 245, 235, 0.05);
+  --color-bg-hover: #3f3631;
+  --color-bg-active: #4a403a;
+  --color-bg-selected: #4a403a;
+  --color-bg-zone: #2f2925;
+  --color-bg-input: #2a211c;
+  --color-bg-surface: rgba(34, 28, 23, 0.92);
+  --color-bg-surface-glass: rgba(34, 28, 23, 0.92);
+  --color-bg-panel: rgba(34, 28, 23, 0.6);
+
+  --color-border: rgba(255, 245, 235, 0.1);
+  --color-border-strong: rgba(255, 245, 235, 0.18);
+  --color-border-focus: #b05b43;
+  --color-border-panel: rgba(255, 245, 235, 0.06);
+
+  --color-text-0: #f0e8e0;
+  --color-text-1: #d8cec5;
+  --color-text-2: #a89b90;
+  --color-text-3: #6e6158;
+
+  --color-accent: #b05b43;
+  --color-accent-dark: #9e4e3a;
+  --color-accent-bg: rgba(176, 91, 67, 0.15);
+  --color-accent-text: #e8a88f;
+  --color-accent-glow: rgba(176, 91, 67, 0.28);
+  --color-on-accent: #ffffff;
+
+  --color-brand-mark: #b05b43;
+
+  --color-accent2: #a89b90;
+  --color-accent2-bg: #3f3631;
+  --color-accent2-text: #d8cec5;
+
+  --color-success: #5a9a72;
+  --color-success-bg: rgba(61, 108, 82, 0.2);
+  --color-error: #d45a5a;
+  --color-error-bg: rgba(178, 59, 59, 0.18);
+  --color-info: #7a9ab0;
+  --color-info-bg: rgba(90, 122, 138, 0.18);
+  --color-warning: #c49a50;
+  --color-warning-bg: rgba(147, 107, 45, 0.18);
+
+  --color-port-text: var(--color-info);
+  --color-port-image: var(--color-accent);
+  --color-port-video: var(--color-success);
+  --color-port-audio: #a78bfa;
+  --color-port-character: var(--color-warning);
+  --color-port-scene: #5a9a72;
+  --color-port-storyboard: var(--color-accent-dark);
+  --color-sticky-text: #3d3428;
+
+  --color-background: #1a1512;
+  --color-foreground: #f0e8e0;
+  --color-primary: #b05b43;
+  --color-primary-foreground: #fffaf7;
+  --color-muted: #342c27;
+  --color-muted-foreground: #6e6158;
+  --color-card: #221c17;
+  --color-card-foreground: #f0e8e0;
+  --color-popover: #221c17;
+  --color-popover-foreground: #f0e8e0;
+  --color-input: #2a211c;
+  --color-overlay: rgba(0, 0, 0, 0.55);
+}
+
+/* === Global Resets === */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+}
+
+body, h1, h2, h3, h4, h5, p {
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 14px;
+  background: var(--color-bg-page, #ffffff);
+  color: var(--color-text-0, #333333);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+::selection {
+  background: rgba(176, 91, 67, 0.22);
+}
+
+/* === Typography === */
+h1, h2, h3, h4, h5 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-text-0);
+  letter-spacing: -0.02em;
+}
+h1 { font-size: 2rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.2rem; }
+p { line-height: 1.75; }
+
+/* === Scrollbar === */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(29, 27, 24, 0.14); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(29, 27, 24, 0.24); }
+.dark ::-webkit-scrollbar-thumb { background: rgba(255, 245, 235, 0.14); }
+.dark ::-webkit-scrollbar-thumb:hover { background: rgba(255, 245, 235, 0.24); }
+
+/* === Accent gradient (matte terracotta → press) === */
+.accent-gradient {
+  background: linear-gradient(135deg, #c46a52 0%, #b05b43 52%, #9e4e3a 100%);
+}
+
+/* === Premium CTA (warm micro-gradient + cinematic light sweep) === */
+.btn-premium-gradient {
+  position: relative;
+  overflow: hidden;
+  color: var(--color-on-accent);
+  background: linear-gradient(135deg, #c46a52 0%, #b05b43 52%, #9e4e3a 100%);
+  box-shadow: 0 14px 30px rgba(40, 28, 18, 0.2);
+  transition: transform 300ms var(--ease-out), box-shadow 300ms var(--ease-out), filter 300ms var(--ease-out);
+}
+
+.btn-premium-gradient::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -34%;
+  width: 24%;
+  opacity: 0;
+  transform: skewX(-20deg);
+  background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--color-on-accent) 24%, transparent) 45%, transparent 100%);
+  transition: left 920ms var(--ease-out), opacity 920ms var(--ease-out);
+}
+
+.dark .btn-premium-gradient::before {
+  background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--color-on-accent) 18%, transparent) 45%, transparent 100%);
+}
+
+.btn-premium-gradient:hover:not(:disabled) {
+  transform: translateY(-2px);
+  filter: brightness(1.02);
+  box-shadow: 0 18px 36px rgba(40, 28, 18, 0.24);
+}
+
+.btn-premium-gradient:hover:not(:disabled)::before {
+  left: 116%;
+  opacity: 1;
+}
+
+.btn-premium-gradient:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 12px 24px rgba(40, 28, 18, 0.2);
+}
+
+/* === Layout rhythm tokens === */
+.page-shell {
+  padding: 26px 32px 40px;
+  min-height: 100%;
+  overflow-y: auto;
+}
+
+.page-title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--color-text-0);
+}
+
+.page-subtitle {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-3);
+}
+
+/* 与首页 / 我的 / 设置主面板一致：陶土描边 + 0_8px_22px 暖灰投影 */
+.section-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-0);
+  box-shadow: 0 8px 22px rgba(40, 28, 18, 0.05);
+  padding: 20px;
+}
+
+/* default 壳主区：单一大圆角卡片（UI 规范 §1.6 / G-SH-02） */
+.shell-main-card {
+  --shell-outer-gutter: clamp(24px, 8vw, 120px);
+  margin-left: auto;
+  margin-right: auto;
+  width: min(100%, calc(100% - (var(--shell-outer-gutter) * 2)));
+  max-width: none;
+  min-height: min(100%, 100%);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.shell-main-card > .page-shell {
+  min-height: auto;
+  overflow-y: visible;
+}
+
+.shell-main-card:has(> .page-shell.page-shell--wide) {
+  --shell-outer-gutter: clamp(18px, 4.5vw, 72px);
+}
+
+/* 快速成片对话页：壳卡片需为确定满高，内部对话区滚动、输入框固定底部 */
+.shell-main-card:has(.quick-create-chat) {
+  height: 100%;
+  min-height: 0;
+}
+
+@media (max-width: 1024px) {
+  .shell-main-card {
+    --shell-outer-gutter: clamp(16px, 4vw, 56px);
+  }
+
+  .page-shell {
+    padding: 22px 18px 32px;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell-main-card {
+    --shell-outer-gutter: 0px;
+  }
+
+  .page-shell {
+    padding: 18px 14px 28px;
+  }
+}

@@ -1,0 +1,64 @@
+/**
+ * 画布节点 + 边 动画样式（v0.2.0 PR2）
+ *
+ * 关键约束（TRD §3.4.3）：
+ * - 所有动画走 CSS keyframes / GPU，不走 React state
+ * - 进度更新通过 --xc-progress CSS var 直改 DOM，不触发 React re-render
+ * - 多节点同时呼吸时用 animation-delay 随机负值错开（perf 页里调）
+ */
+
+/* ─── 节点容器基础 ─────────────────────────────────────────────────── */
+
+.xc-node {
+  --xc-progress: 0%;
+}
+
+/* ─── running：1.5s 慢呼吸 ────────────────────────────────────────── */
+
+.xc-node-running {
+  animation: xc-breathing 1.5s ease-in-out infinite;
+}
+
+@keyframes xc-breathing {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.008);
+  }
+}
+
+/* ─── completed：300ms scale pop（一次性） ─────────────────────────── */
+
+.xc-node-completed {
+  animation: xc-completed-pop 0.3s ease-out;
+}
+
+@keyframes xc-completed-pop {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
+/* ─── DataflowEdge：流动光点 ──────────────────────────────────────── */
+
+.xc-edge-flowing path {
+  stroke-dasharray: 5 10;
+  animation: xc-edge-flow 1s linear infinite;
+}
+
+@keyframes xc-edge-flow {
+  to {
+    stroke-dashoffset: -15;
+  }
+}
+
+/* ─── prefers-reduced-motion：尊重无障碍偏好 ──────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .xc-node-running,
+  .xc-node-completed,
+  .xc-edge-flowing path {
+    animation: none;
+  }
+}

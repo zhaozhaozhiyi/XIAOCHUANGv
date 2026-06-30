@@ -1,0 +1,135 @@
+/**
+ * Canvas theme layer — 画布语义 token + React Flow 桥接
+ *
+ * 设计原则：
+ * 1. 不单独维护浅色/深色两套色值，全部 alias 到 globals.css 的 --color-*
+ * 2. 跟随 <html class="dark">（next-themes），画布布局不再强制 .dark
+ * 3. 覆盖 @xyflow/react 内置 --xy-* 变量，避免库默认深色样式渗透
+ */
+
+/* ─── 画布语义 token（随全局主题自动切换） ─────────────────────────── */
+
+:root {
+  --canvas-bg: var(--color-bg-page);
+  --canvas-surface: var(--color-bg-surface);
+  --canvas-surface-glass: var(--color-bg-surface-glass);
+  --canvas-input: var(--color-bg-input);
+  --canvas-zone: var(--color-bg-zone);
+  --canvas-grid-dot: var(--color-bg-3);
+  --canvas-overlay: var(--color-overlay);
+  --canvas-border: var(--color-border);
+  --canvas-border-strong: var(--color-border-strong);
+  --canvas-border-focus: var(--color-border-focus);
+  --canvas-text: var(--color-text-0);
+  --canvas-text-secondary: var(--color-text-1);
+  --canvas-text-muted: var(--color-text-2);
+  --canvas-text-faint: var(--color-text-3);
+  --canvas-accent: var(--color-accent);
+  --canvas-accent-dark: var(--color-accent-dark);
+  --canvas-accent-bg: var(--color-accent-bg);
+  --canvas-accent-glow: var(--color-accent-glow);
+  --canvas-edge: var(--color-accent);
+  --canvas-edge-muted: var(--color-accent2);
+  --canvas-selection-bg: var(--color-accent-bg);
+  --canvas-selection-border: var(--color-accent);
+  --canvas-minimap-bg: var(--color-bg-surface);
+  --canvas-minimap-mask: var(--color-overlay);
+  --canvas-minimap-node: var(--color-bg-2);
+  --canvas-minimap-shot: var(--color-accent);
+  --canvas-minimap-scene: var(--color-success);
+  --canvas-minimap-character: var(--color-warning);
+  --canvas-minimap-prop: var(--color-info);
+  --canvas-minimap-note: var(--color-text-2);
+  --canvas-minimap-default: var(--color-text-3);
+
+  /* 便签纸色 — 始终暖色纸质，不随深/浅反转 */
+  --canvas-sticky-yellow: #fef3c7;
+  --canvas-sticky-blue: #dbeafe;
+  --canvas-sticky-pink: #fce7f3;
+  --canvas-sticky-green: #d1fae5;
+  --canvas-sticky-text: var(--color-sticky-text);
+  --canvas-port-text: var(--color-port-text);
+  --canvas-port-image: var(--color-port-image);
+  --canvas-port-video: var(--color-port-video);
+  --canvas-port-audio: var(--color-port-audio);
+  --canvas-port-character: var(--color-port-character);
+  --canvas-port-scene: var(--color-port-scene);
+  --canvas-port-storyboard: var(--color-port-storyboard);
+}
+
+/* ─── React Flow 变量桥接（覆盖库内置 light/dark 默认值） ─────────── */
+
+.react-flow,
+.react-flow.dark {
+  --xy-background-color: var(--canvas-bg);
+  --xy-background-color-default: var(--canvas-bg);
+  --xy-background-pattern-dots-color-default: var(--canvas-grid-dot);
+  --xy-background-pattern-lines-color-default: var(--canvas-border);
+  --xy-background-pattern-cross-color-default: var(--canvas-border-strong);
+
+  --xy-edge-stroke-default: var(--canvas-edge-muted);
+  --xy-edge-stroke-selected-default: var(--canvas-accent);
+  --xy-connectionline-stroke-default: var(--canvas-edge-muted);
+
+  --xy-minimap-background-color-default: var(--canvas-minimap-bg);
+  --xy-minimap-mask-background-color-default: var(--canvas-minimap-mask);
+  --xy-minimap-node-background-color-default: var(--canvas-minimap-node);
+
+  --xy-controls-button-background-color-default: var(--canvas-surface);
+  --xy-controls-button-background-color-hover-default: var(--color-bg-hover);
+  --xy-controls-button-color-default: var(--canvas-text);
+  --xy-controls-button-color-hover-default: var(--canvas-text);
+  --xy-controls-button-border-color-default: var(--canvas-border);
+  --xy-controls-box-shadow-default: var(--shadow-xs);
+
+  --xy-selection-background-color-default: var(--canvas-selection-bg);
+  --xy-selection-border-default: 1px dotted var(--canvas-selection-border);
+
+  --xy-node-background-color-default: var(--canvas-surface);
+  --xy-node-color-default: var(--canvas-text);
+  --xy-node-border-default: 1px solid var(--canvas-border);
+  --xy-node-boxshadow-hover-default: var(--shadow-sm);
+  --xy-node-boxshadow-selected-default: 0 0 0 0.5px var(--canvas-accent);
+
+  --xy-edge-label-background-color-default: var(--canvas-surface);
+  --xy-edge-label-color-default: var(--canvas-text-muted);
+
+  --xy-attribution-background-color-default: var(--color-bg-panel);
+
+  background-color: var(--canvas-bg);
+  color: var(--canvas-text);
+}
+
+.react-flow__background {
+  background-color: var(--canvas-bg);
+}
+
+/* ─── 画布浮层 chrome（检视面板 / 对话坞 / 空态等共用质感） ─────────── */
+
+.canvas-chrome {
+  border: 1px solid var(--canvas-border);
+  background: color-mix(in srgb, var(--canvas-surface) 92%, transparent);
+  color: var(--canvas-text);
+  box-shadow: var(--shadow-default);
+  backdrop-filter: blur(12px);
+}
+
+.canvas-chrome-subtle {
+  border: 1px solid var(--canvas-border);
+  background: color-mix(in srgb, var(--canvas-surface) 80%, transparent);
+  color: var(--canvas-text);
+  box-shadow: var(--shadow-default);
+  backdrop-filter: blur(12px);
+}
+
+.canvas-chip {
+  border: 1px solid var(--canvas-border);
+  background: var(--color-bg-0);
+  color: var(--canvas-text-secondary);
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+
+.canvas-chip:hover {
+  background: var(--color-bg-hover);
+  color: var(--canvas-text);
+}
