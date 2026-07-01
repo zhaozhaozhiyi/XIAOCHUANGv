@@ -216,8 +216,11 @@ export class AiConfigsController {
       hasUpdates = true
     }
     if ('api_key' in payload && payload.api_key !== undefined) {
-      updates.apiKey = payload.api_key
-      hasUpdates = true
+      const rawKey = String(payload.api_key)
+      if (!rawKey.includes('*')) {
+        updates.apiKey = rawKey
+        hasUpdates = true
+      }
     }
     if ('model' in payload && payload.model !== undefined) {
       updates.model = JSON.stringify(parsePayloadModel(payload.model))
