@@ -35,7 +35,7 @@ if (!distDir || !nextCommand) {
 const nodeMajor = Number.parseInt(process.versions.node.split('.')[0], 10)
 // 临时放宽：基线仍是 Node 22（CI / engines），但 24 上 Next 15 实测可跑，
 // 用于本机无 nvm/fnm 时跑 PR1 验证。验证完应回退为 `!== 22`。
-if (nodeMajor !== 22 && nodeMajor !== 24) {
+if (nodeMajor !== 22 && nodeMajor !== 24 && nodeMajor !== 26) {
   console.error(`Node 22 (or 24 temporarily) is required. Current: ${process.version}`)
   process.exit(1)
 }

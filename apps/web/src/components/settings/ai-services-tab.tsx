@@ -281,7 +281,9 @@ export function AIServicesTab() {
           priority: cfgForm.priority,
           settings,
         }
-        if (cfgForm.api_key !== cfgOriginalApiKey || !cfgForm.api_key.includes('*')) {
+        const apiKeyChanged = cfgForm.api_key !== cfgOriginalApiKey
+        const isRedacted = cfgForm.api_key.includes('*')
+        if (apiKeyChanged && !isRedacted) {
           updatePayload.api_key = cfgForm.api_key
         }
         await aiConfigAPI.update(cfgEditId, {
