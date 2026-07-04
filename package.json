@@ -1,5 +1,6 @@
 {
   "name": "xiaochuangpro",
+  "version": "0.22.0",
   "private": true,
   "workspaces": [
     "apps/*",

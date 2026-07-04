@@ -435,7 +435,7 @@ export class WritingsController {
 
     const sections: string[] = [`# ${detail.title}`]
     if (detail.synopsis?.trim()) {
-      sections.push(`## 鎽樿\n\n${detail.synopsis.trim()}`)
+      sections.push(`## 摘要\n\n${detail.synopsis.trim()}`)
     }
 
     for (const item of detail.documents) {
@@ -446,7 +446,7 @@ export class WritingsController {
       if (!document) continue
       const content = String(document.contentMd || '').trim()
       if (!content && document.documentType === 'root') continue
-      sections.push(`## ${document.title}\n\n${content || '_绌虹櫧鏂囨。_'}`)
+      sections.push(`## ${document.title}\n\n${content || '_空白文档_'}`)
     }
 
     const filename = `${detail.title.replace(/[\\/:*?"<>|]+/g, '_') || 'writing'}.md`

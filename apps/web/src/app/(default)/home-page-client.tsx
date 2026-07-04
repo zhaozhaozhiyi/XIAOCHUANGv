@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
+  AlertTriangle,
   ArrowRight,
   Clock3,
   Film,
@@ -17,6 +18,11 @@ import { toast } from 'sonner'
 import { CREATE_HEADER_VARIANTS, type CreateHeaderVariant } from '@/app/(default)/home-page-copy'
 import { dramaAPI } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import {
+  getDramaEpisodeCount,
+  getDramaProjectProgress,
+  getNovelSourceHealthByDrama,
+} from '@/lib/drama-product-state'
 import { dramaStyleLabel, dramaStyleSelectOptions, dramaStyleWarning } from '@/lib/drama-style'
 import { clearHomeCreateDraft, readHomeCreateDraft } from '@/lib/home-create-draft'
 import { redirectToLogin } from '@/lib/login-redirect'
@@ -30,6 +36,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  DialogDescription,
   DialogHeaderBar,
   DialogMain,
   DialogTitle,
@@ -83,19 +90,8 @@ const CREATE_ENTRIES: CreateEntry[] = [
   },
 ]
 
-function getEpisodeCount(drama: Drama) {
-  return drama.episode_count ?? drama.episodes?.length ?? drama.total_episodes ?? 0
-}
-
 function getCharacterCount(drama: Drama) {
   return drama.character_count ?? drama.characters?.length ?? 0
-}
-
-function getProgress(drama: Drama) {
-  if (drama.script_progress_percent != null) return drama.script_progress_percent
-  if (!drama.episodes?.length) return 0
-  const scripted = drama.episodes.filter((episode) => episode.script_content).length
-  return Math.round((scripted / drama.episodes.length) * 100)
 }
 
 function CreateEntryCard({
@@ -153,10 +149,13 @@ function ProjectHistoryCard({
   drama: Drama
   href: string
 }) {
-  const progress = getProgress(drama)
+  const progress = getDramaProjectProgress(drama)
   const thumbnail = staticUrl(drama.thumbnail)
-  const episodes = getEpisodeCount(drama)
+  const episodes = getDramaEpisodeCount(drama)
   const styleLabel = drama.style ? dramaStyleLabel(drama.style) : null
+  const sourceHealth = getNovelSourceHealthByDrama(drama)
+  const hasSourceIssue = sourceHealth.kind !== 'missing' && !sourceHealth.ok
+  const progressText = hasSourceIssue ? '源稿异常' : `项目 ${progress}%`
 
   return (
     <Link
@@ -183,6 +182,12 @@ function ProjectHistoryCard({
             <h3 className="truncate font-display text-base font-semibold text-text-0 sm:text-lg">{drama.title}</h3>
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-2 sm:text-sm">
               {styleLabel ? <span>{styleLabel}</span> : null}
+              {hasSourceIssue ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-warning/30 bg-warning-bg px-2 py-0.5 text-[11px] font-medium text-warning">
+                  <AlertTriangle size={12} aria-hidden />
+                  源稿异常
+                </span>
+              ) : null}
               <span className="inline-flex items-center gap-1">
                 <LayoutGrid size={13} aria-hidden />
                 {episodes} 集
@@ -201,9 +206,17 @@ function ProjectHistoryCard({
 
         <div className="flex items-center gap-3">
           <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-bg-3">
-            <div className="h-full rounded-full bg-accent transition-all duration-500" style={{ width: `${progress}%` }} />
+            <div
+              className={cn(
+                'h-full rounded-full transition-all duration-500',
+                hasSourceIssue ? 'bg-warning' : 'bg-accent',
+              )}
+              style={{ width: `${progress}%` }}
+            />
           </div>
-          <span className="shrink-0 text-xs font-medium tabular-nums text-text-2">剧本 {progress}%</span>
+          <span className={cn('shrink-0 text-xs font-medium tabular-nums', hasSourceIssue ? 'text-warning' : 'text-text-2')}>
+            {progressText}
+          </span>
           <ArrowRight
             size={16}
             className="hidden shrink-0 text-text-3 transition-transform group-hover:translate-x-0.5 group-hover:text-accent sm:block"
@@ -425,6 +438,9 @@ export function HomePageClient({
 
       <Dialog open={showCreate} onOpenChange={handleCreateDialogOpenChange}>
         <DialogContent layout="panel" size="compact" className="animate-scale-in">
+          <DialogDescription className="sr-only">
+            创建一个新的短剧项目，需要填写项目名称，可选择视觉风格。
+          </DialogDescription>
           <DialogHeaderBar density="compact" className="border-0 bg-transparent">
             <div className="flex gap-3 sm:gap-3.5">
               <div

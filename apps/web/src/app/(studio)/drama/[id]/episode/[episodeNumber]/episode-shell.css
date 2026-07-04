@@ -1,4 +1,5 @@
 .studio {
+  --studio-sidebar-width: 220px;
   --surface: var(--color-bg-surface);
   --surface-strong: var(--color-bg-0);
   --hairline: var(--color-border-panel);
@@ -479,6 +480,10 @@
 }
 
 @media (max-width: 1180px) {
+  .studio {
+    --studio-sidebar-width: 210px;
+  }
+
   .studio-body {
     grid-template-columns: 210px minmax(0, 1fr);
   }
@@ -490,6 +495,7 @@
 
 @media (max-width: 980px) {
   .studio {
+    --studio-sidebar-width: 0px;
     height: auto;
     min-height: 100vh;
     overflow-y: auto;

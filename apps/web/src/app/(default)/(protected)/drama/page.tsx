@@ -4,6 +4,7 @@ import { Suspense, startTransition, useState, useMemo, useEffect, useCallback } 
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
+  AlertTriangle,
   ArrowUpDown,
   Clapperboard,
   Clock3,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react'
 
 import { dramaAPI } from '@/lib/api'
+import { getDramaEpisodeCount, getNovelSourceHealthByDrama } from '@/lib/drama-product-state'
 import { dramaStyleLabel, dramaStyleSelectOptions } from '@/lib/drama-style'
 import { cn, formatDate, staticUrl } from '@/lib/utils'
 import { BaseSelect } from '@/components/shared/base-select'
@@ -26,6 +28,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  DialogDescription,
   DialogHeaderBar,
   DialogMain,
   DialogTitle,
@@ -35,10 +38,6 @@ import { Button } from '@/components/ui/button'
 import type { Drama } from '@/types/api'
 
 type SortOption = 'updated_at' | 'created_at' | 'title'
-
-function getEpisodeCount(drama: Drama) {
-  return drama.episode_count ?? drama.episodes?.length ?? drama.total_episodes ?? 0
-}
 
 function getCharacterCount(drama: Drama) {
   return drama.character_count ?? drama.characters?.length ?? 0
@@ -54,10 +53,12 @@ function DramaCard({
   onDelete: () => void
 }) {
   const thumbnail = staticUrl(drama.thumbnail)
-  const episodes = getEpisodeCount(drama)
+  const episodes = getDramaEpisodeCount(drama)
   const characters = getCharacterCount(drama)
   const styleLabel = drama.style ? dramaStyleLabel(drama.style) : null
   const updatedAt = formatDate(drama.updated_at)
+  const sourceHealth = getNovelSourceHealthByDrama(drama)
+  const hasSourceIssue = sourceHealth.kind !== 'missing' && !sourceHealth.ok
 
   return (
     <article className="group relative flex flex-col overflow-hidden rounded-[var(--radius-md)] border border-border bg-bg-0 shadow-shadow-xs transition-all duration-200 hover:border-border-strong hover:shadow-shadow-sm">
@@ -95,6 +96,12 @@ function DramaCard({
         </button>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-2">
+          {hasSourceIssue ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-warning/30 bg-warning-bg px-2 py-0.5 text-[11px] font-medium text-warning">
+              <AlertTriangle size={12} aria-hidden />
+              源稿异常
+            </span>
+          ) : null}
           <span className="inline-flex items-center gap-1">
             <LayoutGrid size={13} aria-hidden />
             {episodes} 集
@@ -147,6 +154,7 @@ function DramaListPageContent() {
     title: '',
     style: '',
   })
+  const [createError, setCreateError] = useState('')
   const [creating, setCreating] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Drama | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
@@ -200,11 +208,16 @@ function DramaListPageContent() {
   }, [dramas, query, styleFilter, sortBy])
 
   async function handleCreate() {
-    if (!form.title?.trim()) return
+    const title = form.title.trim()
+    if (!title) {
+      setCreateError('请输入项目名称后再创建。')
+      return
+    }
     try {
       setCreating(true)
+      setCreateError('')
       const drama = await dramaAPI.create({
-        title: form.title,
+        title,
         style: form.style,
       }) as unknown as Drama
       setShowCreate(false)
@@ -214,7 +227,9 @@ function DramaListPageContent() {
       })
       router.push(`/drama/${drama.id}`)
     } catch (e) {
-      toast.error((e as Error).message)
+      const message = (e as Error).message || '创建失败，请稍后重试'
+      setCreateError(message)
+      toast.error(message)
     } finally {
       setCreating(false)
     }
@@ -328,8 +343,17 @@ function DramaListPageContent() {
       </div>
 
       {/* Create Dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+      <Dialog
+        open={showCreate}
+        onOpenChange={(open) => {
+          if (!open) setCreateError('')
+          setShowCreate(open)
+        }}
+      >
         <DialogContent layout="panel" size="compact" className="animate-scale-in">
+          <DialogDescription className="sr-only">
+            创建一个新的短剧项目，需要填写项目名称，可选择视觉风格。
+          </DialogDescription>
           <DialogHeaderBar density="compact" className="border-0 bg-transparent">
             <div className="flex gap-3 sm:gap-3.5">
               <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-accent-glow bg-accent-bg text-accent shadow-shadow-xs sm:size-10">
@@ -351,6 +375,15 @@ function DramaListPageContent() {
             className="flex min-h-0 flex-1 flex-col"
           >
             <DialogMain density="compact" className="min-h-0 flex-1 border-t border-border/70">
+              {createError ? (
+                <div
+                  role="alert"
+                  aria-live="polite"
+                  className="rounded-[var(--radius-sm)] border border-error/30 bg-error-bg px-4 py-3 text-sm text-error"
+                >
+                  {createError}
+                </div>
+              ) : null}
               <div className="flex flex-col gap-2">
                 <label className="flex flex-col gap-2">
                   <span className="text-xs font-semibold text-text-1">
@@ -358,7 +391,10 @@ function DramaListPageContent() {
                   </span>
                   <Input
                     value={form.title}
-                    onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                    onChange={(e) => {
+                      setCreateError('')
+                      setForm((f) => ({ ...f, title: e.target.value }))
+                    }}
                     placeholder="例如：都市情感短剧《时光邮局》"
                     required
                     autoFocus

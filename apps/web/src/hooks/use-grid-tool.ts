@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { toast } from 'sonner'
 import { gridAPI, imageAPI } from '@/lib/api'
 import { fetchSSE } from '@/lib/sse'
+import { getAiErrorCopy } from '@/lib/ai-error-copy'
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -237,11 +238,11 @@ export const useGridTool = create<GridToolState>((set, get) => ({
         })
       } else {
         set({ promptStatus: '' })
-        toast.error('提示词生成失败')
+        toast.error('提示词生成失败', { description: 'AI 没有返回可用的宫格提示词，请重试或减少选择的镜头数量。' })
       }
     } catch (e: unknown) {
       set({ promptStatus: '' })
-      toast.error((e as Error).message || '生成提示词失败')
+      toast.error('提示词生成失败', { description: getAiErrorCopy(e, '生成提示词失败') })
     } finally {
       set({ promptLoading: false })
     }
@@ -297,16 +298,18 @@ export const useGridTool = create<GridToolState>((set, get) => ({
             return
           }
           if (status.status === 'failed') {
-            toast.error(status.error_msg || '生成失败')
+            toast.error('宫格图片生成失败', {
+              description: getAiErrorCopy(new Error(status.error_msg || '生成失败')),
+            })
             set({ step: 0 })
             return
           }
         } catch { /* ignore */ }
       }
-      toast.error('生成超时')
+      toast.error('宫格图片仍未完成', { description: '任务可能还在后台排队或处理。请稍后刷新，或到任务中心查看失败原因并重试。' })
       set({ step: 0 })
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('宫格图片生成失败', { description: getAiErrorCopy(e) })
       set({ step: 0 })
     }
   },
@@ -334,7 +337,7 @@ export const useGridTool = create<GridToolState>((set, get) => ({
       set({ open: false })
       onDone()
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('宫格切分失败', { description: getAiErrorCopy(e) })
     }
   },
 

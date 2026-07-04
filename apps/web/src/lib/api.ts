@@ -82,6 +82,17 @@ function formatRequestError(error: unknown, path: string): Error {
   return error instanceof Error ? error : new Error(String(error))
 }
 
+function looksLikeStructuredApiEnvelope(text: string) {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return false
+  return /"code"\s*:/.test(trimmed) && /"message"\s*:/.test(trimmed) && /"data"\s*:/.test(trimmed)
+}
+
+function looksLikeHtmlDocument(text: string) {
+  const trimmed = text.trimStart().toLowerCase()
+  return trimmed.startsWith('<!doctype') || trimmed.startsWith('<html') || trimmed.startsWith('<body')
+}
+
 async function req<T = unknown>(method: string, path: string, body?: unknown, options?: ApiRequestOptions): Promise<T> {
   const dedupeKey = method === 'GET'
     ? `${method}:${path}:redirect=${options?.redirectOnUnauthorized !== false}`
@@ -430,10 +441,22 @@ export const writingAPI = {
       throw new Error(text || '导出失败')
     }
     const blob = await response.blob()
+    const content = await blob.text()
+    if (looksLikeStructuredApiEnvelope(content)) {
+      try {
+        const payload = JSON.parse(content) as { message?: string }
+        throw new Error(payload.message || '导出返回了结构化结果，而不是 Markdown 正文')
+      } catch (error) {
+        throw error instanceof Error ? error : new Error('导出返回了结构化结果，而不是 Markdown 正文')
+      }
+    }
+    if (looksLikeHtmlDocument(content)) {
+      throw new Error('导出返回了网页内容，而不是 Markdown 正文，请确认小说服务状态后重试')
+    }
     const disposition = response.headers.get('Content-Disposition') || ''
     const matched = disposition.match(/filename\*=UTF-8''([^;]+)/)
     return {
-      blob,
+      blob: new Blob([content], { type: 'text/markdown;charset=utf-8' }),
       filename: matched ? decodeURIComponent(matched[1]) : `writing-${writingId}.md`,
     }
   },

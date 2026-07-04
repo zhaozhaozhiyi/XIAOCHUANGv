@@ -8,6 +8,7 @@ import {
 import { getEffectiveEpisodeConfigId, getProjectDefaults } from '@/lib/drama-metadata'
 import { getStoryboardTtsDialogue } from '@/lib/dialogue'
 import { fetchSSE } from '@/lib/sse'
+import { getAiErrorCopy, getAiErrorDescription } from '@/lib/ai-error-copy'
 import type { Drama, Episode, Character, Scene, Storyboard, AIVoice, AIServiceConfig, EpisodeComposeStatusResponse, EpisodeMergeStatusResponse, TaskRecord } from '@/types/api'
 
 // ============ Pipeline Steps ============
@@ -70,13 +71,13 @@ const STORYBOARD_POLL_ATTEMPTS = 30
 const ACTIVE_TASK_STATUSES = new Set(['queued', 'running'])
 
 function formatWorkbenchError(error: unknown) {
-  return error instanceof Error ? error.message : String(error || '操作失败')
+  return getAiErrorCopy(error, '操作失败')
 }
 
 function toastWorkbenchError(title: string, error: unknown, details?: Array<string | null | undefined>) {
   const description = details?.map((item) => String(item || '').trim()).filter(Boolean).join(' · ')
   toast.error(`${title}失败`, {
-    description: [formatWorkbenchError(error), description].filter(Boolean).join(' · '),
+    description: [formatWorkbenchError(error), description, getAiErrorDescription(error)].filter(Boolean).join(' · '),
   })
 }
 
@@ -564,14 +565,16 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
             if (latest.status === 'completed') {
               await get().loadAll(dramaId, episodeNumber)
             } else if (latest.status === 'failed' && latest.error_message) {
-              toast.error('短剧 AI 任务失败', { description: latest.error_message })
+              toast.error('短剧 AI 任务失败', {
+                description: getAiErrorCopy(new Error(latest.error_message)),
+              })
             }
             break
           }
         })()
       }
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('加载短剧工作台失败', { description: getAiErrorCopy(e) })
     }
   },
 
@@ -601,7 +604,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       set({ episode: { ...episode, content: localRaw } })
       if (!options.silent) toast.success('已保存')
     } catch (e: unknown) {
-      if (!options.silent) toast.error((e as Error).message)
+      if (!options.silent) toast.error('保存原始内容失败', { description: getAiErrorCopy(e) })
       throw e
     }
   },
@@ -698,7 +701,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       set({ localScript: localRaw, scriptStep: 2, episode: ep })
       toast.success('已跳过改写')
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('跳过改写失败', { description: getAiErrorCopy(e) })
     }
   },
 
@@ -794,9 +797,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       const epChars = await episodeAPI.characters(episode.id)
       set({ characters: epChars || characters })
       if (okCount > 0) toast.success(`已生成 ${okCount} 份试听文件`)
-      if (failCount > 0) toast.error(`${failCount} 份试听文件生成失败`)
+      if (failCount > 0) toast.error(`${failCount} 份试听文件生成失败`, { description: '请检查配音配置和角色音色是否仍可用。' })
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('批量试听失败', { description: getAiErrorCopy(e) })
     } finally {
       set({ running: false, runningType: null, runningNote: '' })
     }
@@ -823,7 +826,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       }))
       toast.success('试听文件已生成')
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('试听文件生成失败', { description: getAiErrorCopy(e) })
     } finally {
       set(s => {
         const n = new Set(s.pendingVoiceSamples)
@@ -890,7 +893,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       await characterAPI.update(id, { voice_style: voice })
       const chars = get().characters.map(c => c.id === id ? { ...c, voice_style: voice } : c)
       set({ characters: chars })
-    } catch (e: unknown) { toast.error((e as Error).message) }
+    } catch (e: unknown) { toast.error('更新音色失败', { description: getAiErrorCopy(e) }) }
   },
 
   genCharImg: async (id: number) => {
@@ -914,7 +917,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         }
       }
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('角色图片生成失败', { description: getAiErrorCopy(e) })
     }
     set(s => { const n = new Set(s.pendingCharImages); n.delete(id); return { pendingCharImages: n } })
   },
@@ -961,9 +964,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
           // keep polling
         }
       }
-      toast.error('角色图片批量生成轮询超时')
+      toast.error('角色图片批量生成仍未完成', { description: '任务可能还在后台排队或处理。请稍后刷新，或在任务中心查看失败原因并重试。' })
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('角色图片批量生成失败', { description: getAiErrorCopy(e) })
     } finally {
       const nextPending = new Set(get().pendingCharImages)
       ids.forEach((id) => nextPending.delete(id))
@@ -991,7 +994,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         }
       }
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('场景图片生成失败', { description: getAiErrorCopy(e) })
     }
     set(s => { const n = new Set(s.pendingSceneImages); n.delete(id); return { pendingSceneImages: n } })
   },
@@ -1039,9 +1042,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
           // keep polling
         }
       }
-      toast.error('场景图片批量生成轮询超时')
+      toast.error('场景图片批量生成仍未完成', { description: '任务可能还在后台排队或处理。请稍后刷新，或在任务中心查看失败原因并重试。' })
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('场景图片批量生成失败', { description: getAiErrorCopy(e) })
     } finally {
       const nextPending = new Set(get().pendingSceneImages)
       ids.forEach((id) => nextPending.delete(id))
@@ -1063,7 +1066,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
           return
         }
       }
-    } catch (e: unknown) { toast.error((e as Error).message) }
+    } catch (e: unknown) { toast.error('配音生成失败', { description: getAiErrorCopy(e) }) }
   },
 
   batchShotTTS: async () => {
@@ -1100,9 +1103,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
           // keep polling
         }
       }
-      toast.error('批量配音轮询超时')
+      toast.error('批量配音仍未完成', { description: '任务可能还在后台排队或处理。请稍后刷新，或在任务中心查看失败原因并重试。' })
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('批量配音失败', { description: getAiErrorCopy(e) })
     } finally {
       set({ running: false, runningType: null, runningNote: '' })
     }
@@ -1139,7 +1142,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         }
       }
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('镜头图片生成失败', { description: getAiErrorCopy(e) })
     }
     set(s => { const n = new Map(s.pendingShotFrames); n.delete(sb.id); return { pendingShotFrames: n } })
   },
@@ -1171,7 +1174,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         }
       }
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('镜头视频生成失败', { description: getAiErrorCopy(e) })
     }
     set(s => { const n = new Set(s.pendingVideos); n.delete(sb.id); return { pendingVideos: n } })
   },
@@ -1242,9 +1245,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
           // keep polling
         }
       }
-      toast.error('批量视频生成轮询超时')
+      toast.error('批量视频生成仍未完成', { description: '视频生成耗时较长，任务可能还在后台运行。请稍后刷新，或在任务中心查看失败原因并重试。' })
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('批量视频生成失败', { description: getAiErrorCopy(e) })
     } finally {
       const nextPending = new Set(get().pendingVideos)
       ids.forEach((id) => nextPending.delete(id))
@@ -1281,7 +1284,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
             return
           }
           if (item?.status === 'compose_failed' || item?.status === 'compose_canceled') {
-            toast.error(item.status === 'compose_canceled' ? '合成已取消' : '合成失败')
+            toast.error(item.status === 'compose_canceled' ? '合成已取消' : '合成失败', {
+              description: item.error_message ? getAiErrorCopy(new Error(item.error_message)) : undefined,
+            })
             return
           }
         } catch {
@@ -1299,10 +1304,10 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
           toast.info('合成任务仍在后台运行，可稍后刷新查看')
           return
         }
-        toast.error('合成状态轮询超时')
+        toast.error('合成状态轮询超时', { description: '任务可能仍在后台运行，请稍后刷新或到任务中心查看。' })
       }
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('镜头合成失败', { description: getAiErrorCopy(e) })
     } finally {
       clearPendingCompose()
     }
@@ -1334,7 +1339,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
           if (processing.length === 0) {
             const failed = items.filter((item) => item.status === 'compose_failed')
             if (failed.length > 0) {
-              toast.error(`批量合成完成，但有 ${failed.length} 个镜头失败`)
+              toast.error(`批量合成完成，但有 ${failed.length} 个镜头失败`, { description: '请在任务中心查看失败镜头的具体原因。' })
             } else {
               toast.success('批量合成完成')
             }
@@ -1346,9 +1351,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
           // keep polling on transient errors
         }
       }
-      toast.error('批量合成状态轮询超时')
+      toast.error('批量合成状态轮询超时', { description: '任务可能仍在后台运行，请稍后刷新或到任务中心查看。' })
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('批量合成失败', { description: getAiErrorCopy(e) })
     } finally {
       set({
         running: false,
@@ -1367,7 +1372,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       toast.success('合并中...')
       set({ mergeUrl: null })
       get().pollMergeStatus()
-    } catch (e: unknown) { toast.error((e as Error).message) }
+    } catch (e: unknown) { toast.error('合并成片失败', { description: getAiErrorCopy(e) }) }
   },
 
   pollMergeStatus: async () => {
@@ -1385,7 +1390,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         }
         if (merge?.status === 'failed' || merge?.status === 'canceled') {
           set({ mergeStatus: merge })
-          toast.error(merge.status === 'canceled' ? '\u5408\u5e76\u5df2\u53d6\u6d88' : '\u5408\u5e76\u5931\u8d25')
+          toast.error(merge.status === 'canceled' ? '\u5408\u5e76\u5df2\u53d6\u6d88' : '\u5408\u5e76\u5931\u8d25', {
+            description: merge.error_message ? getAiErrorCopy(new Error(merge.error_message)) : undefined,
+          })
           return
         }
       } catch { /* ignore poll errors */ }
@@ -1397,7 +1404,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       await storyboardAPI.update(sb.id, { [field]: value })
       const updated = get().storyboards.map(s => s.id === sb.id ? { ...s, [field]: value } : s) as Storyboard[]
       set({ storyboards: updated, selectedStoryboard: { ...sb, [field]: value } as Storyboard })
-    } catch (e: unknown) { toast.error((e as Error).message) }
+    } catch (e: unknown) { toast.error('更新分镜失败', { description: getAiErrorCopy(e) }) }
   },
 
   toggleStoryboardCharacter: async (sb: Storyboard, charId: number) => {
@@ -1411,7 +1418,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       const sbs = get().storyboards.map(s => s.id === sb.id ? { ...s, characters: updated, character_ids: updatedIds } : s) as Storyboard[]
       set({ storyboards: sbs, selectedStoryboard: { ...sb, characters: updated, character_ids: updatedIds } as Storyboard })
     } catch (e: unknown) {
-      toast.error((e as Error).message)
+      toast.error('更新镜头角色失败', { description: getAiErrorCopy(e) })
     }
   },
 
@@ -1425,7 +1432,7 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       const sbs = get().storyboards.filter(s => s.id !== sb.id)
       set({ storyboards: sbs, selectedStoryboard: sbs[0] || null, pendingDeleteStoryboard: null })
       toast.success('已删除')
-    } catch (e: unknown) { toast.error((e as Error).message) }
+    } catch (e: unknown) { toast.error('删除分镜失败', { description: getAiErrorCopy(e) }) }
   },
 
   openImageViewer: (src, title = '') => set({ viewerOpen: true, viewerSrc: src, viewerTitle: title }),
