@@ -159,7 +159,7 @@ function ProjectHistoryCard({
   return (
     <Link
       href={href}
-      className="group flex cursor-pointer gap-4 rounded-[12px] bg-bg-0/72 px-4 py-3.5 transition-colors duration-200 hover:bg-bg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0 sm:items-center"
+      className="group flex cursor-pointer gap-4 rounded-[8px] bg-bg-0/72 p-0 transition-colors duration-200 hover:bg-bg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0 sm:items-center"
     >
       <div
         className={cn(

@@ -111,12 +111,12 @@ export function useInputComposerModeState(options: UseInputComposerModeStateOpti
 
   const toolbarModeMeta = useMemo(() => {
     if (toolbarMode === 'video') {
-      return { label: '视频生成', icon: Video, activeClassName: 'border-border bg-accent2-bg text-accent2-text' }
+      return { label: '视频生成', icon: Video, activeClassName: 'border-border/45 bg-accent2-bg text-accent2-text' }
     }
     if (toolbarMode === 'audio') {
-      return { label: '音频生成', icon: Music2, activeClassName: 'border-border bg-accent2-bg text-accent-dark' }
+      return { label: '音频生成', icon: Music2, activeClassName: 'border-border/45 bg-accent2-bg text-accent-dark' }
     }
-    return { label: '图片生成', icon: ImageIcon, activeClassName: 'border-accent-glow bg-accent-bg text-accent' }
+    return { label: '图片生成', icon: ImageIcon, activeClassName: 'border-border/45 bg-accent-bg text-accent' }
   }, [toolbarMode])
 
   const isFirstLastFrameMode = toolbarMode === 'video' && videoReferenceMode === 'first_last'

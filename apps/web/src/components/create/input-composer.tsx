@@ -16,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { audioAPI } from '@/lib/api'
 
 const COMPOSER_CHIP_BTN =
-  'inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-bg-0 px-2.5 py-1.5 text-text-1 transition-colors hover:bg-bg-hover'
+  'inline-flex items-center gap-1.5 rounded-[8px] border border-border/45 bg-bg-0 px-2.5 py-1.5 text-text-1 transition-colors hover:bg-bg-hover'
 
 const IMAGE_ASPECT_RATIO_OPTIONS = [
   { label: '智能', value: 'auto' },
