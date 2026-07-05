@@ -43,6 +43,9 @@ jobs:
             git diff-tree --check --root -r HEAD
           fi
 
+      - name: Verify package scripts
+        run: npm run verify:package-scripts
+
       - name: Build shared packages
         run: |
           npm run build --workspace packages/contracts
