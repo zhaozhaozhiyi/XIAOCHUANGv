@@ -9,6 +9,12 @@ import { BaseTaskDomainHandler } from './base-task-domain.handler'
 import type { TaskDomainHandler, TaskRecord } from './task-domain-handler'
 import { inferErrorKind, mapGenerationStatus, parseJsonValue, sanitizePayload, trimText } from './task-domain-utils'
 
+function getPayloadVideos(payloadJson: string | null | undefined) {
+  const payload = parseJsonValue(payloadJson)
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined
+  return (payload as Record<string, unknown>).videos
+}
+
 @Injectable()
 export class VideoMergeTaskHandler extends BaseTaskDomainHandler implements TaskDomainHandler {
   readonly domainTable = 'video_merges'
@@ -28,9 +34,8 @@ export class VideoMergeTaskHandler extends BaseTaskDomainHandler implements Task
 
     if (!merge) throw new NotFoundException('video_merge_not_found')
 
-    const videos = Array.isArray(parseJsonValue(merge.scenes))
-      ? parseJsonValue(merge.scenes)
-      : parseJsonValue(task.payloadJson)?.videos
+    const scenes = parseJsonValue(merge.scenes)
+    const videos = Array.isArray(scenes) ? scenes : getPayloadVideos(task.payloadJson)
 
     await this.databaseService.db
       .update(videoMerges)

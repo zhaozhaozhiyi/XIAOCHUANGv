@@ -7,7 +7,7 @@ import { storyboards, tasks } from '../../../db/schema'
 import { AudioService } from '../../audio/audio.service'
 import { BaseTaskDomainHandler } from './base-task-domain.handler'
 import type { TaskDomainHandler, TaskRecord } from './task-domain-handler'
-import { parseTaskPayload, sanitizePayload } from './task-domain-utils'
+import { inferErrorKind, parseTaskPayload, sanitizePayload } from './task-domain-utils'
 
 @Injectable()
 export class StoryboardTtsTaskHandler extends BaseTaskDomainHandler implements TaskDomainHandler {
@@ -101,13 +101,14 @@ export class StoryboardTtsTaskHandler extends BaseTaskDomainHandler implements T
   async markFailed(task: TaskRecord, error: unknown) {
     const timestamp = this.now()
     const message = error instanceof Error ? error.message : 'recover failed'
+    const errorKind = inferErrorKind(message)
     await this.databaseService.db
       .update(tasks)
       .set({
         status: 'failed',
-        errorKind: 'provider',
+        errorKind,
         errorMessage: message,
-        errorDetailsJson: JSON.stringify({ error_kind: 'provider', raw_error: message }),
+        errorDetailsJson: JSON.stringify({ error_kind: errorKind, raw_error: message }),
         completedAt: timestamp,
         updatedAt: timestamp,
         lockedBy: null,

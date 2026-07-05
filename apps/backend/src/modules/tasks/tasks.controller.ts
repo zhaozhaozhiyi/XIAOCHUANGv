@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, Inject, Param, Post, Query, UseGuards } from '@nestjs/common'
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common'
 import { ApiTags } from '@nestjs/swagger'
 import { and, asc, count, desc, eq, ilike, inArray, isNull } from 'drizzle-orm'
 import { z } from 'zod'
@@ -71,7 +83,7 @@ function serializeTask(task: typeof tasks.$inferSelect) {
 function parseTaskId(value: string) {
   const id = Number(value)
   if (!Number.isInteger(id) || id <= 0) {
-    throw new Error('invalid task id')
+    throw new BadRequestException('invalid_task_id')
   }
   return id
 }
@@ -143,7 +155,7 @@ export class TasksController {
       .where(and(eq(tasks.id, taskId), eq(tasks.userId, currentUser.id), isNull(tasks.deletedAt)))
 
     if (!task) {
-      return { error: 'task_not_found' }
+      throw new NotFoundException('task_not_found')
     }
 
     return serializeTask(task)
@@ -169,7 +181,7 @@ export class TasksController {
       .where(and(eq(tasks.id, taskId), eq(tasks.userId, currentUser.id), isNull(tasks.deletedAt)))
 
     if (!task) {
-      return { error: 'task_not_found' }
+      throw new NotFoundException('task_not_found')
     }
 
     await this.databaseService.db

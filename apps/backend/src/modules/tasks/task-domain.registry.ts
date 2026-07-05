@@ -61,15 +61,74 @@ export class TaskDomainRegistry {
     await this.getHandler(task)?.refreshPresentation(task)
   }
 
+  private now() {
+    return new Date()
+  }
+
+  private unsupportedDomainMessage(task: TaskRecord, actionLabel: string) {
+    return `Unsupported task domain "${task.domainTable}" for ${actionLabel}`
+  }
+
+  private async markUnsupportedDomainTask(
+    task: TaskRecord,
+    status: 'failed' | 'canceled',
+    errorKind: string,
+    message: string,
+  ) {
+    const timestamp = this.now()
+    await this.databaseService.db
+      .update(tasks)
+      .set({
+        status,
+        errorKind,
+        errorMessage: message,
+        errorDetailsJson: JSON.stringify({
+          error_kind: errorKind,
+          domain_table: task.domainTable,
+          domain_id: task.domainId,
+          raw_error: message,
+        }),
+        completedAt: timestamp,
+        updatedAt: timestamp,
+        lockedBy: null,
+        lockedAt: null,
+        lockExpiresAt: null,
+      })
+      .where(eq(tasks.id, task.id))
+  }
+
   async markCanceled(task: TaskRecord) {
-    return await this.getHandler(task)?.markCanceled(task) ?? false
+    const handler = this.getHandler(task)
+    if (handler) return handler.markCanceled(task)
+
+    await this.markUnsupportedDomainTask(
+      task,
+      'canceled',
+      'canceled',
+      this.unsupportedDomainMessage(task, 'cancel'),
+    )
+    return true
   }
 
   async markFailed(task: TaskRecord, error: unknown) {
-    return await this.getHandler(task)?.markFailed(task, error) ?? false
+    const handler = this.getHandler(task)
+    if (handler) return handler.markFailed(task, error)
+
+    const message = error instanceof Error ? error.message : this.unsupportedDomainMessage(task, 'failure')
+    await this.markUnsupportedDomainTask(
+      task,
+      'failed',
+      'unsupported_domain',
+      `${this.unsupportedDomainMessage(task, 'failure')}: ${message}`,
+    )
+    return true
   }
 
   async execute(task: TaskRecord) {
-    return await this.getHandler(task)?.execute(task) ?? 'unknown'
+    const handler = this.getHandler(task)
+    if (handler) return handler.execute(task)
+
+    await this.markFailed(task, new Error(this.unsupportedDomainMessage(task, 'execute')))
+    return 'unknown_domain_failed'
   }
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { BadRequestException, NotFoundException } from '@nestjs/common'
 
 import { TasksController } from './tasks.controller'
 
@@ -85,5 +86,26 @@ describe('TasksController listTasks', () => {
     })
     expect(result.items).toHaveLength(1)
     expect(result.items[0].payload).toEqual({ prompt: 'Opening shot' })
+  })
+})
+
+describe('TasksController task id errors', () => {
+  it('rejects malformed task ids with BadRequestException', async () => {
+    const controller = new TasksController({ db: {} } as any, {} as any, {} as any)
+
+    await expect(controller.getTask('not-a-number', { id: 7 } as any))
+      .rejects
+      .toBeInstanceOf(BadRequestException)
+  })
+
+  it('rejects missing tasks with NotFoundException', async () => {
+    const db = {
+      select: vi.fn(() => createWhereOnlyQuery([])),
+    }
+    const controller = new TasksController({ db } as any, {} as any, {} as any)
+
+    await expect(controller.getTask('42', { id: 7 } as any))
+      .rejects
+      .toBeInstanceOf(NotFoundException)
   })
 })
