@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: xiaochuang
       POSTGRES_DB: xiaochuang
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - ./.local/postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
     image: redis:7-alpine
     container_name: xiaochuang-redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - ./.local/redis-data:/data
     command: ["redis-server", "--appendonly", "yes"]
@@ -37,8 +37,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin123
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - ./.local/minio-data:/data
     command: ["server", "/data", "--console-address", ":9001"]

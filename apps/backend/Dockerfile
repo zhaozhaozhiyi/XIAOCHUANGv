@@ -10,7 +10,7 @@ COPY package.json package-lock.json ./
 COPY apps ./apps
 COPY packages ./packages
 
-RUN npm ci \
+RUN REDISMS_DISABLE_POSTINSTALL=true npm ci \
   && npm run build --workspace apps/backend
 
 ENV NODE_ENV=production
