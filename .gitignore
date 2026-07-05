@@ -43,6 +43,8 @@ data/public.sql
 data/*.bak*
 data/static/
 data/storage/
+apps/data/static/
+apps/data/storage/
 
 # Config
 configs/config.yaml
