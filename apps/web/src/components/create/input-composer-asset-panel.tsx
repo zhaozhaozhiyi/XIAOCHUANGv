@@ -13,10 +13,10 @@ const AudioVoiceDock = dynamic(
 )
 
 const UPLOAD_SLOT_BTN =
-  'inline-flex flex-col items-center justify-center gap-1 rounded-[3px] border border-border bg-bg-2 text-text-3 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform hover:scale-[1.04] active:scale-[0.97]'
+  'inline-flex flex-col items-center justify-center gap-1 rounded-[3px] border border-border/35 bg-bg-2/80 text-text-3 transition-[border-color,background-color,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform hover:border-border/55 hover:bg-bg-0 hover:scale-[1.04] active:scale-[0.97]'
 
 const IMAGE_CARD_BORDER =
-  'border border-border bg-bg-0 shadow-[0_6px_14px_rgba(17,24,39,0.12)]'
+  'border border-border/35 bg-bg-0 shadow-[0_4px_12px_rgba(40,28,18,0.045),0_1px_2px_rgba(40,28,18,0.025)]'
 
 type ToolbarMode = 'image' | 'video' | 'audio'
 type UploadTarget = 'general' | 'first-frame' | 'last-frame'
@@ -312,7 +312,7 @@ export function InputComposerAssetPanel(props: {
                       type="button"
                       data-upload-trigger="true"
                       onClick={() => triggerUpload('general')}
-                      className={`absolute z-20 inline-flex items-center justify-center border border-border bg-bg-2 text-text-3 transition-colors hover:scale-[1.06] hover:bg-bg-0 active:scale-[0.96] ${props.imageStackExpanded ? 'top-0 h-[70px] w-[57px] rounded-none rotate-[-2deg]' : (props.visiblePastedImages.length === 1 ? 'top-[45px] h-7 w-7 rounded-full' : 'top-[49px] h-7 w-7 rounded-full')}`}
+                      className={`absolute z-20 inline-flex items-center justify-center border border-border/35 bg-bg-2/80 text-text-3 transition-[border-color,background-color,transform] hover:border-border/55 hover:scale-[1.06] hover:bg-bg-0 active:scale-[0.96] ${props.imageStackExpanded ? 'top-0 h-[70px] w-[57px] rounded-none rotate-[-2deg]' : (props.visiblePastedImages.length === 1 ? 'top-[45px] h-7 w-7 rounded-full' : 'top-[49px] h-7 w-7 rounded-full')}`}
                       style={{
                         left: `${props.visiblePastedImages.length === 1 ? 36 : (props.imageStackExpanded ? chronologicalImages.length * expandGap + 6 : Math.min(collapsedBase.x + 32, 186))}px`,
                       }}
