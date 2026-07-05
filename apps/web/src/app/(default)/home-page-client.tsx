@@ -81,7 +81,7 @@ const CREATE_ENTRIES: CreateEntry[] = [
   {
     id: 'canvas',
     title: '智能画布',
-    subtitle: '直接进入纯画布，自由整理资产与内容',
+    subtitle: '自由创作，整合资产',
     iconSrc: '/canvas-board.png',
     iconAlt: '智能画布',
     actionText: '去画布',
@@ -108,12 +108,11 @@ function CreateEntryCard({
       type="button"
       onClick={onActivate}
       className={cn(
-        'group relative flex h-full min-h-[120px] items-center gap-4 rounded-[18px] border bg-bg-0 px-4 py-4 pr-12 text-left shadow-shadow-xs transition-all duration-200',
-        'hover:border-border-strong hover:shadow-shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0',
-        'border-border',
+        'group relative flex h-full min-h-[112px] items-center gap-4 rounded-[10px] bg-[color-mix(in_srgb,var(--color-bg-2)_72%,var(--color-bg-0))] px-4 py-4 pr-12 text-left transition-colors duration-200',
+        'hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0',
       )}
     >
-      <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-[16px] bg-bg-2">
+      <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-bg-0/60">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={iconSrc}
@@ -132,7 +131,7 @@ function CreateEntryCard({
       </div>
 
       <span
-        className="pointer-events-none absolute right-3 top-1/2 flex size-8 -translate-y-1/2 translate-x-1 items-center justify-center rounded-full bg-accent-bg text-accent opacity-0 shadow-shadow-xs transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100"
+        className="pointer-events-none absolute right-3 top-1/2 flex size-8 -translate-y-1/2 translate-x-1 items-center justify-center rounded-full bg-bg-0/70 text-text-2 opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100"
         aria-hidden
       >
         <ArrowRight size={16} />
@@ -160,12 +159,11 @@ function ProjectHistoryCard({
   return (
     <Link
       href={href}
-      className="group flex cursor-pointer gap-4 rounded-[var(--radius-md)] border border-border bg-bg-0 p-4 shadow-shadow-xs transition-all duration-200 hover:border-border-strong hover:shadow-shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0 sm:items-center"
+      className="group flex cursor-pointer gap-4 rounded-[12px] bg-bg-0/72 px-4 py-3.5 transition-colors duration-200 hover:bg-bg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0 sm:items-center"
     >
       <div
         className={cn(
-          'relative flex size-[72px] shrink-0 items-center justify-center overflow-hidden rounded-[12px] border border-border bg-bg-zone',
-          thumbnail ? 'border-border-strong' : '',
+          'relative flex size-[64px] shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-[color-mix(in_srgb,var(--color-bg-2)_78%,var(--color-bg-0))]',
         )}
       >
         {thumbnail ? (
@@ -176,9 +174,9 @@ function ProjectHistoryCard({
         )}
       </div>
 
-      <div className="min-w-0 flex-1 space-y-2">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <h3 className="truncate font-display text-base font-semibold text-text-0 sm:text-lg">{drama.title}</h3>
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-2 sm:text-sm">
               {styleLabel ? <span>{styleLabel}</span> : null}
@@ -202,26 +200,21 @@ function ProjectHistoryCard({
               </span>
             </p>
           </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-bg-3">
-            <div
+          <div className="flex shrink-0 items-center gap-2 pt-0.5">
+            <span
               className={cn(
-                'h-full rounded-full transition-all duration-500',
-                hasSourceIssue ? 'bg-warning' : 'bg-accent',
+                'rounded-full bg-[color-mix(in_srgb,var(--color-bg-2)_72%,var(--color-bg-0))] px-2.5 py-1 text-xs font-medium tabular-nums text-text-2',
+                hasSourceIssue ? 'bg-warning-bg text-warning' : '',
               )}
-              style={{ width: `${progress}%` }}
+            >
+              {progressText}
+            </span>
+            <ArrowRight
+              size={16}
+              className="hidden shrink-0 text-text-3 transition-transform group-hover:translate-x-0.5 group-hover:text-text-1 sm:block"
+              aria-hidden
             />
           </div>
-          <span className={cn('shrink-0 text-xs font-medium tabular-nums', hasSourceIssue ? 'text-warning' : 'text-text-2')}>
-            {progressText}
-          </span>
-          <ArrowRight
-            size={16}
-            className="hidden shrink-0 text-text-3 transition-transform group-hover:translate-x-0.5 group-hover:text-accent sm:block"
-            aria-hidden
-          />
         </div>
       </div>
     </Link>
@@ -378,7 +371,7 @@ export function HomePageClient({
             </p>
           </div>
           <HomeInputComposer initialImageModelOptions={initialImageModelOptions} />
-          <div className="grid gap-4 lg:grid-cols-3 lg:max-w-[1080px]">
+          <div className="grid w-full max-w-[1160px] gap-4 lg:grid-cols-3">
             {CREATE_ENTRIES.map((entry) => (
               <CreateEntryCard key={entry.id} entry={entry} onActivate={() => handleCreateEntry(entry)} />
             ))}
@@ -387,7 +380,7 @@ export function HomePageClient({
             <div
               role="alert"
               aria-live="polite"
-              className="max-w-[1080px] rounded-[var(--radius-sm)] border border-error/30 bg-error-bg px-4 py-3 text-sm text-error"
+              className="max-w-[1160px] rounded-[var(--radius-sm)] border border-error/30 bg-error-bg px-4 py-3 text-sm text-error"
             >
               {entryError}
             </div>
@@ -414,7 +407,7 @@ export function HomePageClient({
           </div>
 
           {sortedDramas.length ? (
-            <div className="grid gap-3">
+            <div className="grid gap-2 rounded-[14px] bg-[color-mix(in_srgb,var(--color-bg-2)_68%,var(--color-bg-0))] p-2">
               {sortedDramas.slice(0, 4).map((drama) => (
                 <ProjectHistoryCard
                   key={drama.id}

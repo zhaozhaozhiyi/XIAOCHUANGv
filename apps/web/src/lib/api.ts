@@ -53,6 +53,9 @@ function buildQueryString(params: Record<string, string | number | boolean | nul
 
 function parseApiJsonBody(text: string, path: string, status: number): unknown {
   const trimmed = text.trimStart()
+  if (!trimmed) {
+    throw new Error(`接口 ${path} 返回了空响应（HTTP ${status}），请检查服务端日志或确认后端服务已启动`)
+  }
   const looksHtml =
     trimmed.startsWith('<') || trimmed.startsWith('<!DOCTYPE') || trimmed.toLowerCase().includes('<html')
   if (looksHtml) {

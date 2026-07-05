@@ -100,7 +100,7 @@ export function AddNodeSubmenu({
   const container =
     variant === 'menu'
       ? 'flex flex-col gap-0.5'
-      : 'flex w-56 flex-col gap-0.5 rounded-lg border border-border bg-popover p-1 shadow-default'
+      : 'flex w-56 flex-col gap-0.5 rounded-lg border border-border bg-popover p-1 shadow-[var(--shadow-popover)]'
 
   return (
     <div className={container}>

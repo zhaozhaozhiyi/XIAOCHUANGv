@@ -4,6 +4,16 @@ function isRemoteHttpUrl(value: string | null | undefined) {
   return /^https?:\/\//i.test(String(value || '').trim())
 }
 
+function booleanEnv(defaultValue: boolean) {
+  return z.preprocess((value) => {
+    if (typeof value !== 'string') return value
+    const normalized = value.trim().toLowerCase()
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true
+    if (['0', 'false', 'no', 'n', 'off', ''].includes(normalized)) return false
+    return value
+  }, z.boolean()).default(defaultValue)
+}
+
 const baseEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3010),
@@ -18,7 +28,8 @@ const baseEnvSchema = z.object({
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   STORAGE_LOCAL_PATH: z.string().default('../data/static'),
   STORAGE_PUBLIC_BASE_URL: z.string().optional(),
-  STORAGE_S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+  STORAGE_S3_FORCE_PATH_STYLE: booleanEnv(true),
+  STORAGE_OBJECT_ACL: z.string().optional(),
   S3_ENDPOINT: z.string().optional(),
   S3_REGION: z.string().optional(),
   S3_BUCKET: z.string().optional(),

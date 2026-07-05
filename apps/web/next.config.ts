@@ -70,6 +70,10 @@ const nextConfig: NextConfig = {
     ? { outputFileTracingRoot: path.resolve(process.cwd(), '../..') }
     : {}),
   experimental: {
+    staleTimes: {
+      dynamic: 30,
+      static: 180,
+    },
     // App Router multipart/form-data uploads can hit Next's default 10MB limit
     // before our route handler runs. Keep the framework limit above the
     // business-level upload cap so the API can return a controlled error.

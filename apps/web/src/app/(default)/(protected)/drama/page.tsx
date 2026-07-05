@@ -53,38 +53,45 @@ function DramaCard({
   onDelete: () => void
 }) {
   const thumbnail = staticUrl(drama.thumbnail)
+  const [failedThumbnail, setFailedThumbnail] = useState<string | null>(null)
   const episodes = getDramaEpisodeCount(drama)
   const characters = getCharacterCount(drama)
   const styleLabel = drama.style ? dramaStyleLabel(drama.style) : null
   const updatedAt = formatDate(drama.updated_at)
   const sourceHealth = getNovelSourceHealthByDrama(drama)
   const hasSourceIssue = sourceHealth.kind !== 'missing' && !sourceHealth.ok
+  const thumbnailSrc = thumbnail && failedThumbnail !== thumbnail ? thumbnail : null
 
   return (
-    <article className="group relative flex flex-col overflow-hidden rounded-[var(--radius-md)] border border-border bg-bg-0 shadow-shadow-xs transition-all duration-200 hover:border-border-strong hover:shadow-shadow-sm">
+    <article className="group relative flex flex-col overflow-hidden bg-bg-0/80 shadow-[0_1px_0_rgba(15,23,42,0.03)] transition-[background,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-bg-0 hover:shadow-[0_18px_44px_rgba(40,28,18,0.08)]">
       {/* Thumbnail */}
       <button
         type="button"
         onClick={onOpen}
-        className="relative aspect-[16/9] w-full overflow-hidden bg-bg-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-inset"
+        className="relative aspect-[16/9] w-full overflow-hidden bg-bg-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-inset"
       >
-        {thumbnail ? (
+        {thumbnailSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={thumbnail} alt={drama.title} className="size-full object-cover" />
+          <img
+            src={thumbnailSrc}
+            alt={drama.title}
+            className="size-full object-cover transition-transform duration-500 group-hover:scale-[1.025]"
+            onError={() => setFailedThumbnail(thumbnailSrc)}
+          />
         ) : (
-          <div className="flex size-full items-center justify-center">
-            <Film size={32} className="text-text-3" />
+          <div className="flex size-full items-center justify-center bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.62),transparent_46%)]">
+            <Film size={32} className="text-text-3/80" />
           </div>
         )}
         {styleLabel && (
-          <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white">
+          <span className="absolute left-2 top-2 rounded-full border border-white/65 bg-bg-0/65 px-2.5 py-1 text-[11px] font-semibold text-accent shadow-[0_8px_20px_rgba(40,28,18,0.10)] ring-1 ring-black/[0.03] backdrop-blur-md">
             {styleLabel}
           </span>
         )}
       </button>
 
       {/* Info */}
-      <div className="flex flex-1 flex-col gap-2 p-4">
+      <div className="flex flex-1 flex-col gap-2 px-4 pb-4 pt-3">
         <button
           type="button"
           onClick={onOpen}
@@ -120,10 +127,10 @@ function DramaCard({
           <div className="flex gap-1.5">
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={onOpen}
-              className="h-8"
+              className="h-8 rounded-full bg-bg-2/80 px-3 shadow-none hover:bg-bg-hover"
             >
               打开项目
             </Button>
@@ -131,7 +138,8 @@ function DramaCard({
           <button
             type="button"
             onClick={onDelete}
-            className="flex size-8 items-center justify-center rounded-full border border-border text-text-2 opacity-0 transition-all hover:bg-bg-hover hover:text-text-0 group-hover:opacity-100 focus-visible:opacity-100"
+            className="flex size-8 items-center justify-center rounded-full bg-bg-2/80 text-text-2 opacity-0 transition-all hover:bg-bg-hover hover:text-text-0 group-hover:opacity-100 focus-visible:opacity-100"
+            aria-label={`删除项目：${drama.title}`}
             title="删除项目"
           >
             <Trash2 size={15} />
@@ -270,10 +278,10 @@ function DramaListPageContent() {
           </Button>
         </div>
 
-        <div className="section-card flex flex-col gap-5">
+        <div className="flex flex-col gap-5 bg-bg-0 p-0">
           {/* Filters */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <label className="relative flex flex-1 items-center sm:max-w-xl">
+            <label className="relative flex min-w-0 flex-1 items-center sm:max-w-xl">
               <Search className="pointer-events-none absolute left-3 size-4 text-text-3" />
               <Input
                 value={query}
@@ -282,16 +290,16 @@ function DramaListPageContent() {
                 className="h-11 pl-10"
               />
             </label>
-            <div className="flex gap-2">
+            <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0">
               <BaseSelect
-                className="[&_button]:h-11 [&_button]:w-[120px]"
+                className="min-w-0 sm:w-[120px] [&_button]:h-11"
                 value={styleFilter}
                 onValueChange={(v) => setStyleFilter(String(v))}
                 options={[{ label: '全部风格', value: '' }, ...dramaStyleSelectOptions]}
                 placeholder="风格筛选"
               />
               <BaseSelect
-                className="[&_button]:h-11 [&_button]:w-[140px]"
+                className="min-w-0 sm:w-[140px] [&_button]:h-11"
                 value={sortBy}
                 onValueChange={(v) => setSortBy(v as SortOption)}
                 options={[
@@ -311,31 +319,31 @@ function DramaListPageContent() {
 
           {/* Grid */}
           {loading ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {Array.from({ length: 6 }).map((_, i) => (
                 <div
                   key={i}
-                  className="aspect-[16/9] rounded-[var(--radius-md)] bg-gradient-to-r from-bg-2 via-bg-hover to-bg-2 bg-[length:200%_100%] animate-shimmer"
+                  className="aspect-[16/9] bg-gradient-to-r from-bg-0/80 via-bg-hover to-bg-0/80 bg-[length:200%_100%] animate-shimmer"
                 />
               ))}
             </div>
           ) : filteredDramas.length === 0 ? (
             <EmptyState
               icon={Clapperboard}
-              className="min-h-[320px] justify-center border-dashed bg-bg-2"
+              className="min-h-[320px] justify-center border-0 bg-bg-0/70"
               description={query.trim() || styleFilter ? '没有符合筛选条件的项目' : '还没有短剧项目'}
               actionLabel="新建短剧"
               onAction={() => setShowCreate(true)}
             />
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredDramas.map((drama) => (
-              <DramaCard
-                key={drama.id}
-                drama={drama}
-                onOpen={() => router.push(`/drama/${drama.id}`)}
-                onDelete={() => setDeleteTarget(drama)}
-              />
+                <DramaCard
+                  key={drama.id}
+                  drama={drama}
+                  onOpen={() => router.push(`/drama/${drama.id}`)}
+                  onDelete={() => setDeleteTarget(drama)}
+                />
               ))}
             </div>
           )}

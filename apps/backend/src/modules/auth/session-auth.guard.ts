@@ -16,6 +16,7 @@ export class SessionAuthGuard implements CanActivate {
     }
 
     request.currentUser = session.user
+    request.currentSession = session
     return true
   }
 }

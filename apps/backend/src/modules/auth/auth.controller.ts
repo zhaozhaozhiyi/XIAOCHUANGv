@@ -182,10 +182,9 @@ export class AuthController {
     @Req() request: AuthenticatedRequest,
     @CurrentUser() currentUser: CurrentUserType,
   ) {
-    const session = await this.authService.getSession(request)
     return {
       authenticated: true,
-      session: session ?? {
+      session: request.currentSession ?? {
         id: 0,
         userId: currentUser.id,
         user: currentUser,

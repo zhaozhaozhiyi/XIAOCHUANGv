@@ -59,6 +59,7 @@ export class StorageService {
   private readonly s3AccessKeyId: string | null
   private readonly s3SecretAccessKey: string | null
   private readonly s3ForcePathStyle: boolean
+  private readonly objectAcl: string | null
 
   constructor(@Inject(ConfigService) private readonly configService: ConfigService) {
     this.driver = this.configService.get<'local' | 's3'>('STORAGE_DRIVER', 'local')
@@ -70,6 +71,7 @@ export class StorageService {
     this.s3AccessKeyId = String(this.configService.get<string>('S3_ACCESS_KEY_ID') || '').trim() || null
     this.s3SecretAccessKey = String(this.configService.get<string>('S3_SECRET_ACCESS_KEY') || '').trim() || null
     this.s3ForcePathStyle = this.configService.get<boolean>('STORAGE_S3_FORCE_PATH_STYLE', true)
+    this.objectAcl = String(this.configService.get<string>('STORAGE_OBJECT_ACL') || '').trim() || null
   }
 
   getAbsolutePath(relativePath: string) {
@@ -250,14 +252,25 @@ export class StorageService {
     const dateStamp = amzDate.slice(0, 8)
     const canonicalUri = target.pathname
     const canonicalQuery = ''
-    const canonicalHeaders = [
-      `content-length:${buffer.byteLength}`,
-      `content-type:${mimeType || 'application/octet-stream'}`,
-      `host:${target.host}`,
-      `x-amz-content-sha256:${payloadHash}`,
-      `x-amz-date:${amzDate}`,
-    ].join('\n') + '\n'
-    const signedHeaders = 'content-length;content-type;host;x-amz-content-sha256;x-amz-date'
+    const requestHeaders: Record<string, string> = {
+      'content-length': String(buffer.byteLength),
+      'content-type': mimeType || 'application/octet-stream',
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate,
+    }
+    if (this.objectAcl) {
+      requestHeaders['x-cos-acl'] = this.objectAcl
+    }
+
+    const canonicalHeaderValues: Record<string, string> = {
+      ...requestHeaders,
+      host: target.host,
+    }
+    const canonicalHeaderNames = Object.keys(canonicalHeaderValues).sort()
+    const canonicalHeaders = canonicalHeaderNames
+      .map((name) => `${name}:${canonicalHeaderValues[name]}`)
+      .join('\n') + '\n'
+    const signedHeaders = canonicalHeaderNames.join(';')
     const canonicalRequest = [
       'PUT',
       canonicalUri,
@@ -283,10 +296,7 @@ export class StorageService {
       method: 'PUT',
       headers: {
         authorization,
-        'content-length': String(buffer.byteLength),
-        'content-type': mimeType || 'application/octet-stream',
-        'x-amz-content-sha256': payloadHash,
-        'x-amz-date': amzDate,
+        ...requestHeaders,
       },
       body: buffer,
       signal: AbortSignal.timeout(120_000),

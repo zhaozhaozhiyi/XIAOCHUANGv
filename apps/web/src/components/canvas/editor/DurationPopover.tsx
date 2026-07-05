@@ -74,7 +74,7 @@ export function DurationPopover() {
   return (
     <div
       ref={ref}
-      className="pointer-events-auto fixed z-50 flex items-center gap-2 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-default"
+      className="pointer-events-auto fixed z-50 flex items-center gap-2 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-[var(--shadow-popover)]"
       style={{
         left: Math.min(pos.x, typeof window !== 'undefined' ? window.innerWidth - 240 : pos.x),
         top: Math.min(pos.y, typeof window !== 'undefined' ? window.innerHeight - 80 : pos.y),

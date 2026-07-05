@@ -19,4 +19,5 @@ export interface AuthSession {
 
 export type AuthenticatedRequest = FastifyRequest & {
   currentUser?: CurrentUser
+  currentSession?: AuthSession
 }

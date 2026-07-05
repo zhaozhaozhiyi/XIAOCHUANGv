@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { startTransition, useCallback, useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { ArrowRight, BookOpen, FileText, Loader2, Plus, Search } from 'lucide-react'
 
@@ -81,8 +81,6 @@ export default function WritingListPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load()
   }, [load])
-
-  const totalDocuments = useMemo(() => items.reduce((sum, item) => sum + item.document_count, 0), [items])
 
   async function handleCreate() {
     if (!newTitle.trim()) {
@@ -179,18 +177,7 @@ export default function WritingListPage() {
           </Dialog>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-[var(--radius-md)] border border-border bg-bg-0 p-4">
-            <p className="text-xs text-text-3">作品</p>
-            <p className="mt-1 text-2xl font-semibold text-text-0">{items.length}</p>
-          </div>
-          <div className="rounded-[var(--radius-md)] border border-border bg-bg-0 p-4">
-            <p className="text-xs text-text-3">文档</p>
-            <p className="mt-1 text-2xl font-semibold text-text-0">{totalDocuments}</p>
-          </div>
-        </div>
-
-        <div className="section-card flex flex-col gap-5">
+        <div className="flex flex-col gap-5 bg-bg-0 p-0">
           <div className="relative max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-3" />
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索标题或摘要…" className="h-11 pl-10" />
@@ -199,7 +186,7 @@ export default function WritingListPage() {
           {loading ? (
             <div className="flex min-h-[320px] items-center justify-center text-text-3"><Loader2 className="size-8 animate-spin" /></div>
           ) : items.length === 0 ? (
-            <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 rounded-[var(--radius-md)] border border-dashed border-border bg-bg-2 px-6 text-center">
+            <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 border-0 bg-bg-0/70 px-6 text-center">
               <BookOpen className="size-10 text-accent" />
               <div>
                 <p className="font-medium text-text-0">暂无作品</p>
@@ -208,12 +195,12 @@ export default function WritingListPage() {
               <Button onClick={() => setOpen(true)} type="button">新建作品</Button>
             </div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {items.map((w) => (
                 <Link
                   key={w.id}
                   href={`/writing/${w.id}`}
-                  className="group flex min-h-[220px] flex-col justify-between rounded-[var(--radius-lg)] border border-border bg-bg-0 p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md"
+                  className="group flex min-h-[220px] flex-col justify-between bg-bg-0/80 px-4 pb-4 pt-3 shadow-[0_1px_0_rgba(15,23,42,0.03)] transition-[background,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-bg-0 hover:shadow-[0_18px_44px_rgba(40,28,18,0.08)]"
                 >
                   <div className="flex flex-col gap-4">
                     <div className="flex items-start justify-between gap-3">
@@ -229,7 +216,7 @@ export default function WritingListPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="mt-5 flex items-center justify-between border-t border-border pt-4 text-xs text-text-3">
+                  <div className="mt-5 flex items-center justify-between gap-2 text-xs text-text-3">
                     <span>{KIND_LABEL[w.kind]}</span>
                     <span>{w.document_count} 文档</span>
                     <span>{formatDate(w.updated_at)}</span>

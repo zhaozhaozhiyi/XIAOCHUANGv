@@ -1,14 +1,19 @@
 'use client'
 
-import { Merge, Download, RefreshCw } from 'lucide-react'
-import { useWorkbench } from '@/hooks/use-workbench'
+import { AlertTriangle, Download, Loader2, Merge, RefreshCw } from 'lucide-react'
+import { isActiveWorkbenchTask, useWorkbench } from '@/hooks/use-workbench'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/cn'
+import { getAiErrorCopy } from '@/lib/ai-error-copy'
 
 export function ExportPanel() {
   const wb = useWorkbench()
   const composedCount = wb.storyboards.filter(s => s.composed_video_url).length
   const totalShots = wb.storyboards.length
   const canMerge = totalShots > 0 && composedCount === totalShots
+  const mergeTask = wb.episode ? wb.entityTasks[`episode-merge:${wb.episode.id}`] : null
+  const failedMergeTask = mergeTask && ['failed', 'canceled'].includes(String(mergeTask.status || '')) ? mergeTask : null
+  const isMergePending = isActiveWorkbenchTask(mergeTask) || (wb.mergeStatus as { status?: string } | null)?.status === 'pending'
   const fallbackAction = totalShots === 0
     ? { label: '前往分镜', step: 'script-storyboard' }
     : { label: '前往视频合成', step: 'prod-compose' }
@@ -23,6 +28,12 @@ export function ExportPanel() {
             {totalShots > 0 && (
               <span>{composedCount}/{totalShots} 镜头已合成</span>
             )}
+            {isMergePending ? (
+              <span className="ml-2 inline-flex items-center gap-1 text-accent">
+                <Loader2 size={12} className="animate-spin" />
+                合并中，旧成片会保留到新结果完成
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -42,9 +53,19 @@ export function ExportPanel() {
               >
                 <Download size={14} /> 下载成片
               </a>
-            <Button variant="ghost" className="panel-btn" onClick={wb.mergeEpisode}>
-              <RefreshCw size={13} /> 重新合并
-            </Button>
+              <Button
+                variant="ghost"
+                className="panel-btn"
+                disabled={isMergePending}
+                onClick={wb.mergeEpisode}
+              >
+                {isMergePending ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={13} />
+                )}
+                {isMergePending ? '合并中' : '重新合并'}
+              </Button>
             </div>
           </>
         ) : (
@@ -64,14 +85,35 @@ export function ExportPanel() {
             </div>
           </div>
         )}
+        {failedMergeTask ? (
+          <div className="entity-task-notice is-error mt-3">
+            <AlertTriangle size={13} />
+            <span className="entity-task-message">
+              {failedMergeTask.status === 'canceled'
+                ? '合并任务已取消，可以重新提交。'
+                : getAiErrorCopy(new Error(failedMergeTask.error_message || '合并失败'))}
+            </span>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              className="panel-btn entity-task-retry"
+              onClick={() => wb.retryEntityTask(failedMergeTask.id)}
+            >
+              <RefreshCw size={10} />
+              重试
+            </Button>
+          </div>
+        ) : null}
       </div>
       {!wb.mergeUrl && (
         <div className="step-bubble">
           <button
-            className="bubble-btn primary"
+            className={cn('bubble-btn primary', isMergePending && 'pending')}
+            disabled={isMergePending}
             onClick={canMerge ? wb.mergeEpisode : () => wb.goSubStep(fallbackAction.step)}
           >
-            {canMerge ? '开始合并' : fallbackAction.label}
+            {isMergePending ? '合并中' : canMerge ? '开始合并' : fallbackAction.label}
           </button>
         </div>
       )}

@@ -240,7 +240,7 @@ export function BaseSelect({
               ref={dropdownRef}
               data-dialog-allow-outside-interaction=""
               className={cn(
-                'fixed z-[60] overflow-hidden rounded-[14px] border border-border bg-bg-0 shadow-shadow-lg',
+                'fixed z-[60] overflow-hidden rounded-[14px] border border-border bg-bg-0 shadow-[var(--shadow-popover)]',
                 'animate-[baseSelectIn_0.15s_cubic-bezier(0.16,1,0.3,1)]',
               )}
               style={{

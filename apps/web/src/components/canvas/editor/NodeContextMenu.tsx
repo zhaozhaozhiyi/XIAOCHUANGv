@@ -166,7 +166,7 @@ export function NodeContextMenu() {
         role="menu"
         onContextMenu={(e) => e.preventDefault()}
         onClick={(e) => e.stopPropagation()}
-        className="pointer-events-auto fixed z-50 min-w-[200px] rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-default"
+        className="pointer-events-auto fixed z-50 min-w-[200px] rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-[var(--shadow-popover)]"
         style={{
           left: Math.min(pos.x, typeof window !== 'undefined' ? window.innerWidth - 220 : pos.x),
           top: Math.min(pos.y, typeof window !== 'undefined' ? window.innerHeight - 320 : pos.y),

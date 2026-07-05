@@ -39,6 +39,7 @@ const dramaUpdateSchema = z.object({
   thumbnail: z.string().trim().nullable().optional(),
   tags: z.unknown().optional(),
   metadata: z.unknown().optional(),
+  total_episodes: z.coerce.number().int().nonnegative().optional(),
 })
 
 const createDramaFromWritingSchema = z.object({
@@ -638,6 +639,7 @@ export class DramasController {
     if (payload.thumbnail !== undefined) updates.thumbnail = toPublicMediaUrl(payload.thumbnail)
     if (payload.tags !== undefined) updates.tags = JSON.stringify(payload.tags)
     if (payload.metadata !== undefined) updates.metadata = serializeMetadata(payload.metadata)
+    if (payload.total_episodes !== undefined) updates.totalEpisodes = payload.total_episodes
 
     await this.databaseService.db
       .update(dramas)
