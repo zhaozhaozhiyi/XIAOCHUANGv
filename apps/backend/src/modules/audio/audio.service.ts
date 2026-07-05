@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 
 import { toPublicMediaUrl } from '../../common/media-url'
 import { AssetsService } from '../assets/assets.service'
@@ -160,7 +160,7 @@ export class AudioService {
     const [existing] = await this.databaseService.db
       .select()
       .from(tasks)
-      .where(and(eq(tasks.domainTable, 'storyboard_tts'), eq(tasks.domainId, args.storyboardId)))
+      .where(and(eq(tasks.domainTable, 'storyboard_tts'), eq(tasks.domainId, args.storyboardId), isNull(tasks.deletedAt)))
 
     const updatedAt = this.now()
     const createdAt = existing?.createdAt || updatedAt
@@ -218,9 +218,35 @@ export class AudioService {
     const [created] = await this.databaseService.db
       .insert(tasks)
       .values(values)
+      .onConflictDoNothing({
+        target: [tasks.domainTable, tasks.domainId],
+        where: sql`${tasks.deletedAt} IS NULL`,
+      })
       .returning({ id: tasks.id })
 
-    return created?.id ?? null
+    if (created?.id) return created.id
+
+    const [conflicted] = await this.databaseService.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.domainTable, 'storyboard_tts'), eq(tasks.domainId, args.storyboardId), isNull(tasks.deletedAt)))
+    if (!conflicted) return null
+
+    await this.databaseService.db
+      .update(tasks)
+      .set({
+        ...values,
+        aiConfigId: args.aiConfigId ?? conflicted.aiConfigId ?? null,
+        attemptCount: conflicted.attemptCount ?? 0,
+        providerTaskId: conflicted.providerTaskId ?? null,
+        payloadJson: sanitizePayload(args.payload) ?? conflicted.payloadJson ?? null,
+        progress: args.status === 'completed' ? 100 : args.status === 'queued' ? 0 : conflicted.progress ?? null,
+        createdAt: conflicted.createdAt ?? createdAt,
+        startedAt: args.status === 'queued' ? conflicted.startedAt ?? null : conflicted.startedAt ?? updatedAt,
+      })
+      .where(eq(tasks.id, conflicted.id))
+
+    return conflicted.id
   }
 
   async generateTTS(params: {

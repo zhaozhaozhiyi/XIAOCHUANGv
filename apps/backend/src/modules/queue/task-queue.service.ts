@@ -5,9 +5,11 @@ import { Queue } from 'bullmq'
 import {
   buildCanvasTaskJobId,
   buildTaskJobId,
+  buildTaskQueueJobOptions,
   CANVAS_TASK_JOB_NAME,
   createTaskQueueConnection,
   DRAMA_TASK_JOB_NAME,
+  TASK_QUEUE_DEFAULT_JOB_OPTIONS,
   TASK_QUEUE_NAME,
   type CanvasQueueJobData,
 } from './task-queue.shared'
@@ -27,10 +29,7 @@ export class TaskQueueService implements OnApplicationShutdown {
 
     this.queue = new Queue(TASK_QUEUE_NAME, {
       connection: createTaskQueueConnection(this.getRedisUrl(), 'producer'),
-      defaultJobOptions: {
-        removeOnComplete: 1000,
-        removeOnFail: 1000,
-      },
+      defaultJobOptions: TASK_QUEUE_DEFAULT_JOB_OPTIONS,
     })
 
     return this.queue
@@ -47,7 +46,7 @@ export class TaskQueueService implements OnApplicationShutdown {
       return existing.id
     }
 
-    const job = await queue.add(DRAMA_TASK_JOB_NAME, { taskId }, { jobId })
+    const job = await queue.add(DRAMA_TASK_JOB_NAME, { taskId }, buildTaskQueueJobOptions(jobId))
     return job.id
   }
 
@@ -62,7 +61,7 @@ export class TaskQueueService implements OnApplicationShutdown {
       return existing.id
     }
 
-    const job = await queue.add(CANVAS_TASK_JOB_NAME, data, { jobId })
+    const job = await queue.add(CANVAS_TASK_JOB_NAME, data, buildTaskQueueJobOptions(jobId))
     return job.id
   }
 

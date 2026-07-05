@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import {
   boolean,
   index,
@@ -528,6 +529,9 @@ export const tasks = pgTable(
     index('idx_tasks_status_updated_at').on(table.status, table.updatedAt),
     index('idx_tasks_source_type').on(table.sourceType, table.type),
     index('idx_tasks_user_id_updated_at').on(table.userId, table.updatedAt),
+    uniqueIndex('idx_tasks_domain_active_unique')
+      .on(table.domainTable, table.domainId)
+      .where(sql`${table.deletedAt} IS NULL`),
   ],
 )
 

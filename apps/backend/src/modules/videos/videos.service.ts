@@ -35,6 +35,14 @@ function now() {
   return new Date()
 }
 
+function normalizeStatus(status: unknown) {
+  return String(status || '').trim().toLowerCase()
+}
+
+function isTerminalVideoGenerationStatus(status: unknown) {
+  return ['completed', 'failed', 'canceled', 'cancelled'].includes(normalizeStatus(status))
+}
+
 function isReferencePrivacyBlocked(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '')
   return message.includes('InputImageSensitiveContentDetected.PrivacyInformation')
@@ -141,6 +149,7 @@ export class VideosService {
     let lastFrameUrl = typeof body.last_frame_url === 'string' ? body.last_frame_url.trim() : undefined
     let referenceImageUrls = parseStringArray(body.reference_image_urls)
     let duration = typeof body.duration === 'number' ? body.duration : typeof body.duration === 'string' ? Number(body.duration) : undefined
+    let episodeId: number | undefined
 
     if (body.storyboard_id) {
       const storyboard = await requireOwnedStoryboard(this.databaseService, Number(body.storyboard_id), userId)
@@ -148,6 +157,7 @@ export class VideosService {
         .select()
         .from(episodes)
         .where(eq(episodes.id, storyboard.episodeId))
+      if (episode?.id != null) episodeId = episode.id
       if (episode?.videoConfigId != null) {
         configId = episode.videoConfigId
       } else if (episode?.dramaId != null) {
@@ -208,6 +218,7 @@ export class VideosService {
       aspectRatio: typeof body.aspect_ratio === 'string' ? body.aspect_ratio : undefined,
       configId,
       taskPayload: {
+        episode_id: episodeId,
         storyboard_id: body.storyboard_id ? Number(body.storyboard_id) : undefined,
         drama_id: dramaId,
         prompt,
@@ -524,7 +535,7 @@ export class VideosService {
       .select()
       .from(videoGenerations)
       .where(eq(videoGenerations.id, id))
-    if (!record || String(record.status || '').toLowerCase() === 'canceled') return
+    if (!record || isTerminalVideoGenerationStatus(record.status)) return
 
     const storedFile = await downloadFile(this.storageService, videoUrl, 'videos')
     await this.databaseService.db
@@ -574,6 +585,10 @@ export class VideosService {
 
     if (!record) {
       return { message: 'Task not found' }
+    }
+
+    if (isTerminalVideoGenerationStatus(record.status)) {
+      return { message: `Task already ${normalizeStatus(record.status)}` }
     }
 
     if (state === 'success' && videoUrl) {
