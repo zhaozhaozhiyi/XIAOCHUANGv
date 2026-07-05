@@ -159,18 +159,26 @@ function ProjectHistoryCard({
   return (
     <Link
       href={href}
-      className="group flex cursor-pointer gap-4 rounded-[8px] bg-bg-0/72 p-0 transition-colors duration-200 hover:bg-bg-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0 sm:items-center"
+      className="group flex cursor-pointer gap-4 rounded-[8px] bg-bg-0/72 p-0 transition-[background-color,transform] duration-200 ease-out hover:-translate-y-0.5 hover:bg-[color-mix(in_srgb,var(--color-accent)_5%,var(--color-bg-0))] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0 motion-reduce:transform-none motion-reduce:transition-colors sm:items-center"
     >
       <div
         className={cn(
-          'relative flex size-[64px] shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-[color-mix(in_srgb,var(--color-bg-2)_78%,var(--color-bg-0))]',
+          'relative flex size-[64px] shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-[color-mix(in_srgb,var(--color-bg-2)_78%,var(--color-bg-0))] transition-[background-color,transform] duration-200 ease-out group-hover:bg-[color-mix(in_srgb,var(--color-accent)_8%,var(--color-bg-2))] group-hover:scale-[1.015] group-focus-visible:bg-[color-mix(in_srgb,var(--color-accent)_8%,var(--color-bg-2))] group-focus-visible:scale-[1.015] motion-reduce:group-hover:scale-100 motion-reduce:group-focus-visible:scale-100',
         )}
       >
         {thumbnail ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={thumbnail} alt="" className="size-full object-cover" />
+          <img
+            src={thumbnail}
+            alt=""
+            className="size-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.025] group-focus-visible:scale-[1.025] motion-reduce:transition-none motion-reduce:group-hover:scale-100 motion-reduce:group-focus-visible:scale-100"
+          />
         ) : (
-          <Film size={28} className="text-text-3" aria-hidden />
+          <Film
+            size={28}
+            className="text-text-3 transition-colors duration-200 group-hover:text-accent-text group-focus-visible:text-accent-text"
+            aria-hidden
+          />
         )}
       </div>
 
@@ -203,7 +211,7 @@ function ProjectHistoryCard({
           <div className="flex shrink-0 items-center gap-2 pt-0.5">
             <span
               className={cn(
-                'rounded-full bg-[color-mix(in_srgb,var(--color-bg-2)_72%,var(--color-bg-0))] px-2.5 py-1 text-xs font-medium tabular-nums text-text-2',
+                'rounded-full bg-[color-mix(in_srgb,var(--color-bg-2)_72%,var(--color-bg-0))] px-2.5 py-1 text-xs font-medium tabular-nums text-text-2 transition-colors duration-200 group-hover:bg-bg-0 group-hover:text-text-1 group-focus-visible:bg-bg-0 group-focus-visible:text-text-1',
                 hasSourceIssue ? 'bg-warning-bg text-warning' : '',
               )}
             >
@@ -211,7 +219,7 @@ function ProjectHistoryCard({
             </span>
             <ArrowRight
               size={16}
-              className="hidden shrink-0 text-text-3 transition-transform group-hover:translate-x-0.5 group-hover:text-text-1 sm:block"
+              className="hidden shrink-0 text-text-3 transition-[color,transform] duration-200 group-hover:translate-x-1 group-hover:text-accent-text group-focus-visible:translate-x-1 group-focus-visible:text-accent-text motion-reduce:group-hover:translate-x-0 motion-reduce:group-focus-visible:translate-x-0 sm:block"
               aria-hidden
             />
           </div>
