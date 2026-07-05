@@ -43,29 +43,5 @@ jobs:
             git diff-tree --check --root -r HEAD
           fi
 
-      - name: Verify package scripts
-        run: npm run verify:package-scripts
-
-      - name: Build shared packages
-        run: |
-          npm run build --workspace packages/contracts
-          npm run build --workspace packages/canvas-shared
-          npm run build --workspace packages/ui
-
-      - name: Test shared canvas package
-        run: npm test --workspace packages/canvas-shared
-
-      - name: Typecheck backend
-        run: npm run typecheck --workspace apps/backend
-
-      - name: Test backend
-        run: npm test --workspace apps/backend
-
-      - name: Build backend
-        run: npm run build --workspace apps/backend
-
-      - name: Lint web
-        run: npm run lint --workspace apps/web
-
-      - name: Build web
-        run: npm run build --workspace apps/web
+      - name: Release gates
+        run: npm run release:verify:no-runtime -- --skip-diff-check
