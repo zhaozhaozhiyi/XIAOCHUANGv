@@ -407,7 +407,7 @@ export function HomePageClient({
           </div>
 
           {sortedDramas.length ? (
-            <div className="grid gap-2 rounded-[14px] bg-[color-mix(in_srgb,var(--color-bg-2)_68%,var(--color-bg-0))] p-2">
+            <div className="grid gap-2">
               {sortedDramas.slice(0, 4).map((drama) => (
                 <ProjectHistoryCard
                   key={drama.id}
