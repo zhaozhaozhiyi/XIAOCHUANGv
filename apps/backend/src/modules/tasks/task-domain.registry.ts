@@ -3,6 +3,10 @@ import { eq } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
 import { tasks } from '../../db/schema'
+import { DramaAdaptationBriefsTaskHandler } from './domain-handlers/drama-adaptation-briefs-task.handler'
+import { DramaEpisodeBlueprintsTaskHandler } from './domain-handlers/drama-episode-blueprints-task.handler'
+import { DramaPilotScriptsTaskHandler } from './domain-handlers/drama-pilot-scripts-task.handler'
+import { DramaSourceAnalysisTaskHandler } from './domain-handlers/drama-source-analysis-task.handler'
 import { ImageGenerationTaskHandler } from './domain-handlers/image-generation-task.handler'
 import { StoryboardComposeTaskHandler } from './domain-handlers/storyboard-compose-task.handler'
 import { StoryboardTtsTaskHandler } from './domain-handlers/storyboard-tts-task.handler'
@@ -22,6 +26,10 @@ export class TaskDomainRegistry {
     @Inject(StoryboardTtsTaskHandler) storyboardTtsHandler: StoryboardTtsTaskHandler,
     @Inject(StoryboardComposeTaskHandler) storyboardComposeHandler: StoryboardComposeTaskHandler,
     @Inject(VideoMergeTaskHandler) videoMergeHandler: VideoMergeTaskHandler,
+    @Inject(DramaSourceAnalysisTaskHandler) dramaSourceAnalysisHandler: DramaSourceAnalysisTaskHandler,
+    @Inject(DramaAdaptationBriefsTaskHandler) dramaAdaptationBriefsHandler: DramaAdaptationBriefsTaskHandler,
+    @Inject(DramaEpisodeBlueprintsTaskHandler) dramaEpisodeBlueprintsHandler: DramaEpisodeBlueprintsTaskHandler,
+    @Inject(DramaPilotScriptsTaskHandler) dramaPilotScriptsHandler: DramaPilotScriptsTaskHandler,
   ) {
     const handlers = [
       imageGenerationHandler,
@@ -29,6 +37,10 @@ export class TaskDomainRegistry {
       storyboardTtsHandler,
       storyboardComposeHandler,
       videoMergeHandler,
+      dramaSourceAnalysisHandler,
+      dramaAdaptationBriefsHandler,
+      dramaEpisodeBlueprintsHandler,
+      dramaPilotScriptsHandler,
     ]
     this.handlers = new Map(handlers.map((handler) => [handler.domainTable, handler]))
   }

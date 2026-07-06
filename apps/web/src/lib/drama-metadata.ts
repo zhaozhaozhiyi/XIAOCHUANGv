@@ -1,4 +1,13 @@
-import type { Drama, Episode } from '@/types/api'
+import type {
+  AdaptationBrief,
+  Drama,
+  DramaAiFirstStage,
+  Episode,
+  EpisodeBlueprintPayload,
+  SourceAnalysis,
+  SourceHealth,
+  SourceTraceItem,
+} from '@/types/api'
 
 export type ProjectDefaultConfigType = 'image' | 'video' | 'audio'
 
@@ -28,6 +37,15 @@ export type NovelSource = {
   imported_at: string
   summary?: string
   chapter_index?: NovelSourceChapter[]
+}
+
+export type DramaAiFirstMetadata = {
+  source_health: SourceHealth | null
+  source_analysis: SourceAnalysis | null
+  adaptation_briefs: AdaptationBrief[]
+  selected_brief_id: string
+  ai_first_stage: DramaAiFirstStage | null
+  ai_first_updated_at: string
 }
 
 export type AdaptationPlan = {
@@ -107,6 +125,208 @@ function toStringValue(value: unknown) {
 
 function toStringArray(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : []
+}
+
+function toRecord(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function parseMaybeJsonObject(value: unknown) {
+  if (typeof value === 'string') {
+    try {
+      return toRecord(JSON.parse(value))
+    } catch {
+      return null
+    }
+  }
+  return toRecord(value)
+}
+
+function parseMaybeJsonArray(value: unknown) {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return Array.isArray(value) ? value : []
+}
+
+function toBooleanValue(value: unknown) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') return value === 'true' || value === '1'
+  return false
+}
+
+function normalizeAiFirstStage(value: unknown): DramaAiFirstStage | null {
+  const stage = toStringValue(value)
+  if (
+    stage === 'source_pending' ||
+    stage === 'source_ready' ||
+    stage === 'brief_pending' ||
+    stage === 'brief_selected' ||
+    stage === 'blueprint_generating' ||
+    stage === 'blueprint_ready' ||
+    stage === 'script_generating' ||
+    stage === 'in_production' ||
+    stage === 'deliverable_ready'
+  ) {
+    return stage
+  }
+  return null
+}
+
+function normalizeSourceTrace(value: unknown): SourceTraceItem[] {
+  return parseMaybeJsonArray(value)
+    .map((item) => {
+      const trace = toRecord(item) ?? {}
+      return {
+        source_id: toStringValue(trace.source_id) || toOptionalNumber(trace.source_id) || null,
+        chunk_id: toStringValue(trace.chunk_id) || toOptionalNumber(trace.chunk_id) || null,
+        chapter_no: toOptionalNumber(trace.chapter_no),
+        chapter_title: toStringValue(trace.chapter_title),
+        content_start: toOptionalNumber(trace.content_start),
+        content_end: toOptionalNumber(trace.content_end),
+        excerpt: toStringValue(trace.excerpt),
+      }
+    })
+}
+
+function normalizeSourceHealth(value: unknown): SourceHealth | null {
+  const raw = parseMaybeJsonObject(value)
+  if (!raw) return null
+  const status = raw.status === 'blocked' || raw.status === 'warning' ? raw.status : 'ok'
+  const wordCount = toOptionalNumber(raw.word_count) ?? 0
+  const chapterIndex = Array.isArray(raw.chapter_index)
+    ? raw.chapter_index.map((item, index) => {
+      const chapter = toRecord(item) ?? {}
+      return {
+        chapter_no: toOptionalNumber(chapter.chapter_no) ?? index + 1,
+        title: toStringValue(chapter.title) || `第 ${index + 1} 章`,
+        word_count: toOptionalNumber(chapter.word_count) ?? 0,
+        brief: toStringValue(chapter.brief),
+      }
+    })
+    : []
+  const estimatedTokens = toOptionalNumber(raw.estimated_tokens) ?? Math.ceil(Math.max(wordCount, 0) * 1.6)
+  const overContextLimit = toBooleanValue(raw.over_context_limit)
+  const recommendedMode: SourceHealth['recommended_mode'] =
+    raw.recommended_mode === 'long_source_async'
+      ? 'long_source_async'
+      : raw.recommended_mode === 'long_source' || overContextLimit
+        ? 'long_source'
+        : 'direct'
+  return {
+    status,
+    word_count: wordCount,
+    chapter_count: toOptionalNumber(raw.chapter_count) ?? chapterIndex.length,
+    estimated_tokens: estimatedTokens,
+    over_context_limit: overContextLimit,
+    chunk_count: toOptionalNumber(raw.chunk_count) ?? (recommendedMode !== 'direct' ? Math.max(1, Math.ceil(estimatedTokens / 60000)) : 0),
+    recommended_mode: recommendedMode,
+    chapter_index: chapterIndex,
+    anomalies: Array.isArray(raw.anomalies)
+      ? raw.anomalies.map((item) => {
+        const anomaly = toRecord(item) ?? {}
+        const severity: 'info' | 'warning' | 'blocked' = anomaly.severity === 'blocked' || anomaly.severity === 'warning' ? anomaly.severity : 'info'
+        return {
+          type: toStringValue(anomaly.type),
+          severity,
+          message: toStringValue(anomaly.message),
+          evidence: toStringValue(anomaly.evidence),
+        }
+      }).filter((item) => item.message || item.type)
+      : [],
+    named_entity_density: toOptionalNumber(raw.named_entity_density),
+    continuity_score: toOptionalNumber(raw.continuity_score),
+    generated_at: toStringValue(raw.generated_at),
+  }
+}
+
+function normalizeSourceAnalysis(value: unknown): SourceAnalysis | null {
+  const raw = parseMaybeJsonObject(value)
+  if (!raw) return null
+  const theme = toStringValue(raw.theme)
+  const coreConflict = toStringValue(raw.core_conflict)
+  if (!theme && !coreConflict) return null
+  return {
+    theme,
+    core_conflict: coreConflict,
+    protagonist: toStringValue(raw.protagonist),
+    antagonist: toStringValue(raw.antagonist),
+    protagonist_goal: toStringValue(raw.protagonist_goal),
+    relationship_map: parseMaybeJsonArray(raw.relationship_map).map((item) => toRecord(item) ?? {}),
+    world_rules: toStringArray(raw.world_rules),
+    emotional_curve: parseMaybeJsonArray(raw.emotional_curve).map((item) => toRecord(item) ?? {}),
+    adaptation_risks: toStringArray(raw.adaptation_risks),
+    evidence: parseMaybeJsonArray(raw.evidence).map((item) => {
+      const evidence = toRecord(item) ?? {}
+      return {
+        claim: toStringValue(evidence.claim),
+        source_trace: normalizeSourceTrace(evidence.source_trace),
+      }
+    }).filter((item) => item.claim || item.source_trace?.length),
+    ai_run_id: toStringValue(raw.ai_run_id) || toOptionalNumber(raw.ai_run_id),
+    remote_run_id: toStringValue(raw.remote_run_id),
+    generation_mode: toStringValue(raw.generation_mode),
+    generated_at: toStringValue(raw.generated_at),
+  }
+}
+
+function normalizeAdaptationBriefs(value: unknown): AdaptationBrief[] {
+  return parseMaybeJsonArray(value).map((item, index) => {
+    const brief = toRecord(item) ?? {}
+    const id = toStringValue(brief.id) || `brief-${index + 1}`
+    return {
+      id,
+      name: toStringValue(brief.name) || `策略 ${index + 1}`,
+      claim: toStringValue(brief.claim),
+      rhythm_model: toStringValue(brief.rhythm_model),
+      target_episode_count: toOptionalNumber(brief.target_episode_count) ?? 0,
+      episode_duration: toStringValue(brief.episode_duration),
+      style_direction: toStringValue(brief.style_direction),
+      hook_density: toStringValue(brief.hook_density) || toOptionalNumber(brief.hook_density),
+      retained_points: toStringArray(brief.retained_points),
+      removed_points: toStringArray(brief.removed_points),
+      risk_notes: toStringArray(brief.risk_notes),
+      production_cost: toStringValue(brief.production_cost) || toOptionalNumber(brief.production_cost),
+      recommended_for: toStringValue(brief.recommended_for),
+      ai_run_id: toStringValue(brief.ai_run_id) || toOptionalNumber(brief.ai_run_id),
+      remote_run_id: toStringValue(brief.remote_run_id),
+      generation_mode: toStringValue(brief.generation_mode),
+      generated_at: toStringValue(brief.generated_at),
+    }
+  }).filter((item) => item.id && (item.claim || item.name))
+}
+
+export function normalizeEpisodeBlueprintPayload(value: unknown): EpisodeBlueprintPayload | null {
+  const raw = parseMaybeJsonObject(value)
+  if (!raw) return null
+  const title = toStringValue(raw.title)
+  const summary = toStringValue(raw.summary)
+  if (!title && !summary) return null
+  return {
+    episode_number: toOptionalNumber(raw.episode_number) ?? 0,
+    title,
+    positioning: toStringValue(raw.positioning),
+    opening_hook: toStringValue(raw.opening_hook),
+    summary,
+    source_trace: normalizeSourceTrace(raw.source_trace),
+    characters: toStringArray(raw.characters),
+    scenes: toStringArray(raw.scenes),
+    ending_hook: toStringValue(raw.ending_hook),
+    risk_notes: toStringArray(raw.risk_notes),
+    brief_id: toStringValue(raw.brief_id),
+    ai_run_id: toStringValue(raw.ai_run_id) || toOptionalNumber(raw.ai_run_id),
+    remote_run_id: toStringValue(raw.remote_run_id),
+    generation_mode: toStringValue(raw.generation_mode),
+    generated_at: toStringValue(raw.generated_at),
+  }
 }
 
 function normalizeReuseLevel(value: unknown): 'high' | 'medium' | 'low' {
@@ -231,6 +451,26 @@ export function getAdaptationPlan(dramaOrMetadata: Pick<Drama, 'metadata'> | str
     }),
     generated_at: toStringValue(plan.generated_at),
     source_imported_at: toStringValue(plan.source_imported_at),
+  }
+}
+
+export function getDramaAiFirstMetadata(
+  dramaOrMetadata: (Pick<Drama, 'metadata'> & Partial<Pick<Drama, 'source_health' | 'source_analysis' | 'adaptation_briefs' | 'selected_brief_id' | 'ai_first_stage'>>) | string | null | undefined,
+): DramaAiFirstMetadata {
+  const metadata = typeof dramaOrMetadata === 'string' || dramaOrMetadata == null
+    ? parseMetadata(dramaOrMetadata)
+    : parseMetadata(dramaOrMetadata.metadata)
+  const carrier: Partial<Pick<Drama, 'source_health' | 'source_analysis' | 'adaptation_briefs' | 'selected_brief_id' | 'ai_first_stage'>> =
+    typeof dramaOrMetadata === 'string' || dramaOrMetadata == null ? {} : dramaOrMetadata
+  const aiFirst = toRecord(metadata.ai_first) ?? {}
+
+  return {
+    source_health: normalizeSourceHealth(carrier.source_health ?? aiFirst.source_health ?? metadata.source_health),
+    source_analysis: normalizeSourceAnalysis(carrier.source_analysis ?? aiFirst.source_analysis ?? metadata.source_analysis),
+    adaptation_briefs: normalizeAdaptationBriefs(carrier.adaptation_briefs ?? aiFirst.adaptation_briefs ?? metadata.adaptation_briefs),
+    selected_brief_id: toStringValue(carrier.selected_brief_id ?? aiFirst.selected_brief_id ?? metadata.selected_brief_id),
+    ai_first_stage: normalizeAiFirstStage(carrier.ai_first_stage ?? aiFirst.ai_first_stage ?? metadata.ai_first_stage),
+    ai_first_updated_at: toStringValue(aiFirst.ai_first_updated_at ?? metadata.ai_first_updated_at),
   }
 }
 

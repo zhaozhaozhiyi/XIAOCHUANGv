@@ -3,6 +3,7 @@ import { and, desc, eq, isNull, or } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
 import { aiServiceConfigs } from '../../db/schema'
+import { decryptAiConfigSecret } from './ai-configs.crypto'
 import { isMockAiConfigRow } from './ai-configs.mock'
 
 export type ServiceType = 'text' | 'image' | 'video' | 'audio'
@@ -56,7 +57,12 @@ function normalizeConfigRow(row: AIConfigRow | undefined): AIConfig | null {
     provider === 'volcengine' && serviceType === 'audio'
       ? String(process.env.VOLC_ACCESS_KEY || '').trim()
       : ''
-  const apiKey = String(row.apiKey || fallbackApiKey).trim()
+  let apiKey = ''
+  try {
+    apiKey = decryptAiConfigSecret(row.apiKey || fallbackApiKey)
+  } catch {
+    return null
+  }
 
   const config: AIConfig = {
     id: row.id,

@@ -1,4 +1,5 @@
 import type { aiServiceConfigs, aiVoices } from '../../db/schema'
+import { maybeDecryptAiConfigSecret } from './ai-configs.crypto'
 
 type AiServiceConfigRow = typeof aiServiceConfigs.$inferSelect
 type AiVoiceRow = typeof aiVoices.$inferSelect
@@ -20,7 +21,7 @@ function parseModelList(value: string | null) {
 export function isMockAiConfigRow(row: Pick<AiServiceConfigRow, 'name' | 'baseUrl' | 'model' | 'apiKey'>) {
   const name = String(row.name || '').trim().toLowerCase()
   const baseUrl = String(row.baseUrl || '').trim().toLowerCase()
-  const apiKey = String(row.apiKey || '').trim().toLowerCase()
+  const apiKey = maybeDecryptAiConfigSecret(row.apiKey).toLowerCase()
   const models = parseModelList(row.model ?? null).map((item) => item.toLowerCase())
 
   return (

@@ -1,3 +1,107 @@
+export type DramaAiFirstStage =
+  | 'source_pending'
+  | 'source_ready'
+  | 'brief_pending'
+  | 'brief_selected'
+  | 'blueprint_generating'
+  | 'blueprint_ready'
+  | 'script_generating'
+  | 'in_production'
+  | 'deliverable_ready'
+
+export interface SourceHealth {
+  status: 'ok' | 'warning' | 'blocked'
+  word_count: number
+  chapter_count: number
+  estimated_tokens: number
+  over_context_limit: boolean
+  chunk_count: number
+  recommended_mode: 'direct' | 'long_source' | 'long_source_async'
+  chapter_index?: Array<{
+    chapter_no: number
+    title: string
+    word_count: number
+    brief: string
+  }>
+  anomalies?: Array<{
+    type: string
+    severity: 'info' | 'warning' | 'blocked'
+    message: string
+    evidence?: string
+  }>
+  named_entity_density?: number | null
+  continuity_score?: number | null
+  generated_at?: string | null
+}
+
+export interface SourceAnalysis {
+  theme: string
+  core_conflict: string
+  protagonist: string
+  antagonist?: string | null
+  protagonist_goal: string
+  relationship_map?: Array<Record<string, unknown>>
+  world_rules?: string[]
+  emotional_curve?: Array<Record<string, unknown>>
+  adaptation_risks?: string[]
+  evidence?: Array<{
+    claim: string
+    source_trace?: SourceTraceItem[]
+  }>
+  ai_run_id?: string | number | null
+  remote_run_id?: string | null
+  generation_mode?: string | null
+  generated_at?: string | null
+}
+
+export interface AdaptationBrief {
+  id: string
+  name: string
+  claim: string
+  rhythm_model: string
+  target_episode_count: number
+  episode_duration: string
+  style_direction: string
+  hook_density?: string | number | null
+  retained_points?: string[]
+  removed_points?: string[]
+  risk_notes?: string[]
+  production_cost?: string | number | null
+  recommended_for?: string
+  ai_run_id?: string | number | null
+  remote_run_id?: string | null
+  generation_mode?: string | null
+  generated_at?: string | null
+}
+
+export interface SourceTraceItem {
+  source_id?: number | string | null
+  chunk_id?: number | string | null
+  chapter_no?: number | null
+  chapter_title?: string | null
+  content_start?: number | null
+  content_end?: number | null
+  excerpt?: string | null
+}
+
+export interface EpisodeBlueprintPayload {
+  episode_number: number
+  title: string
+  positioning: string
+  opening_hook: string
+  summary: string
+  source_trace?: SourceTraceItem[]
+  characters?: string[]
+  scenes?: string[]
+  ending_hook: string
+  risk_notes?: string[]
+  brief_id?: string | null
+  ai_run_id?: string | number | null
+  remote_run_id?: string | null
+  generation_mode?: string | null
+  generated_at?: string | null
+}
+
 export interface Drama {
   id: number
   title: string
@@ -18,6 +122,11 @@ export interface Drama {
   scene_count?: number
   script_progress_percent?: number
   read_only?: boolean
+  source_health?: SourceHealth | null
+  source_analysis?: SourceAnalysis | null
+  adaptation_briefs?: AdaptationBrief[] | null
+  selected_brief_id?: string | null
+  ai_first_stage?: DramaAiFirstStage | null
   episodes?: Episode[]
   characters?: Character[]
   scenes?: Scene[]
@@ -39,6 +148,12 @@ export interface Episode {
   image_config_id: number | null
   video_config_id: number | null
   audio_config_id: number | null
+  blueprint_payload?: EpisodeBlueprintPayload | string | null
+  source_trace?: SourceTraceItem[] | string | null
+  generation_mode?: string | null
+  script_ai_run_id?: string | number | null
+  script_remote_run_id?: string | null
+  failure_reason?: string | null
   created_at: string
   updated_at: string
   deleted_at: string | null

@@ -4,17 +4,16 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Image from 'next/image'
 import { toast } from 'sonner'
-import { AlertTriangle, BookOpen, CheckCircle2, Clock3, Eye, FileText, FileUp, LayoutGrid, Loader2, LogIn, Mic2, Mountain, Play, Plus, RefreshCw, Settings2, Sparkles, UserRound, Video, Wand2 } from 'lucide-react'
-import { aiConfigAPI, dramaAPI, episodeAPI, imageAPI, writingAPI } from '@/lib/api'
+import { AlertTriangle, BookOpen, CheckCircle2, Clock3, Eye, FileText, FileUp, LayoutGrid, Loader2, LogIn, Mic2, Mountain, Play, Plus, RefreshCw, Settings2, Sparkles, UserRound, Video, Wand2, X } from 'lucide-react'
+import { aiConfigAPI, dramaAPI, episodeAPI, imageAPI, taskAPI, writingAPI, type DramaAiFirstPayload } from '@/lib/api'
 import { getAiErrorCopy } from '@/lib/ai-error-copy'
 import { dramaStyleLabel, dramaStyleSelectOptions } from '@/lib/drama-style'
 import {
-  buildDramaMetadataWithAdaptationPlan,
-  buildDramaMetadataWithNovelSource,
   buildDramaMetadataWithProjectDefaults,
   getAdaptationPlan,
   getNovelSource,
   getProjectDefaults,
+  normalizeEpisodeBlueprintPayload,
   type AdaptationPlan,
   type NovelSource,
   type NovelSourceChapter,
@@ -22,6 +21,7 @@ import {
 import {
   getDramaAspectRatioLabel,
   getDramaEpisodeCount,
+  getDramaAiFirstState,
   getNovelSourceHealth,
 } from '@/lib/drama-product-state'
 import { redirectToLoginFromCurrentLocation } from '@/lib/login-redirect'
@@ -31,7 +31,7 @@ import { Dialog, DialogActions, DialogContent, DialogDescription, DialogHeaderBa
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { BaseSelect } from '@/components/shared/base-select'
-import type { AIServiceConfig, Drama, Episode, ImageGeneration, WritingListItem } from '@/types/api'
+import type { AIServiceConfig, AdaptationBrief, Drama, Episode, ImageGeneration, WritingListItem } from '@/types/api'
 
 function hasScript(ep: Episode) {
   return !!(ep.script_content)
@@ -103,6 +103,103 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function isActiveTaskStatus(status: string | null | undefined) {
+  return status === 'queued' || status === 'running'
+}
+
+function isFailedTaskStatus(status: string | null | undefined) {
+  return status === 'failed' || status === 'dead_letter' || status === 'canceled'
+}
+
+function getEpisodeStaleLabel(ep: Episode) {
+  const mode = String(ep.generation_mode || '')
+  if (mode.includes('source_stale')) return '来源已更新'
+  if (mode.includes('analysis_stale')) return '理解已更新'
+  if (mode.includes('strategy_stale')) return '策略已更新'
+  if (mode.includes('blueprint_stale')) return '蓝图已更新'
+  return ''
+}
+
+function formatTaskProgress(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return 0
+  return Math.min(100, Math.max(0, Math.round(value)))
+}
+
+function formatSourceAnalysisPhase(summary: Record<string, unknown> | null | undefined) {
+  const phase = String(summary?.phase || '')
+  if (phase === 'queued') return '等待远程 Agent 接手'
+  if (phase === 'loading_source') return '正在读取源稿'
+  if (phase === 'source_analysis') return '正在理解源稿'
+  if (phase === 'chunk_analysis') return '正在分块理解长篇源稿'
+  if (phase === 'global_summary') return '正在汇总全书主线'
+  if (phase === 'writing_analysis') return '正在写入源稿分析'
+  if (phase === 'completed') return '源稿理解已完成'
+  if (phase === 'chunk_failed') return '部分分块理解失败'
+  return '源稿理解任务进行中'
+}
+
+function formatBriefPhase(summary: Record<string, unknown> | null | undefined) {
+  const phase = String(summary?.phase || '')
+  if (phase === 'queued') return '等待生成改编策略'
+  if (phase === 'loading_context') return '正在读取源稿理解'
+  if (phase === 'adaptation_briefs') return '正在生成改编策略'
+  if (phase === 'writing_briefs') return '正在写入策略结果'
+  if (phase === 'completed') return '改编策略已完成'
+  if (phase === 'failed') return '改编策略生成失败'
+  return '改编策略任务进行中'
+}
+
+function formatBriefDetail(summary: Record<string, unknown> | null | undefined) {
+  const count = Number(summary?.brief_count || 0)
+  const target = Number(summary?.target_episode_count || 0)
+  const countText = count > 0 ? `${count} 套策略` : '多套策略'
+  return target > 0 ? `将生成 ${countText}，目标 ${target} 集。` : `将生成 ${countText}，页面会自动刷新进度。`
+}
+
+function formatBlueprintPhase(summary: Record<string, unknown> | null | undefined) {
+  const phase = String(summary?.phase || '')
+  if (phase === 'queued') return '等待生成分集蓝图'
+  if (phase === 'loading_context') return '正在读取改编策略'
+  if (phase === 'blueprint_generate') return '正在生成分集蓝图'
+  if (phase === 'writing_blueprints') return '正在写入真实分集'
+  if (phase === 'completed') return '分集蓝图已完成'
+  if (phase === 'failed') return '分集蓝图生成失败'
+  return '分集蓝图任务进行中'
+}
+
+function formatBlueprintDetail(summary: Record<string, unknown> | null | undefined) {
+  const total = Number(summary?.total_episodes || summary?.target_episode_count || 0)
+  const generated = Number(summary?.generated_episodes || 0)
+  if (total > 0) {
+    return generated > 0 ? `${generated}/${total} 集蓝图已写入。` : `目标 ${total} 集，页面会自动刷新进度。`
+  }
+  return '任务已进入队列，页面会自动刷新进度。'
+}
+
+function formatPilotScriptPhase(summary: Record<string, unknown> | null | undefined) {
+  const phase = String(summary?.phase || '')
+  if (phase === 'queued') return '等待生成试播正文'
+  if (phase === 'loading_episodes') return '正在读取分集蓝图'
+  if (phase === 'pilot_scripts') return '准备生成试播正文'
+  if (phase === 'episode_script') return '正在生成试播正文'
+  if (phase === 'episode_failed') return '部分试播正文生成失败'
+  if (phase === 'completed') return '试播正文已完成'
+  if (phase === 'failed') return '试播正文生成失败'
+  return '试播正文任务进行中'
+}
+
+function formatPilotScriptDetail(summary: Record<string, unknown> | null | undefined) {
+  const total = Number(summary?.total_episodes || 0)
+  const completed = Number(summary?.completed_episodes || 0)
+  const failed = Number(summary?.failed_episodes || 0)
+  const currentEpisodeNumber = Number(summary?.current_episode_number || 0)
+  if (total > 0) {
+    const current = currentEpisodeNumber > 0 ? `，当前第 ${currentEpisodeNumber} 集` : ''
+    return `${completed}/${total} 集已完成${failed > 0 ? `，${failed} 集失败` : ''}${current}。`
+  }
+  return '任务已进入队列，页面会自动刷新进度。'
+}
+
 function episodePreviewText(ep: Episode) {
   return String(ep.script_content || ep.content || ep.description || '').trim()
 }
@@ -164,6 +261,140 @@ type AdaptationTargetSettings = {
 
 function createTargetSettingsKey(settings: AdaptationTargetSettings) {
   return JSON.stringify(settings)
+}
+
+type AdaptationTargetFieldsProps = {
+  aspectRhythm: string
+  episodeDuration: string
+  gridClassName?: string
+  onAspectRhythmChange: (value: string) => void
+  onEpisodeDurationChange: (value: string) => void
+  onTargetEpisodeCountChange: (value: number) => void
+  onVisualStyleChange: (value: string) => void
+  targetEpisodeCount: number
+  visualStyle: string
+}
+
+function AdaptationTargetFields({
+  aspectRhythm,
+  episodeDuration,
+  gridClassName,
+  onAspectRhythmChange,
+  onEpisodeDurationChange,
+  onTargetEpisodeCountChange,
+  onVisualStyleChange,
+  targetEpisodeCount,
+  visualStyle,
+}: AdaptationTargetFieldsProps) {
+  return (
+    <div className={['grid gap-3', gridClassName || ''].filter(Boolean).join(' ')}>
+      <label className="block min-w-0">
+        <span className="text-xs font-medium text-text-3">目标集数</span>
+        <div className="mt-2 flex items-center gap-2">
+          <Input
+            type="number"
+            min={1}
+            max={120}
+            value={targetEpisodeCount}
+            onChange={(event) => onTargetEpisodeCountChange(Math.min(120, Math.max(1, Number(event.target.value) || 1)))}
+            className="h-10 rounded-[12px] border-0 bg-bg-2/80 px-4 text-sm font-semibold shadow-none"
+            aria-label="目标集数"
+          />
+        </div>
+      </label>
+      <label className="block min-w-0">
+        <span className="text-xs font-medium text-text-3">单集时长</span>
+        <BaseSelect
+          className="mt-2 [&_button]:h-10 [&_button]:rounded-[12px] [&_button]:border-0 [&_button]:bg-bg-2/80 [&_button]:px-4 [&_button]:text-sm [&_button]:font-semibold [&_button]:shadow-none [&_button:hover]:border-0 [&_button:hover]:bg-bg-hover"
+          value={episodeDuration}
+          onValueChange={(value) => onEpisodeDurationChange(String(value))}
+          options={EPISODE_DURATION_OPTIONS}
+          placeholder="选择时长"
+          searchable={false}
+        />
+      </label>
+      <label className="block min-w-0">
+        <span className="text-xs font-medium text-text-3">视觉风格</span>
+        <BaseSelect
+          className="mt-2 [&_button]:h-10 [&_button]:rounded-[12px] [&_button]:border-0 [&_button]:bg-bg-2/80 [&_button]:px-4 [&_button]:text-sm [&_button]:font-semibold [&_button]:shadow-none [&_button:hover]:border-0 [&_button:hover]:bg-bg-hover"
+          value={visualStyle}
+          onValueChange={(value) => onVisualStyleChange(String(value))}
+          options={dramaStyleSelectOptions}
+          placeholder="选择风格"
+          searchable={false}
+        />
+      </label>
+      <label className="block min-w-0">
+        <span className="text-xs font-medium text-text-3">画幅节奏</span>
+        <BaseSelect
+          className="mt-2 [&_button]:h-10 [&_button]:rounded-[12px] [&_button]:border-0 [&_button]:bg-bg-2/80 [&_button]:px-4 [&_button]:text-sm [&_button]:font-semibold [&_button]:shadow-none [&_button:hover]:border-0 [&_button:hover]:bg-bg-hover"
+          value={aspectRhythm}
+          onValueChange={(value) => onAspectRhythmChange(String(value))}
+          options={ASPECT_RHYTHM_OPTIONS}
+          placeholder="选择画幅"
+          searchable={false}
+        />
+      </label>
+    </div>
+  )
+}
+
+type LegacyAdaptationPlanNoticeProps = {
+  hasSourceIssue: boolean
+  onFixSource: () => void
+  onRegenerate: () => void
+  plan: AdaptationPlan
+  planGenerating: boolean
+  readOnly: boolean
+  sourceAnalysisTaskActive: boolean
+}
+
+function LegacyAdaptationPlanNotice({
+  hasSourceIssue,
+  onFixSource,
+  onRegenerate,
+  plan,
+  planGenerating,
+  readOnly,
+  sourceAnalysisTaskActive,
+}: LegacyAdaptationPlanNoticeProps) {
+  const loading = planGenerating || sourceAnalysisTaskActive
+  return (
+    <div className="mt-4 rounded-[14px] border border-warning/30 bg-warning-bg px-4 py-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-warning">
+            <AlertTriangle size={15} className="shrink-0" />
+            旧方案草稿
+          </div>
+          <p className="mt-2 text-sm leading-6 text-text-2">
+            这份旧规划可作为参考，但不再作为 0.23.1 的主流程产物。请基于源稿重新生成 AI 改编策略，再创建真实分集蓝图。
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-text-2">
+            <span className="rounded-full border border-warning/25 bg-bg-0/55 px-2.5 py-1">
+              原目标 {plan.target_episode_count} 集
+            </span>
+            <span className="rounded-full border border-warning/25 bg-bg-0/55 px-2.5 py-1">
+              每集 {plan.episode_duration}
+            </span>
+          </div>
+        </div>
+        {!readOnly ? (
+          hasSourceIssue ? (
+            <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 rounded-[9px]" onClick={onFixSource}>
+              <RefreshCw size={14} />
+              修复源稿
+            </Button>
+          ) : (
+            <Button type="button" size="sm" className="h-9 shrink-0 rounded-full px-4" disabled={loading} onClick={onRegenerate}>
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+              {sourceAnalysisTaskActive ? '理解源稿中' : planGenerating ? '生成中' : '重新生成策略'}
+            </Button>
+          )
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 const CHARACTER_NAME_DENYLIST = new Set([
@@ -575,9 +806,10 @@ function CharacterBibleDialog({ character, onClose }: { character: AdaptationCha
     <Dialog open={Boolean(character)} onOpenChange={(open) => { if (!open) onClose() }}>
       <DialogContent
         aria-describedby="character-bible-dialog-description"
-        className="flex max-h-[min(88dvh,780px)] w-[calc(100vw-2rem)] max-w-[920px] flex-col gap-0 overflow-hidden rounded-[28px] border-border/70 bg-bg-0 p-0 shadow-shadow-elevated sm:max-w-[920px]"
+        variant="workspace"
+        size="wide"
       >
-        <DialogHeaderBar className="border-b border-border/60 bg-bg-0/95 px-6 py-5 sm:px-8 sm:py-6">
+        <DialogHeaderBar variant="workspace">
           <div className="flex items-start justify-between gap-5 pr-11">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -594,7 +826,7 @@ function CharacterBibleDialog({ character, onClose }: { character: AdaptationCha
           </div>
         </DialogHeaderBar>
 
-        <DialogMain className="min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-8">
+        <DialogMain variant="workspace" className="gap-6">
           {character ? (
             <div className="grid gap-6 lg:grid-cols-[minmax(240px,0.86fr)_minmax(0,1.24fr)]">
               <aside className="lg:sticky lg:top-0 lg:self-start">
@@ -693,6 +925,66 @@ function SceneBibleCard({ scene, compact = false }: { scene: AdaptationScene; co
   )
 }
 
+function AdaptationBriefCard({
+  brief,
+  disabled,
+  onSelect,
+  selected,
+  selecting,
+}: {
+  brief: AdaptationBrief
+  disabled?: boolean
+  onSelect: (briefId: string) => void
+  selected: boolean
+  selecting: boolean
+}) {
+  return (
+    <article className={`rounded-[16px] border p-4 transition-colors ${
+      selected ? 'border-accent/35 bg-accent-bg/70' : 'border-border bg-bg-2/70'
+    }`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="line-clamp-1 text-sm font-semibold text-text-0">{brief.name}</h4>
+            {selected ? (
+              <span className="inline-flex h-6 items-center rounded-full bg-accent px-2.5 text-xs font-semibold text-on-accent">已选择</span>
+            ) : null}
+          </div>
+          <p className="mt-2 line-clamp-2 text-sm leading-6 text-text-2">{brief.claim}</p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant={selected ? 'outline' : 'default'}
+          className="h-8 shrink-0 rounded-full px-3 text-xs"
+          disabled={disabled || selected || selecting}
+          onClick={() => onSelect(brief.id)}
+        >
+          {selecting ? <Loader2 size={13} className="animate-spin" /> : selected ? <CheckCircle2 size={13} /> : null}
+          {selected ? '已选' : '选择'}
+        </Button>
+      </div>
+      <div className="mt-4 grid gap-2 text-xs text-text-2 sm:grid-cols-3">
+        <div className="rounded-[10px] bg-bg-0 px-3 py-2">
+          <div className="text-text-3">集数</div>
+          <div className="mt-1 font-semibold text-text-0">{brief.target_episode_count} 集</div>
+        </div>
+        <div className="rounded-[10px] bg-bg-0 px-3 py-2">
+          <div className="text-text-3">节奏</div>
+          <div className="mt-1 line-clamp-1 font-semibold text-text-0">{brief.hook_density || brief.rhythm_model}</div>
+        </div>
+        <div className="rounded-[10px] bg-bg-0 px-3 py-2">
+          <div className="text-text-3">成本</div>
+          <div className="mt-1 font-semibold text-text-0">{brief.production_cost || '中'}</div>
+        </div>
+      </div>
+      {brief.risk_notes?.length ? (
+        <p className="mt-3 line-clamp-2 text-xs leading-5 text-text-3">{brief.risk_notes[0]}</p>
+      ) : null}
+    </article>
+  )
+}
+
 export default function DramaDetailPage() {
   const router = useRouter()
   const params = useParams()
@@ -701,6 +993,7 @@ export default function DramaDetailPage() {
   const redirectedForeignDramaRef = useRef(false)
 
   const [drama, setDrama] = useState<Drama | null>(null)
+  const [aiFirstPayload, setAiFirstPayload] = useState<DramaAiFirstPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [addDialog, setAddDialog] = useState(false)
   const [splitDialog, setSplitDialog] = useState(false)
@@ -725,9 +1018,15 @@ export default function DramaDetailPage() {
   const [writingSources, setWritingSources] = useState<WritingListItem[]>([])
   const [writingSourceLoading, setWritingSourceLoading] = useState(false)
   const [writingSourceQuery, setWritingSourceQuery] = useState('')
+  const [selectedWritingSourceId, setSelectedWritingSourceId] = useState<number | null>(null)
   const [writingSourceImportingId, setWritingSourceImportingId] = useState<number | null>(null)
   const [planGenerating, setPlanGenerating] = useState(false)
   const [episodesGenerating, setEpisodesGenerating] = useState(false)
+  const [blueprintRegeneratingEpisodeId, setBlueprintRegeneratingEpisodeId] = useState<number | null>(null)
+  const [scriptGeneratingEpisodeId, setScriptGeneratingEpisodeId] = useState<number | null>(null)
+  const [pilotGenerating, setPilotGenerating] = useState(false)
+  const [briefSelectingId, setBriefSelectingId] = useState<string | null>(null)
+  const [taskActionBusyId, setTaskActionBusyId] = useState<number | null>(null)
   const [targetSaving, setTargetSaving] = useState(false)
   const targetAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSavedTargetKeyRef = useRef('')
@@ -735,13 +1034,18 @@ export default function DramaDetailPage() {
   const [planEpisodeDuration, setPlanEpisodeDuration] = useState('60-90 秒')
   const [planVisualStyle, setPlanVisualStyle] = useState('')
   const [planAspectRhythm, setPlanAspectRhythm] = useState('16:9 · 高密度钩子')
-  const [planTab, setPlanTab] = useState<'episodes' | 'characters' | 'scenes'>('episodes')
+  const [pickerTargetEpisodes, setPickerTargetEpisodes] = useState(24)
+  const [pickerEpisodeDuration, setPickerEpisodeDuration] = useState('60-90 秒')
+  const [pickerVisualStyle, setPickerVisualStyle] = useState('')
+  const [pickerAspectRhythm, setPickerAspectRhythm] = useState('16:9 · 高密度钩子')
   const [selectedPlanCharacter, setSelectedPlanCharacter] = useState<AdaptationCharacter | null>(null)
   const [projectDefaults, setProjectDefaults] = useState({
     image_config_id: '',
     video_config_id: '',
     audio_config_id: '',
   })
+  const briefGenerationAfterAnalysisRef = useRef(false)
+  const pilotNavigateTargetRef = useRef<number | null>(null)
 
   const episodes = useMemo(() => drama?.episodes || [], [drama?.episodes])
   const imageConfigOptions = useMemo(
@@ -774,9 +1078,41 @@ export default function DramaDetailPage() {
   )
   const novelSource = useMemo(() => getNovelSource(drama), [drama])
   const adaptationPlan = useMemo(() => getAdaptationPlan(drama), [drama])
-  const novelSourceHealth = useMemo(() => getNovelSourceHealth(novelSource), [novelSource])
-  const hasSourceIssue = Boolean(novelSource) && !novelSourceHealth.ok
-  const hasUsableNovelSource = Boolean(novelSource) && novelSourceHealth.ok
+  const adaptationBriefs = useMemo(() => drama?.adaptation_briefs || [], [drama?.adaptation_briefs])
+  const selectedBriefId = drama?.selected_brief_id || ''
+  const aiFirstState = useMemo(() => getDramaAiFirstState(drama), [drama])
+  const novelSourceHealth = aiFirstState.sourceHealth
+  const sourceAnalysisTask = aiFirstPayload?.source_analysis_task ?? null
+  const sourceAnalysisTaskActive = isActiveTaskStatus(sourceAnalysisTask?.status)
+  const sourceAnalysisTaskFailed = isFailedTaskStatus(sourceAnalysisTask?.status)
+  const sourceAnalysisTaskProgress = formatTaskProgress(sourceAnalysisTask?.progress)
+  const briefTask = aiFirstPayload?.brief_task ?? null
+  const briefTaskActive = isActiveTaskStatus(briefTask?.status)
+  const briefTaskFailed = isFailedTaskStatus(briefTask?.status)
+  const briefTaskProgress = formatTaskProgress(briefTask?.progress)
+  const blueprintTask = aiFirstPayload?.blueprint_task ?? null
+  const blueprintTaskActive = isActiveTaskStatus(blueprintTask?.status)
+  const blueprintTaskFailed = isFailedTaskStatus(blueprintTask?.status)
+  const blueprintTaskProgress = formatTaskProgress(blueprintTask?.progress)
+  const pilotScriptTask = aiFirstPayload?.pilot_script_task ?? null
+  const pilotScriptTaskActive = isActiveTaskStatus(pilotScriptTask?.status)
+  const pilotScriptTaskFailed = isFailedTaskStatus(pilotScriptTask?.status)
+  const pilotScriptTaskProgress = formatTaskProgress(pilotScriptTask?.progress)
+  const planBusy = planGenerating || sourceAnalysisTaskActive || briefTaskActive
+  const blueprintBusy = episodesGenerating || blueprintTaskActive
+  const pilotScriptBusy = pilotGenerating || pilotScriptTaskActive
+  const sourceChunkStats = useMemo(() => {
+    const chunks = aiFirstPayload?.source_chunks || []
+    return {
+      total: chunks.length,
+      ready: chunks.filter((chunk) => chunk.status === 'ready').length,
+      running: chunks.filter((chunk) => chunk.status === 'running').length,
+      failed: chunks.filter((chunk) => chunk.status === 'failed').length,
+    }
+  }, [aiFirstPayload?.source_chunks])
+  const hasPersistedSource = Boolean(novelSource || drama?.source_health)
+  const hasSourceIssue = hasPersistedSource && !novelSourceHealth.ok
+  const hasUsableNovelSource = hasPersistedSource && novelSourceHealth.ok
   const displayEpisodeCount = useMemo(() => getDramaEpisodeCount(drama), [drama])
   const displayAspectRatio = useMemo(() => getDramaAspectRatioLabel(drama), [drama])
   const sourceDialogHealth = useMemo(() => {
@@ -800,6 +1136,10 @@ export default function DramaDetailPage() {
     visualStyle: planVisualStyle.trim(),
   }), [planAspectRhythm, planEpisodeDuration, planTargetEpisodes, planVisualStyle])
   const targetSettingsKey = useMemo(() => createTargetSettingsKey(targetSettings), [targetSettings])
+  const selectedWritingSource = useMemo(
+    () => writingSources.find((item) => item.id === selectedWritingSourceId) ?? null,
+    [selectedWritingSourceId, writingSources],
+  )
 
   const openLoginNextHere = useCallback(() => {
     redirectToLoginFromCurrentLocation()
@@ -808,6 +1148,29 @@ export default function DramaDetailPage() {
     () => episodes.find((episode) => !hasScript(episode)) ?? episodes[0] ?? null,
     [episodes],
   )
+  const blueprintEpisodes = useMemo(
+    () => episodes.filter((episode) => normalizeEpisodeBlueprintPayload(episode.blueprint_payload)),
+    [episodes],
+  )
+  const scriptReadyEpisodes = useMemo(
+    () => episodes.filter((episode) => hasScript(episode)),
+    [episodes],
+  )
+  const blueprintScriptReadyEpisodes = useMemo(
+    () => blueprintEpisodes.filter((episode) => hasScript(episode)),
+    [blueprintEpisodes],
+  )
+  const pilotPendingEpisodes = useMemo(
+    () => blueprintEpisodes.filter((episode) => !hasScript(episode) && !episode.failure_reason),
+    [blueprintEpisodes],
+  )
+  const pilotFailedEpisodes = useMemo(
+    () => blueprintEpisodes.filter((episode) => !hasScript(episode) && episode.failure_reason),
+    [blueprintEpisodes],
+  )
+  const firstScriptReadyEpisode = blueprintScriptReadyEpisodes[0] ?? scriptReadyEpisodes[0] ?? null
+  const firstPilotPendingEpisode = pilotPendingEpisodes[0] ?? null
+  const pilotGenerateLimit = Math.min(3, Math.max(1, pilotPendingEpisodes.length))
   const coverBusy = coverGenerating
 
   const applyTargetSettings = useCallback((nextDrama: Drama) => {
@@ -828,6 +1191,32 @@ export default function DramaDetailPage() {
     })
   }, [])
 
+  const syncSourcePickerTargetSettings = useCallback(() => {
+    setPickerTargetEpisodes(Math.min(120, Math.max(1, Number(planTargetEpisodes) || 1)))
+    setPickerEpisodeDuration(planEpisodeDuration.trim() || '60-90 秒')
+    setPickerVisualStyle(planVisualStyle.trim())
+    setPickerAspectRhythm(planAspectRhythm.trim() || '16:9 · 高密度钩子')
+  }, [planAspectRhythm, planEpisodeDuration, planTargetEpisodes, planVisualStyle])
+
+  const applySourcePickerTargetSettings = useCallback(() => {
+    setPlanTargetEpisodes(Math.min(120, Math.max(1, Number(pickerTargetEpisodes) || 1)))
+    setPlanEpisodeDuration(pickerEpisodeDuration.trim() || '60-90 秒')
+    setPlanVisualStyle(pickerVisualStyle.trim())
+    setPlanAspectRhythm(pickerAspectRhythm.trim() || '16:9 · 高密度钩子')
+  }, [pickerAspectRhythm, pickerEpisodeDuration, pickerTargetEpisodes, pickerVisualStyle])
+
+  const applyAiFirstPayload = useCallback((payload: DramaAiFirstPayload) => {
+    setAiFirstPayload(payload)
+    setDrama((current) => current ? {
+      ...current,
+      source_health: payload.source_health,
+      source_analysis: payload.source_analysis,
+      adaptation_briefs: payload.adaptation_briefs,
+      selected_brief_id: payload.selected_brief_id,
+      ai_first_stage: payload.ai_first_stage,
+    } : current)
+  }, [])
+
   const load = useCallback(async () => {
     try {
       setLoading(true)
@@ -840,12 +1229,19 @@ export default function DramaDetailPage() {
         video_config_id: defaults.video_config_id ? String(defaults.video_config_id) : '',
         audio_config_id: defaults.audio_config_id ? String(defaults.audio_config_id) : '',
       })
+      if (authenticated && !d.read_only) {
+        void dramaAPI.getAiFirst(dramaId, { bypassCache: true })
+          .then(applyAiFirstPayload)
+          .catch(() => undefined)
+      } else {
+        setAiFirstPayload(null)
+      }
     } catch (e: unknown) {
       toast.error('加载短剧项目失败', { description: getAiErrorCopy(e) })
     } finally {
       setLoading(false)
     }
-  }, [applyTargetSettings, dramaId])
+  }, [applyAiFirstPayload, applyTargetSettings, authenticated, dramaId])
 
   useEffect(() => {
     redirectedForeignDramaRef.current = false
@@ -874,6 +1270,15 @@ export default function DramaDetailPage() {
             video_config_id: defaults.video_config_id ? String(defaults.video_config_id) : '',
             audio_config_id: defaults.audio_config_id ? String(defaults.audio_config_id) : '',
           })
+          if (authed && !d.read_only) {
+            void dramaAPI.getAiFirst(dramaId, { bypassCache: true })
+              .then((payload) => {
+                if (!cancelled) applyAiFirstPayload(payload)
+              })
+              .catch(() => undefined)
+          } else {
+            setAiFirstPayload(null)
+          }
         }
       } catch (e: unknown) {
         if (!cancelled) toast.error('加载短剧项目失败', { description: getAiErrorCopy(e) })
@@ -885,7 +1290,282 @@ export default function DramaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [applyTargetSettings, authenticated, dramaId, router])
+  }, [applyAiFirstPayload, applyTargetSettings, authenticated, dramaId, router])
+
+  useEffect(() => {
+    if (!drama?.id || readOnly || !sourceAnalysisTaskActive) return
+
+    let cancelled = false
+    let generatingBriefs = false
+    const currentDramaId = drama.id
+    const currentDramaStyle = drama.style
+    const poll = async () => {
+      try {
+        const payload = await dramaAPI.getAiFirst(currentDramaId, { bypassCache: true })
+        if (cancelled) return
+        applyAiFirstPayload(payload)
+        const task = payload.source_analysis_task
+
+        if (briefGenerationAfterAnalysisRef.current && task && isFailedTaskStatus(task.status)) {
+          briefGenerationAfterAnalysisRef.current = false
+          setPlanGenerating(false)
+          toast.error('源稿理解任务失败', { description: task.error_message || '请检查远程 Agent 配置后重试' })
+          return
+        }
+
+        if (
+          briefGenerationAfterAnalysisRef.current
+          && !generatingBriefs
+          && task?.status === 'completed'
+          && payload.source_analysis
+        ) {
+          generatingBriefs = true
+          const briefPayload = await dramaAPI.generateAdaptationBriefs(currentDramaId, {
+            count: 2,
+            target_episode_count: planTargetEpisodes,
+            episode_duration: planEpisodeDuration,
+            style_direction: planVisualStyle || currentDramaStyle || null,
+          })
+          if (cancelled) return
+          applyAiFirstPayload(briefPayload)
+          if (briefPayload.brief_task && isActiveTaskStatus(briefPayload.brief_task.status)) {
+            briefGenerationAfterAnalysisRef.current = false
+            toast.success('改编策略任务已启动')
+            return
+          }
+          await load()
+          setActiveTab('plan')
+          toast.success('改编策略已生成')
+          briefGenerationAfterAnalysisRef.current = false
+          setPlanGenerating(false)
+        }
+      } catch (e: unknown) {
+        if (briefGenerationAfterAnalysisRef.current) {
+          toast.error('同步源稿理解进度失败', { description: getAiErrorCopy(e) })
+        }
+      }
+    }
+
+    void poll()
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 3500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [
+    applyAiFirstPayload,
+    drama?.id,
+    drama?.style,
+    load,
+    planEpisodeDuration,
+    planTargetEpisodes,
+    planVisualStyle,
+    readOnly,
+    sourceAnalysisTaskActive,
+  ])
+
+  useEffect(() => {
+    if (!drama?.id || readOnly || !briefTaskActive) return
+
+    let cancelled = false
+    let handledTerminal = false
+    const currentDramaId = drama.id
+    const poll = async () => {
+      try {
+        const payload = await dramaAPI.getAiFirst(currentDramaId, { bypassCache: true })
+        if (cancelled) return
+        applyAiFirstPayload(payload)
+        const task = payload.brief_task
+        if (!task || handledTerminal) return
+
+        if (isFailedTaskStatus(task.status)) {
+          handledTerminal = true
+          setPlanGenerating(false)
+          toast.error('改编策略任务失败', { description: task.error_message || '请检查远程 Agent 配置后重试' })
+          return
+        }
+
+        if (task.status === 'completed') {
+          handledTerminal = true
+          setPlanGenerating(false)
+          await load()
+          setActiveTab('plan')
+          toast.success('改编策略已生成')
+        }
+      } catch {
+        // Keep polling; transient network errors should not interrupt the visible task state.
+      }
+    }
+
+    void poll()
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 3500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [
+    applyAiFirstPayload,
+    briefTaskActive,
+    drama?.id,
+    load,
+    readOnly,
+  ])
+
+  useEffect(() => {
+    if (!drama?.id || readOnly || !blueprintTaskActive) return
+
+    let cancelled = false
+    let handledTerminal = false
+    const currentDramaId = drama.id
+    const poll = async () => {
+      try {
+        const payload = await dramaAPI.getAiFirst(currentDramaId, { bypassCache: true })
+        if (cancelled) return
+        applyAiFirstPayload(payload)
+        const task = payload.blueprint_task
+        if (!task || handledTerminal) return
+
+        if (isFailedTaskStatus(task.status)) {
+          handledTerminal = true
+          setEpisodesGenerating(false)
+          toast.error('分集蓝图任务失败', { description: task.error_message || '请检查远程 Agent 配置后重试' })
+          return
+        }
+
+        if (task.status === 'completed') {
+          handledTerminal = true
+          setEpisodesGenerating(false)
+          await load()
+          setActiveTab('episodes')
+          toast.success('分集蓝图已生成')
+        }
+      } catch {
+        // Keep polling; transient network errors should not interrupt the visible task state.
+      }
+    }
+
+    void poll()
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 3500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [
+    applyAiFirstPayload,
+    blueprintTaskActive,
+    drama?.id,
+    load,
+    readOnly,
+  ])
+
+  useEffect(() => {
+    if (!drama?.id || readOnly || !pilotScriptTaskActive) return
+
+    let cancelled = false
+    let handledTerminal = false
+    const currentDramaId = drama.id
+    const poll = async () => {
+      try {
+        const payload = await dramaAPI.getAiFirst(currentDramaId, { bypassCache: true })
+        if (cancelled) return
+        applyAiFirstPayload(payload)
+        const task = payload.pilot_script_task
+        if (!task || handledTerminal) return
+
+        if (isFailedTaskStatus(task.status)) {
+          handledTerminal = true
+          pilotNavigateTargetRef.current = null
+          setPilotGenerating(false)
+          toast.error('试播正文任务失败', { description: task.error_message || '请检查远程 Agent 配置后重试' })
+          return
+        }
+
+        if (task.status === 'completed') {
+          handledTerminal = true
+          setPilotGenerating(false)
+          const targetEpisodeNumber =
+            pilotNavigateTargetRef.current
+            || payload.episodes.find((episode) => episode.has_script)?.episode_number
+            || null
+          pilotNavigateTargetRef.current = null
+          await load()
+          toast.success('试播正文已生成')
+          if (targetEpisodeNumber) {
+            router.push(`/drama/${currentDramaId}/episode/${targetEpisodeNumber}`)
+          } else {
+            setActiveTab('episodes')
+          }
+        }
+      } catch {
+        // Keep polling; transient network errors should not interrupt the visible task state.
+      }
+    }
+
+    void poll()
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 3500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [
+    applyAiFirstPayload,
+    drama?.id,
+    load,
+    pilotScriptTaskActive,
+    readOnly,
+    router,
+  ])
+
+  async function refreshAfterTaskAction() {
+    if (!drama?.id) return
+    const payload = await dramaAPI.getAiFirst(drama.id, { bypassCache: true })
+    applyAiFirstPayload(payload)
+    await load()
+  }
+
+  async function retryAiFirstTask(taskId: number, label: string) {
+    if (!drama?.id || readOnly) return
+    try {
+      setTaskActionBusyId(taskId)
+      await taskAPI.retry(taskId)
+      await refreshAfterTaskAction()
+      toast.success(`${label}已重新排队`)
+    } catch (e: unknown) {
+      toast.error(`${label}重试失败`, { description: getAiErrorCopy(e) })
+    } finally {
+      setTaskActionBusyId(null)
+    }
+  }
+
+  async function cancelAiFirstTask(taskId: number, label: string) {
+    if (!drama?.id || readOnly) return
+    try {
+      setTaskActionBusyId(taskId)
+      await taskAPI.cancel(taskId)
+      if (label === '试播正文任务') {
+        pilotNavigateTargetRef.current = null
+        setPilotGenerating(false)
+      }
+      if (label === '源稿理解任务') {
+        briefGenerationAfterAnalysisRef.current = false
+        setPlanGenerating(false)
+      }
+      await refreshAfterTaskAction()
+      toast.success(`${label}已取消`)
+    } catch (e: unknown) {
+      toast.error(`${label}取消失败`, { description: getAiErrorCopy(e) })
+    } finally {
+      setTaskActionBusyId(null)
+    }
+  }
 
   async function addEpisode() {
     try {
@@ -1025,11 +1705,15 @@ export default function DramaDetailPage() {
         toast.warning(sourceHealth.message)
         return
       }
-      const metadata = buildDramaMetadataWithNovelSource(drama.metadata, source)
-      await dramaAPI.update(drama.id, { metadata })
-      setDrama((current) => current ? { ...current, metadata: JSON.stringify(metadata) } : current)
+      const payload = await dramaAPI.saveSource(drama.id, {
+        title: source.title,
+        content: source.content,
+        source_type: 'paste',
+      })
+      applyAiFirstPayload(payload)
+      await load()
       setSourceDialogOpen(false)
-      toast.success('小说源稿已保存，旧改编规划已失效')
+      toast.success(sourceHealth.over_context_limit ? '小说源稿已保存，已进入长篇分块模式' : '小说源稿已保存，旧改编规划已失效')
     } catch (e: unknown) {
       toast.error('保存小说源稿失败', { description: getAiErrorCopy(e) })
     } finally {
@@ -1047,7 +1731,9 @@ export default function DramaDetailPage() {
         sort: 'updated_at',
         q: query.trim() || undefined,
       })
-      setWritingSources(Array.isArray(result.items) ? result.items : [])
+      const items = Array.isArray(result.items) ? result.items : []
+      setWritingSources(items)
+      setSelectedWritingSourceId((current) => (current != null && items.some((item) => item.id === current) ? current : null))
     } catch (e: unknown) {
       toast.error('加载小说作品失败', { description: getAiErrorCopy(e) })
     } finally {
@@ -1058,6 +1744,8 @@ export default function DramaDetailPage() {
   function openWritingSourcePicker() {
     if (readOnly) return
     setWritingSourceQuery('')
+    setSelectedWritingSourceId(null)
+    syncSourcePickerTargetSettings()
     setSourcePickerOpen(true)
     void loadWritingSources('')
   }
@@ -1088,16 +1776,30 @@ export default function DramaDetailPage() {
         toast.warning(sourceHealth.message)
         return
       }
-      const metadata = buildDramaMetadataWithNovelSource(drama.metadata, source)
-      await dramaAPI.update(drama.id, { metadata })
-      setDrama((current) => current ? { ...current, metadata: JSON.stringify(metadata) } : current)
+      const payload = await dramaAPI.saveSource(drama.id, {
+        title: source.title,
+        content: source.content,
+        source_type: 'writing_project',
+      })
+      applyAiFirstPayload(payload)
+      await load()
+      applySourcePickerTargetSettings()
+      setSelectedWritingSourceId(null)
       setSourcePickerOpen(false)
-      toast.success('已从小说模块引入源稿，旧改编规划已失效')
+      toast.success(sourceHealth.over_context_limit ? '已引入源稿，系统将按长篇分块理解' : '已从小说模块引入源稿，旧改编规划已失效')
     } catch (e: unknown) {
       toast.error('导入小说源稿失败', { description: getAiErrorCopy(e) })
     } finally {
       setWritingSourceImportingId(null)
     }
+  }
+
+  async function importSelectedWritingSource() {
+    if (!selectedWritingSource) {
+      toast.warning('请先选择一部小说作品')
+      return
+    }
+    await importWritingSource(selectedWritingSource)
   }
 
   const saveAdaptationTargets = useCallback(async (options: { silent?: boolean } = {}) => {
@@ -1112,21 +1814,9 @@ export default function DramaDetailPage() {
 
     try {
       setTargetSaving(true)
-      let metadata = drama.metadata
-
-      if (hasUsableNovelSource && novelSource) {
-        const nextDrama = { ...drama, style: visualStyle || null }
-        const plan = buildDraftAdaptationPlan(novelSource, nextDrama, targetEpisodeCount, {
-          episodeDuration,
-          visualStyle,
-          aspectRhythm,
-        })
-        metadata = JSON.stringify(buildDramaMetadataWithAdaptationPlan(drama.metadata, plan))
-      }
 
       await dramaAPI.update(drama.id, {
         style: visualStyle || null,
-        metadata: metadata ? JSON.parse(metadata) : undefined,
         total_episodes: targetEpisodeCount,
       })
 
@@ -1134,7 +1824,6 @@ export default function DramaDetailPage() {
         ...current,
         style: visualStyle || null,
         total_episodes: targetEpisodeCount,
-        metadata,
       } : current)
       setPlanTargetEpisodes(targetEpisodeCount)
       setPlanEpisodeDuration(episodeDuration)
@@ -1145,16 +1834,16 @@ export default function DramaDetailPage() {
         targetEpisodeCount,
         visualStyle,
       })
-      setPlanTab('episodes')
+      setActiveTab('plan')
       if (!options.silent) {
-        toast.success(hasUsableNovelSource ? '改编目标已保存，方案草稿已更新' : hasSourceIssue ? '改编目标已保存，请先修复源稿后再生成草稿' : '改编目标已保存')
+        toast.success(hasUsableNovelSource ? '改编目标已保存，可重新生成改编策略' : hasSourceIssue ? '改编目标已保存，请先修复源稿后再生成策略' : '改编目标已保存')
       }
     } catch (e: unknown) {
       toast.error('保存改编目标失败', { description: getAiErrorCopy(e) })
     } finally {
       setTargetSaving(false)
     }
-  }, [drama, hasSourceIssue, hasUsableNovelSource, novelSource, readOnly, targetSettings])
+  }, [drama, hasSourceIssue, hasUsableNovelSource, readOnly, targetSettings])
 
   useEffect(() => {
     if (!drama || readOnly || !novelSource) return
@@ -1172,7 +1861,7 @@ export default function DramaDetailPage() {
 
   async function generateAdaptationPlan() {
     if (!drama || readOnly) return
-    if (!novelSource) {
+    if (!hasPersistedSource) {
       toast.warning('请先导入小说源稿')
       return
     }
@@ -1181,80 +1870,188 @@ export default function DramaDetailPage() {
       return
     }
 
+    let waitingForAsyncSourceAnalysis = false
+    let waitingForAsyncBriefs = false
     try {
       setPlanGenerating(true)
-      const plan = buildDraftAdaptationPlan(novelSource, { ...drama, style: planVisualStyle || drama.style }, planTargetEpisodes, {
-        episodeDuration: planEpisodeDuration,
-        visualStyle: planVisualStyle,
-        aspectRhythm: planAspectRhythm,
+      if (!drama.source_health && novelSource?.content) {
+        const sourcePayload = await dramaAPI.saveSource(drama.id, {
+          title: novelSource.title || drama.title,
+          content: novelSource.content,
+          source_type: novelSource.type,
+        })
+        applyAiFirstPayload(sourcePayload)
+      }
+      const analysisPayload = await dramaAPI.analyzeSource(drama.id)
+      applyAiFirstPayload(analysisPayload)
+      if (
+        analysisPayload.source_analysis_task
+        && isActiveTaskStatus(analysisPayload.source_analysis_task.status)
+      ) {
+        briefGenerationAfterAnalysisRef.current = true
+        waitingForAsyncSourceAnalysis = true
+        toast.success('源稿理解任务已启动，完成后会继续生成改编策略')
+        return
+      }
+      const briefPayload = await dramaAPI.generateAdaptationBriefs(drama.id, {
+        count: 2,
+        target_episode_count: planTargetEpisodes,
+        episode_duration: planEpisodeDuration,
+        style_direction: planVisualStyle || drama.style || null,
       })
-      const metadata = buildDramaMetadataWithAdaptationPlan(drama.metadata, plan)
-      await dramaAPI.update(drama.id, { style: planVisualStyle || drama.style || null, metadata })
-      setDrama((current) => current ? { ...current, style: planVisualStyle || drama.style, metadata: JSON.stringify(metadata) } : current)
-      setPlanTab('episodes')
-      toast.success('方案草稿已生成')
+      applyAiFirstPayload(briefPayload)
+      if (briefPayload.brief_task && isActiveTaskStatus(briefPayload.brief_task.status)) {
+        waitingForAsyncBriefs = true
+        toast.success('改编策略任务已启动')
+        return
+      }
+      await load()
+      setActiveTab('plan')
+      toast.success('改编策略已生成')
     } catch (e: unknown) {
-      toast.error('生成方案草稿失败', { description: getAiErrorCopy(e) })
+      toast.error('生成改编策略失败', { description: getAiErrorCopy(e) })
     } finally {
-      setPlanGenerating(false)
+      if (!waitingForAsyncSourceAnalysis && !waitingForAsyncBriefs) setPlanGenerating(false)
+    }
+  }
+
+  async function selectAiFirstBrief(briefId: string) {
+    if (!drama || readOnly) return
+    try {
+      setBriefSelectingId(briefId)
+      await dramaAPI.selectAdaptationBrief(drama.id, briefId)
+      await load()
+      toast.success('已选择改编策略')
+    } catch (e: unknown) {
+      toast.error('选择改编策略失败', { description: getAiErrorCopy(e) })
+    } finally {
+      setBriefSelectingId(null)
     }
   }
 
   async function createEpisodesFromPlan(options: { navigateToEpisodeNumber?: number } = {}) {
-    if (!drama || !adaptationPlan || readOnly) return
+    if (!drama || readOnly) return
     if (!novelSourceHealth.ok) {
       toast.warning(novelSourceHealth.message)
       return
     }
-    if (episodes.length > 0) {
-      toast.warning('当前项目已有分集，第一期暂不覆盖已有分集')
+    if (adaptationBriefs.length > 0) {
+      if (!selectedBriefId) {
+        toast.warning('请先选择一套改编策略')
+        return
+      }
+      let asyncTaskStarted = false
+      try {
+        setEpisodesGenerating(true)
+        const payload = await dramaAPI.generateEpisodeBlueprints(drama.id)
+        applyAiFirstPayload(payload)
+        const task = payload.blueprint_task
+        if (task && isActiveTaskStatus(task.status)) {
+          asyncTaskStarted = true
+          toast.success('分集蓝图任务已启动')
+          return
+        }
+        await load()
+        toast.success('分集蓝图已生成')
+        if (options.navigateToEpisodeNumber) {
+          router.push(`/drama/${drama.id}/episode/${options.navigateToEpisodeNumber}`)
+          return
+        }
+        setActiveTab('episodes')
+      } catch (e: unknown) {
+        toast.error('生成分集蓝图失败', { description: getAiErrorCopy(e) })
+      } finally {
+        if (!asyncTaskStarted) setEpisodesGenerating(false)
+      }
+      return
+    }
+    if (!adaptationPlan) {
+      toast.warning('请先生成并选择改编策略')
+      return
+    }
+    toast.warning('旧方案草稿不能直接生成分集，请重新生成 AI 改编策略后再创建分集蓝图。')
+  }
+
+  async function regenerateEpisodeBlueprint(episode: Episode) {
+    if (!drama || readOnly) return
+    if (!selectedBriefId) {
+      toast.warning('请先选择一套改编策略')
+      return
+    }
+    try {
+      setBlueprintRegeneratingEpisodeId(episode.id)
+      await episodeAPI.regenerateBlueprint(episode.id)
+      await load()
+      toast.success(hasScript(episode) ? '本集蓝图已更新，原正文已标记需重写' : '本集蓝图已重生')
+    } catch (e: unknown) {
+      toast.error('重生本集蓝图失败', { description: getAiErrorCopy(e) })
+    } finally {
+      setBlueprintRegeneratingEpisodeId(null)
+    }
+  }
+
+  async function generateEpisodeScript(episode: Episode, rewrite = false) {
+    if (!drama || readOnly) return
+    if (!normalizeEpisodeBlueprintPayload(episode.blueprint_payload)) {
+      toast.warning('请先生成本集蓝图')
+      return
+    }
+    try {
+      setScriptGeneratingEpisodeId(episode.id)
+      if (rewrite) {
+        await episodeAPI.rewriteScript(episode.id)
+      } else {
+        await episodeAPI.generateScript(episode.id)
+      }
+      await load()
+      toast.success(rewrite ? '本集正文已重写' : '本集正文已生成')
+    } catch (e: unknown) {
+      toast.error(rewrite ? '重写本集正文失败' : '生成本集正文失败', { description: getAiErrorCopy(e) })
+    } finally {
+      setScriptGeneratingEpisodeId(null)
+    }
+  }
+
+  async function generatePilotScripts(options: { navigateToFirst?: boolean } = {}) {
+    if (!drama || readOnly) return
+    if (blueprintEpisodes.length === 0) {
+      toast.warning('请先生成分集蓝图')
       return
     }
 
+    if (pilotPendingEpisodes.length === 0) {
+      if (firstScriptReadyEpisode && options.navigateToFirst) {
+        router.push(`/drama/${drama.id}/episode/${firstScriptReadyEpisode.episode_number}`)
+        return
+      }
+      toast.info('试播正文已生成，可直接进入工作台')
+      return
+    }
+
+    const targetEpisodeNumber = firstPilotPendingEpisode?.episode_number || 1
+    let asyncTaskStarted = false
     try {
-      setEpisodesGenerating(true)
-      let targetCreatedEpisode: Episode | null = null
-      for (const outline of adaptationPlan.episode_outlines) {
-        const created = await episodeAPI.create({
-          drama_id: drama.id,
-          title: outline.title,
-        }) as Episode
-        if (created.episode_number === options.navigateToEpisodeNumber) {
-          targetCreatedEpisode = created
-        }
-        const draftContent = [
-          `# ${outline.title}`,
-          '',
-          outline.source_range ? `原文范围：${outline.source_range}` : '',
-          outline.hook ? `开场钩子：${outline.hook}` : '',
-          outline.key_beats.length ? `关键节拍：\n${outline.key_beats.map((beat, index) => `${index + 1}. ${beat}`).join('\n')}` : '',
-          outline.ending_hook ? `结尾悬念：${outline.ending_hook}` : '',
-          outline.characters.length ? `出场角色：${outline.characters.join('、')}` : '',
-          outline.scenes.length ? `核心场景：${outline.scenes.join('、')}` : '',
-        ].filter(Boolean).join('\n\n')
-        await episodeAPI.update(created.id, {
-          content: draftContent,
-          description: outline.hook || outline.ending_hook || '',
-        })
+      setPilotGenerating(true)
+      const payload = await dramaAPI.generatePilotScripts(drama.id, { limit: pilotGenerateLimit })
+      applyAiFirstPayload(payload)
+      const task = payload.pilot_script_task
+      if (task && isActiveTaskStatus(task.status)) {
+        asyncTaskStarted = true
+        pilotNavigateTargetRef.current = options.navigateToFirst ? targetEpisodeNumber : null
+        toast.success('试播正文任务已启动')
+        return
       }
-      const confirmedPlan: AdaptationPlan = {
-        ...adaptationPlan,
-        status: 'confirmed',
-      }
-      const metadata = buildDramaMetadataWithAdaptationPlan(drama.metadata, confirmedPlan)
-      await dramaAPI.update(drama.id, { metadata })
-      setDrama((current) => current ? { ...current, metadata: JSON.stringify(metadata) } : current)
-      toast.success(`已生成 ${adaptationPlan.episode_outlines.length} 个分集`)
       await load()
-      if (options.navigateToEpisodeNumber) {
-        router.push(`/drama/${drama.id}/episode/${targetCreatedEpisode?.episode_number ?? options.navigateToEpisodeNumber}`)
+      toast.success(`已生成 ${pilotGenerateLimit} 集试播正文`)
+      if (options.navigateToFirst) {
+        router.push(`/drama/${drama.id}/episode/${targetEpisodeNumber}`)
         return
       }
       setActiveTab('episodes')
     } catch (e: unknown) {
-      toast.error('生成分集失败', { description: getAiErrorCopy(e) })
+      toast.error('生成试播正文失败', { description: getAiErrorCopy(e) })
     } finally {
-      setEpisodesGenerating(false)
+      if (!asyncTaskStarted) setPilotGenerating(false)
     }
   }
 
@@ -1363,7 +2160,14 @@ export default function DramaDetailPage() {
     { key: 'characters' as const, label: '角色', icon: UserRound, count: drama.characters?.length || 0 },
     { key: 'scenes' as const, label: '场景', icon: Mountain, count: drama.scenes?.length || 0 },
     ...(novelSource ? [{ key: 'source' as const, label: '原稿', icon: BookOpen, count: 1 }] : []),
-    ...(adaptationPlan ? [{ key: 'plan' as const, label: '方案草稿', icon: Wand2, count: adaptationPlan.target_episode_count }] : []),
+    ...(adaptationPlan || adaptationBriefs.length
+      ? [{
+        key: 'plan' as const,
+        label: aiFirstState.legacyPlanOnly ? '旧方案' : '改编策略',
+        icon: Wand2,
+        count: adaptationBriefs.length || (aiFirstState.legacyPlanOnly ? 1 : 0),
+      }]
+      : []),
   ]
 
   return (
@@ -1463,13 +2267,13 @@ export default function DramaDetailPage() {
                 }`}
                 aria-current={hasUsableNovelSource ? 'step' : undefined}
               >
-                02 方案草稿
+                02 改编策略
               </span>
               <span className="text-text-3">→</span>
               <span className="rounded-full border border-border bg-bg-2 px-3 py-1.5 font-semibold">03 分集制作</span>
             </div>
             {!novelSource ? (
-            <section className="rounded-[14px] border border-border bg-bg-0 p-5 shadow-shadow-xs">
+            <section className="space-y-5 border-0 bg-transparent p-0 shadow-none">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-base font-semibold text-text-0">
@@ -1477,19 +2281,16 @@ export default function DramaDetailPage() {
                     <BookOpen size={16} />
                     添加小说 / 导入原稿
                   </div>
-                  <p className="mt-1 text-sm leading-6 text-text-2">
-                    刚创建的项目从这里开始，先导入整本小说或原始文本。
-                  </p>
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.18fr)_minmax(0,0.82fr)]">
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1.18fr)_minmax(0,0.82fr)]">
                 <button
                   type="button"
                   onClick={openWritingSourcePicker}
-                  className="group flex min-h-[188px] flex-col items-start justify-between rounded-[12px] border border-accent-glow bg-accent-bg px-5 py-5 text-left transition-colors hover:border-accent hover:bg-bg-hover"
+                  className="group flex min-h-[176px] flex-col items-start justify-between rounded-[14px] border-0 bg-[color-mix(in_srgb,var(--color-accent)_7%,var(--color-bg-2))] px-5 py-5 text-left transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-[color-mix(in_srgb,var(--color-accent)_10%,var(--color-bg-2))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0"
                 >
-                  <div className="flex size-11 items-center justify-center rounded-[10px] border border-accent-glow bg-bg-0 text-accent shadow-shadow-xs">
+                  <div className="flex size-11 items-center justify-center rounded-[11px] bg-bg-surface-glass text-accent backdrop-blur-md">
                     <BookOpen size={22} />
                   </div>
                   <div className="mt-6">
@@ -1503,15 +2304,15 @@ export default function DramaDetailPage() {
                 <button
                   type="button"
                   onClick={() => openSourceDialog('edit')}
-                  className="group flex min-h-[188px] flex-col items-start justify-between rounded-[12px] border border-dashed border-border-strong bg-bg-0 px-5 py-5 text-left transition-colors hover:border-accent hover:bg-bg-hover"
+                  className="group flex min-h-[176px] flex-col items-start justify-between rounded-[14px] border-0 bg-[color-mix(in_srgb,var(--color-bg-2)_62%,var(--color-bg-0))] px-5 py-5 text-left transition-[background-color,transform] duration-200 hover:-translate-y-0.5 hover:bg-[color-mix(in_srgb,var(--color-accent)_6%,var(--color-bg-2))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0"
                 >
-                  <div className="flex size-11 items-center justify-center rounded-[10px] border border-border bg-bg-2 text-text-2 group-hover:text-accent">
+                  <div className="flex size-11 items-center justify-center rounded-[11px] bg-bg-surface-glass text-text-2 backdrop-blur-md group-hover:text-accent">
                     <FileUp size={22} />
                   </div>
                   <div className="mt-6">
                     <h3 className="font-body text-base font-black tracking-normal text-text-0">粘贴 / 导入原稿</h3>
                     <p className="mt-2 text-sm leading-6 text-text-2">
-                      直接粘贴整本小说全文，保存后统计字数、章节并进入方案草稿。
+                      直接粘贴整本小说全文，保存后统计字数、章节并进入改编策略。
                     </p>
                   </div>
                 </button>
@@ -1528,7 +2329,7 @@ export default function DramaDetailPage() {
                       {hasSourceIssue ? '01' : '02'}
                     </span>
                     {hasSourceIssue ? <AlertTriangle size={16} className="text-warning" /> : <Wand2 size={16} />}
-                    {hasSourceIssue ? '修复小说源稿' : '方案草稿'}
+                    {hasSourceIssue ? '修复小说源稿' : '改编策略'}
                   </div>
                   <p className="mt-1 text-sm leading-6 text-text-2">
                     {hasSourceIssue
@@ -1561,7 +2362,7 @@ export default function DramaDetailPage() {
                     <div>
                       <div className="text-sm font-semibold text-warning">请先修复源稿再继续改编</div>
                       <p className="mt-1 text-sm leading-6 text-text-2">
-                        {novelSourceHealth.message} 当前方案草稿仅适合排查问题，不建议继续生成分集。
+                        {novelSourceHealth.message} 当前改编策略仅适合排查问题，不建议继续生成分集。
                       </p>
                     </div>
                   </div>
@@ -1576,60 +2377,22 @@ export default function DramaDetailPage() {
                       改编目标
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-text-3">
-                    {targetSaving ? <Loader2 size={13} className="animate-spin text-accent" /> : <CheckCircle2 size={13} className="text-accent" />}
-                    {targetSaving ? '正在同步' : '更改后自动生效'}
-                  </div>
+                <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-text-3">
+                  {targetSaving ? <Loader2 size={13} className="animate-spin text-accent" /> : <CheckCircle2 size={13} className="text-accent" />}
+                  {targetSaving ? '正在同步' : '更改后自动生效'}
                 </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <label className="block min-w-0">
-                    <span className="text-xs font-medium text-text-3">目标集数</span>
-                    <div className="mt-2 flex items-center gap-2">
-                      <Input
-                        type="number"
-                        min={1}
-                        max={120}
-                        value={planTargetEpisodes}
-                        onChange={(event) => setPlanTargetEpisodes(Math.min(120, Math.max(1, Number(event.target.value) || 1)))}
-                        className="h-10 rounded-[12px] border-0 bg-bg-2/80 px-4 text-sm font-semibold shadow-none"
-                        aria-label="目标集数"
-                      />
-                    </div>
-                  </label>
-                  <label className="block min-w-0">
-                    <span className="text-xs font-medium text-text-3">单集时长</span>
-                    <BaseSelect
-                      className="mt-2 [&_button]:h-10 [&_button]:rounded-[12px] [&_button]:border-0 [&_button]:bg-bg-2/80 [&_button]:px-4 [&_button]:text-sm [&_button]:font-semibold [&_button]:shadow-none [&_button:hover]:border-0 [&_button:hover]:bg-bg-hover"
-                      value={planEpisodeDuration}
-                      onValueChange={(value) => setPlanEpisodeDuration(String(value))}
-                      options={EPISODE_DURATION_OPTIONS}
-                      placeholder="选择时长"
-                      searchable={false}
-                    />
-                  </label>
-                  <label className="block min-w-0">
-                    <span className="text-xs font-medium text-text-3">视觉风格</span>
-                    <BaseSelect
-                      className="mt-2 [&_button]:h-10 [&_button]:rounded-[12px] [&_button]:border-0 [&_button]:bg-bg-2/80 [&_button]:px-4 [&_button]:text-sm [&_button]:font-semibold [&_button]:shadow-none [&_button:hover]:border-0 [&_button:hover]:bg-bg-hover"
-                      value={planVisualStyle}
-                      onValueChange={(value) => setPlanVisualStyle(String(value))}
-                      options={dramaStyleSelectOptions}
-                      placeholder="选择风格"
-                      searchable={false}
-                    />
-                  </label>
-                  <label className="block min-w-0">
-                    <span className="text-xs font-medium text-text-3">画幅节奏</span>
-                    <BaseSelect
-                      className="mt-2 [&_button]:h-10 [&_button]:rounded-[12px] [&_button]:border-0 [&_button]:bg-bg-2/80 [&_button]:px-4 [&_button]:text-sm [&_button]:font-semibold [&_button]:shadow-none [&_button:hover]:border-0 [&_button:hover]:bg-bg-hover"
-                      value={planAspectRhythm}
-                      onValueChange={(value) => setPlanAspectRhythm(String(value))}
-                      options={ASPECT_RHYTHM_OPTIONS}
-                      placeholder="选择画幅"
-                      searchable={false}
-                    />
-                  </label>
-                </div>
+              </div>
+                <AdaptationTargetFields
+                  gridClassName="mt-4 sm:grid-cols-2 lg:grid-cols-4"
+                  targetEpisodeCount={planTargetEpisodes}
+                  onTargetEpisodeCountChange={setPlanTargetEpisodes}
+                  episodeDuration={planEpisodeDuration}
+                  onEpisodeDurationChange={setPlanEpisodeDuration}
+                  visualStyle={planVisualStyle}
+                  onVisualStyleChange={setPlanVisualStyle}
+                  aspectRhythm={planAspectRhythm}
+                  onAspectRhythmChange={setPlanAspectRhythm}
+                />
               </div>
 
               <div className="py-1">
@@ -1637,7 +2400,7 @@ export default function DramaDetailPage() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-text-0">
                       <span className="inline-flex size-6 items-center justify-center rounded-full bg-bg-2/80 text-xs font-semibold text-accent-text">B</span>
-                      方案草稿
+                      改编策略
                     </div>
                   </div>
                   {adaptationPlan ? (
@@ -1645,24 +2408,150 @@ export default function DramaDetailPage() {
                       className={`inline-flex h-7 shrink-0 items-center text-xs font-semibold ${
                         hasSourceIssue
                           ? 'text-warning'
-                          : 'text-accent-text'
+                          : 'text-text-3'
                       }`}
                     >
-                      {hasSourceIssue ? '待重新生成' : '草稿已生成'}
+                      {hasSourceIssue ? '待重新生成' : '旧数据待迁移'}
                     </span>
                   ) : null}
                 </div>
 
-              {!adaptationPlan ? (
+              {sourceAnalysisTask && (sourceAnalysisTaskActive || sourceAnalysisTaskFailed) ? (
+                <div
+                  role={sourceAnalysisTaskFailed ? 'alert' : 'status'}
+                  aria-live="polite"
+                  className="mt-4 rounded-[14px] border border-border bg-bg-2/70 px-4 py-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-text-0">
+                      {sourceAnalysisTaskFailed ? (
+                        <AlertTriangle size={15} className="shrink-0 text-warning" />
+                      ) : (
+                        <Loader2 size={15} className="shrink-0 animate-spin text-accent-text" />
+                      )}
+                      <span className="truncate">
+                        {sourceAnalysisTaskFailed ? '源稿理解失败' : formatSourceAnalysisPhase(sourceAnalysisTask.result_summary)}
+                      </span>
+                    </div>
+                    <span className="shrink-0 text-xs font-semibold text-text-2">{sourceAnalysisTaskProgress}%</span>
+                  </div>
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-bg-0">
+                    <div
+                      className={`h-full rounded-full ${sourceAnalysisTaskFailed ? 'bg-warning' : 'bg-accent'}`}
+                      style={{ width: `${sourceAnalysisTaskProgress}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-text-2">
+                    {sourceAnalysisTaskFailed
+                      ? sourceAnalysisTask.error_message || '请检查远程 Agent 配置后重试。'
+                      : sourceChunkStats.total > 0
+                        ? `${sourceChunkStats.ready}/${sourceChunkStats.total} 个分块已完成${sourceChunkStats.running > 0 ? `，${sourceChunkStats.running} 个进行中` : ''}${sourceChunkStats.failed > 0 ? `，${sourceChunkStats.failed} 个失败` : ''}。`
+                        : '任务已进入队列，页面会自动刷新进度。'}
+                  </p>
+                  {!readOnly ? (
+                    <div className="mt-3 flex flex-wrap justify-end gap-2">
+                      {sourceAnalysisTaskActive ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-full px-3 text-xs"
+                          disabled={taskActionBusyId === sourceAnalysisTask.id}
+                          onClick={() => { void cancelAiFirstTask(sourceAnalysisTask.id, '源稿理解任务') }}
+                        >
+                          {taskActionBusyId === sourceAnalysisTask.id ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+                          取消
+                        </Button>
+                      ) : sourceAnalysisTaskFailed ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-full px-3 text-xs"
+                          disabled={taskActionBusyId === sourceAnalysisTask.id}
+                          onClick={() => { void retryAiFirstTask(sourceAnalysisTask.id, '源稿理解任务') }}
+                        >
+                          {taskActionBusyId === sourceAnalysisTask.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                          重试理解
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {briefTask && (briefTaskActive || briefTaskFailed) ? (
+                <div
+                  role={briefTaskFailed ? 'alert' : 'status'}
+                  aria-live="polite"
+                  className="mt-4 rounded-[14px] border border-border bg-bg-2/70 px-4 py-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-text-0">
+                      {briefTaskFailed ? (
+                        <AlertTriangle size={15} className="shrink-0 text-warning" />
+                      ) : (
+                        <Loader2 size={15} className="shrink-0 animate-spin text-accent-text" />
+                      )}
+                      <span className="truncate">
+                        {briefTaskFailed ? '改编策略任务失败' : formatBriefPhase(briefTask.result_summary)}
+                      </span>
+                    </div>
+                    <span className="shrink-0 text-xs font-semibold text-text-2">{briefTaskProgress}%</span>
+                  </div>
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-bg-0">
+                    <div
+                      className={`h-full rounded-full ${briefTaskFailed ? 'bg-warning' : 'bg-accent'}`}
+                      style={{ width: `${briefTaskProgress}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-text-2">
+                    {briefTaskFailed
+                      ? briefTask.error_message || '请检查远程 Agent 配置后重试。'
+                      : formatBriefDetail(briefTask.result_summary)}
+                  </p>
+                  {!readOnly ? (
+                    <div className="mt-3 flex flex-wrap justify-end gap-2">
+                      {briefTaskActive ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-full px-3 text-xs"
+                          disabled={taskActionBusyId === briefTask.id}
+                          onClick={() => { void cancelAiFirstTask(briefTask.id, '改编策略任务') }}
+                        >
+                          {taskActionBusyId === briefTask.id ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+                          取消
+                        </Button>
+                      ) : briefTaskFailed ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-full px-3 text-xs"
+                          disabled={taskActionBusyId === briefTask.id}
+                          onClick={() => { void retryAiFirstTask(briefTask.id, '改编策略任务') }}
+                        >
+                          {taskActionBusyId === briefTask.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                          重试策略
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {!adaptationPlan && adaptationBriefs.length === 0 ? (
                 <div className="mt-6 flex min-h-[188px] flex-col items-center justify-center px-6 py-8 text-center">
                   <Sparkles size={36} className="text-text-3" strokeWidth={1.8} />
-                  <h3 className="mt-4 font-body text-lg font-black tracking-normal text-text-0">等待生成方案草稿</h3>
+                  <h3 className="mt-4 font-body text-lg font-black tracking-normal text-text-0">等待生成改编策略</h3>
                   <p className="mt-2 max-w-md text-sm leading-6 text-text-2">
                     {hasSourceIssue
-                      ? '当前原稿内容异常，请先修复或更换源稿，再生成可用的方案草稿。'
+                      ? '当前原稿内容异常，请先修复或更换源稿，再生成可用的改编策略。'
                       : novelSource
-                        ? '将根据源稿快速生成目标集数、主线、角色圣经、场景圣经和分集大纲；这一步不消耗 AI 额度，后续分集制作再调用 AI。'
-                        : '请先导入小说源稿，再生成方案草稿。'}
+                        ? '将先理解源稿，再生成目标集数、主线、角色圣经、场景圣经和分集大纲。长篇源稿会进入分块任务。'
+                        : '请先导入小说源稿，再生成改编策略。'}
                   </p>
                   {hasSourceIssue ? (
                     <Button type="button" className="mt-5 h-9 rounded-[9px]" onClick={() => openSourceDialog('edit')}>
@@ -1670,108 +2559,127 @@ export default function DramaDetailPage() {
                       修复源稿
                     </Button>
                   ) : (
-                    <Button type="button" className="mt-5 h-9 rounded-[9px]" disabled={!hasUsableNovelSource || planGenerating} onClick={generateAdaptationPlan}>
-                      {planGenerating ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                      生成方案草稿
+                    <Button type="button" className="mt-5 h-9 rounded-[9px]" disabled={!hasUsableNovelSource || planBusy} onClick={generateAdaptationPlan}>
+                      {planBusy ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                      {sourceAnalysisTaskActive ? '理解源稿中' : briefTaskActive ? '生成策略中' : planGenerating ? '生成中' : '生成改编策略'}
                     </Button>
                   )}
                 </div>
-              ) : (
+              ) : adaptationBriefs.length > 0 ? (
                 <div className="mt-4">
                   {hasSourceIssue ? (
                     <div role="alert" className="mb-4 rounded-[12px] border border-warning/30 bg-warning-bg px-4 py-3">
-                      <div className="text-sm font-semibold text-warning">当前方案基于异常源稿生成</div>
+                      <div className="text-sm font-semibold text-warning">当前策略基于异常源稿生成</div>
                       <p className="mt-1 text-sm leading-6 text-text-2">
-                        请先修复原稿，再重新生成方案草稿；在此之前不建议继续确认分集。
+                        请先修复原稿，再重新生成改编策略；在此之前不建议继续确认分集。
                       </p>
                     </div>
                   ) : null}
-                  <div className="rounded-[18px] bg-accent-bg/70 p-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <div className="text-sm font-semibold text-text-0">目标：{adaptationPlan.target_episode_count} 集 · 每集 {adaptationPlan.episode_duration}</div>
-                        <p className="mt-1 text-sm leading-6 text-text-2">{adaptationPlan.logline || adaptationPlan.main_plot}</p>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="h-9 rounded-full px-4"
-                        disabled={episodesGenerating || episodes.length > 0}
-                        onClick={hasSourceIssue ? () => openSourceDialog('edit') : () => { void createEpisodesFromPlan() }}
-                        title={
-                          hasSourceIssue
-                            ? '打开源稿编辑，修复后重新生成方案'
-                            : episodes.length > 0
-                              ? '当前项目已有分集，第一期不会覆盖已有分集'
-                              : '根据当前规划生成分集'
-                        }
-                      >
-                        {episodesGenerating ? <Loader2 size={14} className="animate-spin" /> : hasSourceIssue ? <RefreshCw size={14} /> : <CheckCircle2 size={14} />}
-                        {hasSourceIssue ? '修复源稿' : episodes.length > 0 ? '分集已存在' : '确认生成分集'}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex rounded-full bg-bg-2/80 p-1">
-                    {[
-                      { key: 'episodes' as const, label: '分集大纲', count: adaptationPlan.episode_outlines.length },
-                      { key: 'characters' as const, label: '角色圣经', count: adaptationPlan.character_bible.length },
-                      { key: 'scenes' as const, label: '场景圣经', count: adaptationPlan.scene_bible.length },
-                    ].map((item) => (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => setPlanTab(item.key)}
-                        className={`flex h-8 min-w-0 flex-1 items-center justify-center gap-2 rounded-full px-3 text-sm font-bold transition-colors ${
-                          planTab === item.key ? 'bg-bg-0 text-text-0 shadow-shadow-xs' : 'text-text-1 hover:bg-bg-hover'
-                        }`}
-                      >
-                        <span className="truncate">{item.label}</span>
-                        <span className="inline-flex size-5 items-center justify-center rounded-full bg-accent text-xs text-on-accent">{item.count}</span>
-                      </button>
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {adaptationBriefs.map((brief) => (
+                      <AdaptationBriefCard
+                        key={brief.id}
+                        brief={brief}
+                        disabled={readOnly || hasSourceIssue || planBusy || blueprintBusy}
+                        selected={brief.id === selectedBriefId}
+                        selecting={briefSelectingId === brief.id}
+                        onSelect={selectAiFirstBrief}
+                      />
                     ))}
                   </div>
-
-                  <div className="mt-4">
-                    {planTab === 'episodes' ? (
-                      <div className="space-y-2">
-                        {adaptationPlan.episode_outlines.map((episode) => (
-                          <button
-                            key={episode.episode_number}
-                            type="button"
-                            className="group w-full rounded-[14px] bg-bg-2/70 px-4 py-3 text-left transition-[background,box-shadow,transform] hover:bg-bg-hover hover:shadow-shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:cursor-wait disabled:opacity-70"
-                            disabled={episodesGenerating}
-                            onClick={() => { void openPlanEpisode(episode.episode_number) }}
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="min-w-0 truncate text-sm font-semibold text-text-0">{episode.title}</div>
-                              <div className="flex shrink-0 items-center gap-2 text-xs">
-                                <span className="text-text-3">{episode.source_range || '待定范围'}</span>
-                                <span className="hidden font-semibold text-accent-text opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 sm:inline">
-                                  {episodes.length > 0 ? '进入工作台' : '生成并进入'}
-                                </span>
-                              </div>
-                            </div>
-                            <p className="mt-2 line-clamp-2 text-xs leading-5 text-text-2">{episode.hook}</p>
-                          </button>
-                        ))}
+                  <div className="mt-4 flex flex-col gap-3 rounded-[18px] bg-accent-bg/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-text-0">
+                        {selectedBriefId ? '策略已选择，可以生成分集蓝图' : '请先选择一套策略'}
                       </div>
-                    ) : planTab === 'characters' ? (
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {adaptationPlan.character_bible.map((character) => (
-                          <CharacterBibleCard key={character.name} character={character} compact onOpen={setSelectedPlanCharacter} />
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {adaptationPlan.scene_bible.map((scene) => (
-                          <SceneBibleCard key={`${scene.name}-${scene.location}`} scene={scene} compact />
-                        ))}
-                      </div>
-                    )}
+                      <p className="mt-1 text-sm leading-6 text-text-2">
+                        分集蓝图会创建真实 Episode，并保留源稿追溯。
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-9 shrink-0 rounded-full px-4"
+                      disabled={planBusy || blueprintBusy || !selectedBriefId || hasSourceIssue}
+                      onClick={() => { void createEpisodesFromPlan() }}
+                    >
+                      {blueprintBusy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                      {blueprintBusy ? '生成中' : '生成分集蓝图'}
+                    </Button>
                   </div>
+                  {blueprintTask && (blueprintTaskActive || blueprintTaskFailed) ? (
+                    <div
+                      role={blueprintTaskFailed ? 'alert' : 'status'}
+                      aria-live="polite"
+                      className="mt-3 rounded-[12px] border border-border bg-bg-2/70 px-3 py-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-text-0">
+                          {blueprintTaskFailed ? (
+                            <AlertTriangle size={14} className="shrink-0 text-warning" />
+                          ) : (
+                            <Loader2 size={14} className="shrink-0 animate-spin text-accent-text" />
+                          )}
+                          <span className="truncate">
+                            {blueprintTaskFailed ? '分集蓝图任务失败' : formatBlueprintPhase(blueprintTask.result_summary)}
+                          </span>
+                        </div>
+                        <span className="shrink-0 text-xs font-semibold text-text-2">{blueprintTaskProgress}%</span>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-0">
+                        <div
+                          className={`h-full rounded-full ${blueprintTaskFailed ? 'bg-warning' : 'bg-accent'}`}
+                          style={{ width: `${blueprintTaskProgress}%` }}
+                        />
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-text-2">
+                        {blueprintTaskFailed
+                          ? blueprintTask.error_message || '请检查远程 Agent 配置后重试。'
+                          : formatBlueprintDetail(blueprintTask.result_summary)}
+                      </p>
+                      {!readOnly ? (
+                        <div className="mt-3 flex flex-wrap justify-end gap-2">
+                          {blueprintTaskActive ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 rounded-full px-3 text-xs"
+                              disabled={taskActionBusyId === blueprintTask.id}
+                              onClick={() => { void cancelAiFirstTask(blueprintTask.id, '分集蓝图任务') }}
+                            >
+                              {taskActionBusyId === blueprintTask.id ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+                              取消
+                            </Button>
+                          ) : blueprintTaskFailed ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 rounded-full px-3 text-xs"
+                              disabled={taskActionBusyId === blueprintTask.id}
+                              onClick={() => { void retryAiFirstTask(blueprintTask.id, '分集蓝图任务') }}
+                            >
+                              {taskActionBusyId === blueprintTask.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                              重试蓝图
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
-              )}
+              ) : adaptationPlan ? (
+                <LegacyAdaptationPlanNotice
+                  hasSourceIssue={hasSourceIssue}
+                  onFixSource={() => openSourceDialog('edit')}
+                  onRegenerate={generateAdaptationPlan}
+                  plan={adaptationPlan}
+                  planGenerating={planGenerating || briefTaskActive}
+                  readOnly={readOnly}
+                  sourceAnalysisTaskActive={sourceAnalysisTaskActive}
+                />
+              ) : null}
               </div>
             </section>
             ) : null}
@@ -1786,8 +2694,106 @@ export default function DramaDetailPage() {
               分集制作
             </div>
             <p className="text-sm leading-6 text-text-2">
-              改编规划确认后会生成分集；每个分集卡片进入现有单集工作台继续剧本、分镜和视频制作。
+              分集蓝图生成后，先生成 1 到 3 集试播正文，再进入单集工作台继续剧本、分镜和视频制作。
             </p>
+          </div>
+        ) : null}
+
+        {!readOnly && hasEpisodes && blueprintEpisodes.length > 0 ? (
+          <div className="mt-4 flex flex-col gap-3 rounded-[14px] border border-border bg-bg-0 px-5 py-4 shadow-shadow-xs sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-text-0">
+                <span>试播正文</span>
+                <span className="inline-flex h-6 items-center rounded-full bg-bg-2 px-2.5 text-xs font-semibold text-text-2">
+                  {blueprintScriptReadyEpisodes.length}/{blueprintEpisodes.length} 已生成
+                </span>
+                {pilotFailedEpisodes.length > 0 ? (
+                  <span className="inline-flex h-6 items-center rounded-full bg-warning-bg px-2.5 text-xs font-semibold text-warning">
+                    {pilotFailedEpisodes.length} 集失败
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1 text-sm leading-6 text-text-2">
+                {pilotPendingEpisodes.length > 0
+                  ? `还有 ${pilotPendingEpisodes.length} 集只有蓝图。下一步会先生成 ${pilotGenerateLimit} 集试播正文，并进入第 ${firstPilotPendingEpisode?.episode_number || 1} 集工作台。`
+                  : '试播正文已就绪，可以进入工作台继续提取资产、拆分镜头和制作视频。'}
+              </p>
+              {pilotScriptTask && (pilotScriptTaskActive || pilotScriptTaskFailed) ? (
+                <div
+                  role={pilotScriptTaskFailed ? 'alert' : 'status'}
+                  aria-live="polite"
+                  className="mt-3 rounded-[12px] border border-border bg-bg-2/70 px-3 py-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-text-0">
+                      {pilotScriptTaskFailed ? (
+                        <AlertTriangle size={14} className="shrink-0 text-warning" />
+                      ) : (
+                        <Loader2 size={14} className="shrink-0 animate-spin text-accent-text" />
+                      )}
+                      <span className="truncate">
+                        {pilotScriptTaskFailed ? '试播正文任务失败' : formatPilotScriptPhase(pilotScriptTask.result_summary)}
+                      </span>
+                    </div>
+                    <span className="shrink-0 text-xs font-semibold text-text-2">{pilotScriptTaskProgress}%</span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-0">
+                    <div
+                      className={`h-full rounded-full ${pilotScriptTaskFailed ? 'bg-warning' : 'bg-accent'}`}
+                      style={{ width: `${pilotScriptTaskProgress}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-text-2">
+                    {pilotScriptTaskFailed
+                      ? pilotScriptTask.error_message || '请检查远程 Agent 配置后重试。'
+                      : formatPilotScriptDetail(pilotScriptTask.result_summary)}
+                  </p>
+                  {!readOnly ? (
+                    <div className="mt-3 flex flex-wrap justify-end gap-2">
+                      {pilotScriptTaskActive ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-full px-3 text-xs"
+                          disabled={taskActionBusyId === pilotScriptTask.id}
+                          onClick={() => { void cancelAiFirstTask(pilotScriptTask.id, '试播正文任务') }}
+                        >
+                          {taskActionBusyId === pilotScriptTask.id ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+                          取消
+                        </Button>
+                      ) : pilotScriptTaskFailed ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 rounded-full px-3 text-xs"
+                          disabled={taskActionBusyId === pilotScriptTask.id}
+                          onClick={() => { void retryAiFirstTask(pilotScriptTask.id, '试播正文任务') }}
+                        >
+                          {taskActionBusyId === pilotScriptTask.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                          重试试播
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              className="h-9 shrink-0 rounded-full px-4"
+              disabled={pilotScriptBusy || (pilotPendingEpisodes.length === 0 && !firstScriptReadyEpisode)}
+              onClick={() => { void generatePilotScripts({ navigateToFirst: true }) }}
+            >
+              {pilotScriptBusy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" strokeWidth={0} />}
+              {pilotPendingEpisodes.length > 0
+                ? pilotScriptBusy
+                  ? '生成中'
+                  : `生成试播 ${pilotGenerateLimit} 集并进入`
+                : '进入试播工作台'}
+            </Button>
           </div>
         ) : null}
 
@@ -1882,6 +2888,24 @@ export default function DramaDetailPage() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {episodes.map((ep: Episode, i: number) => {
                   const preview = episodePreviewText(ep)
+                  const blueprint = normalizeEpisodeBlueprintPayload(ep.blueprint_payload)
+                  const staleLabel = getEpisodeStaleLabel(ep)
+                  const scriptActionRewrite = Boolean(hasScript(ep) && staleLabel)
+                  const showScriptAction = Boolean(blueprint && (!hasScript(ep) || staleLabel))
+                  const statusTone = ep.failure_reason
+                    ? 'bg-warning-bg text-warning'
+                    : hasScript(ep)
+                      ? 'bg-success-bg text-success'
+                      : blueprint
+                        ? 'bg-accent-bg text-accent-text'
+                        : 'bg-bg-2 text-text-3'
+                  const statusLabel = ep.failure_reason
+                    ? '生成失败'
+                    : hasScript(ep)
+                      ? '正文已生成'
+                      : blueprint
+                        ? '蓝图已生成'
+                        : '待完善'
                   return (
                   <article
                     key={ep.id}
@@ -1912,6 +2936,30 @@ export default function DramaDetailPage() {
                       <Clock3 size={14} />
                       {formatEpisodeDuration(ep.duration)}
                     </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold ${statusTone}`}>
+                        {statusLabel}
+                      </span>
+                      {blueprint?.source_trace?.length ? (
+                        <span className="inline-flex h-6 items-center rounded-full bg-bg-2 px-2.5 text-xs font-semibold text-text-3">
+                          {blueprint.source_trace.length} 条追溯
+                        </span>
+                      ) : null}
+                      {staleLabel ? (
+                        <span className="inline-flex h-6 items-center rounded-full bg-warning-bg px-2.5 text-xs font-semibold text-warning">
+                          {staleLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                    {blueprint && !preview ? (
+                      <p className="mt-3 line-clamp-3 text-sm leading-6 text-text-2">
+                        {blueprint.summary || blueprint.opening_hook || blueprint.positioning}
+                      </p>
+                    ) : ep.failure_reason ? (
+                      <p className="mt-3 line-clamp-2 text-xs leading-5 text-warning" role="alert">
+                        {ep.failure_reason}
+                      </p>
+                    ) : null}
 
                     <div className="mt-auto border-t border-border pt-3">
                       {ep.video_url ? (
@@ -1945,17 +2993,69 @@ export default function DramaDetailPage() {
                           {preview ? '预览原文' : '暂无正文'}
                         </Button>
                       ) : (
-                        <Button
-                          size="sm"
-                          className="ml-auto flex h-8 rounded-[7px] px-4 text-sm font-bold"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            router.push(`/drama/${drama.id}/episode/${ep.episode_number}`)
-                          }}
-                        >
-                          <Play size={14} fill="currentColor" strokeWidth={0} />
-                          进入制作
-                        </Button>
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {blueprint ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 rounded-[7px] px-3 text-sm font-bold"
+                              disabled={blueprintRegeneratingEpisodeId !== null || planBusy || blueprintBusy || pilotScriptBusy}
+                              aria-label={`重生第${ep.episode_number}集蓝图`}
+                              title="重生蓝图"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                void regenerateEpisodeBlueprint(ep)
+                              }}
+                            >
+                              {blueprintRegeneratingEpisodeId === ep.id ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <RefreshCw size={14} />
+                              )}
+                              重生蓝图
+                            </Button>
+                          ) : null}
+                          {showScriptAction ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 rounded-[7px] px-3 text-sm font-bold"
+                              disabled={
+                                scriptGeneratingEpisodeId !== null
+                                || blueprintRegeneratingEpisodeId !== null
+                                || planBusy
+                                || blueprintBusy
+                                || pilotScriptBusy
+                              }
+                              aria-label={`${scriptActionRewrite ? '重写' : '生成'}第${ep.episode_number}集正文`}
+                              title={scriptActionRewrite ? '重写正文' : '生成正文'}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                void generateEpisodeScript(ep, scriptActionRewrite)
+                              }}
+                            >
+                              {scriptGeneratingEpisodeId === ep.id ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Wand2 size={14} />
+                              )}
+                              {scriptActionRewrite ? '重写正文' : '生成正文'}
+                            </Button>
+                          ) : null}
+                          <Button
+                            size="sm"
+                            className="h-8 rounded-[7px] px-4 text-sm font-bold"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              router.push(`/drama/${drama.id}/episode/${ep.episode_number}`)
+                            }}
+                          >
+                            <Play size={14} fill="currentColor" strokeWidth={0} />
+                            {hasScript(ep) ? '进入制作' : blueprint ? '查看蓝图' : '进入制作'}
+                          </Button>
+                        </div>
                       )}
                     </div>
                   </article>
@@ -2059,105 +3159,193 @@ export default function DramaDetailPage() {
         ) : activeTab === 'plan' ? (
           <div className="mt-5 rounded-[14px] border border-border bg-bg-0 p-5 shadow-shadow-xs">
             {adaptationPlan ? (
+              <LegacyAdaptationPlanNotice
+                hasSourceIssue={hasSourceIssue}
+                onFixSource={() => openSourceDialog('edit')}
+                onRegenerate={generateAdaptationPlan}
+                plan={adaptationPlan}
+                planGenerating={planGenerating || briefTaskActive}
+                readOnly={readOnly}
+                sourceAnalysisTaskActive={sourceAnalysisTaskActive}
+              />
+            ) : adaptationBriefs.length > 0 ? (
               <>
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
                     <div className="flex items-center gap-2 text-base font-semibold text-text-0">
                       <Wand2 size={16} />
-                      方案草稿
+                      改编策略
                     </div>
                     <p className="mt-2 text-sm leading-6 text-text-2">
-                      目标：{adaptationPlan.target_episode_count} 集 · 每集 {adaptationPlan.episode_duration}
+                      已生成 {adaptationBriefs.length} 套策略；分集蓝图会基于选中的策略创建真实 Episode。
                     </p>
                   </div>
                   {!readOnly ? (
-                    hasSourceIssue ? (
-                      <Button type="button" variant="outline" size="sm" className="h-9 rounded-[9px]" onClick={() => openSourceDialog('edit')}>
-                        <RefreshCw size={14} />
-                        修复源稿
-                      </Button>
-                    ) : (
-                      <Button type="button" variant="outline" size="sm" className="h-9 rounded-[9px]" disabled={planGenerating} onClick={generateAdaptationPlan}>
-                        {planGenerating ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                        重新生成草稿
-                      </Button>
-                    )
+                    <Button type="button" variant="outline" size="sm" className="h-9 rounded-[9px]" disabled={planBusy} onClick={generateAdaptationPlan}>
+                      {planBusy ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                      {sourceAnalysisTaskActive ? '理解源稿中' : briefTaskActive ? '生成策略中' : '重新生成策略'}
+                    </Button>
                   ) : null}
                 </div>
-                {hasSourceIssue ? (
-                  <div role="alert" className="mt-4 rounded-[12px] border border-warning/30 bg-warning-bg px-4 py-3">
-                    <div className="text-sm font-semibold text-warning">当前方案基于异常源稿生成</div>
-                    <p className="mt-1 text-sm leading-6 text-text-2">
-                      {novelSourceHealth.message} 请先修复原稿，再重新生成可用草稿。
+                {briefTask && (briefTaskActive || briefTaskFailed) ? (
+                  <div
+                    role={briefTaskFailed ? 'alert' : 'status'}
+                    aria-live="polite"
+                    className="mt-3 rounded-[12px] border border-border bg-bg-2/70 px-3 py-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-text-0">
+                        {briefTaskFailed ? (
+                          <AlertTriangle size={14} className="shrink-0 text-warning" />
+                        ) : (
+                          <Loader2 size={14} className="shrink-0 animate-spin text-accent-text" />
+                        )}
+                        <span className="truncate">
+                          {briefTaskFailed ? '改编策略任务失败' : formatBriefPhase(briefTask.result_summary)}
+                        </span>
+                      </div>
+                      <span className="shrink-0 text-xs font-semibold text-text-2">{briefTaskProgress}%</span>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-0">
+                      <div
+                        className={`h-full rounded-full ${briefTaskFailed ? 'bg-warning' : 'bg-accent'}`}
+                        style={{ width: `${briefTaskProgress}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-text-2">
+                      {briefTaskFailed
+                        ? briefTask.error_message || '请检查远程 Agent 配置后重试。'
+                        : formatBriefDetail(briefTask.result_summary)}
                     </p>
+                    {!readOnly ? (
+                      <div className="mt-3 flex flex-wrap justify-end gap-2">
+                        {briefTaskActive ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-full px-3 text-xs"
+                            disabled={taskActionBusyId === briefTask.id}
+                            onClick={() => { void cancelAiFirstTask(briefTask.id, '改编策略任务') }}
+                          >
+                            {taskActionBusyId === briefTask.id ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+                            取消
+                          </Button>
+                        ) : briefTaskFailed ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-full px-3 text-xs"
+                            disabled={taskActionBusyId === briefTask.id}
+                            onClick={() => { void retryAiFirstTask(briefTask.id, '改编策略任务') }}
+                          >
+                            {taskActionBusyId === briefTask.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                            重试策略
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
-                <div className="mt-4 rounded-[12px] border border-accent-glow bg-accent-bg p-4">
-                  <div className="text-sm font-semibold text-text-0">{adaptationPlan.logline || '故事主线'}</div>
-                  <p className="mt-2 text-sm leading-6 text-text-2">{adaptationPlan.main_plot}</p>
-                </div>
-                <div className="mt-4 flex rounded-[9px] border border-border bg-bg-2 p-1">
-                  {[
-                    { key: 'episodes' as const, label: '分集大纲', count: adaptationPlan.episode_outlines.length },
-                    { key: 'characters' as const, label: '角色圣经', count: adaptationPlan.character_bible.length },
-                    { key: 'scenes' as const, label: '场景圣经', count: adaptationPlan.scene_bible.length },
-                  ].map((item) => (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => setPlanTab(item.key)}
-                      className={`flex h-8 min-w-0 flex-1 items-center justify-center gap-2 rounded-[8px] px-3 text-sm font-bold transition-colors ${
-                        planTab === item.key ? 'bg-bg-0 text-text-0 shadow-shadow-xs' : 'text-text-1 hover:bg-bg-hover'
-                      }`}
-                    >
-                      <span className="truncate">{item.label}</span>
-                      <span className="inline-flex size-5 items-center justify-center rounded-full bg-accent text-xs text-on-accent">{item.count}</span>
-                    </button>
+                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                  {adaptationBriefs.map((brief) => (
+                    <AdaptationBriefCard
+                      key={brief.id}
+                      brief={brief}
+                      disabled={readOnly || hasSourceIssue || hasEpisodes || planBusy || blueprintBusy}
+                      selected={brief.id === selectedBriefId}
+                      selecting={briefSelectingId === brief.id}
+                      onSelect={selectAiFirstBrief}
+                    />
                   ))}
                 </div>
-                <div className="mt-4 max-h-[360px] overflow-y-auto rounded-[12px] border border-border bg-bg-2 p-3">
-                  {planTab === 'episodes' ? (
-                    <div className="space-y-3">
-                      {adaptationPlan.episode_outlines.map((episode) => (
-                        <button
-                          key={episode.episode_number}
-                          type="button"
-                          className="group w-full rounded-[10px] border border-border bg-bg-0 p-3 text-left transition-[background,border-color,box-shadow] hover:border-accent hover:bg-bg-hover hover:shadow-shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:cursor-wait disabled:opacity-70"
-                          disabled={episodesGenerating}
-                          onClick={() => { void openPlanEpisode(episode.episode_number) }}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0 truncate text-sm font-semibold text-text-0">{episode.title}</div>
-                            <div className="flex shrink-0 items-center gap-2 text-xs">
-                              <span className="text-text-3">{episode.source_range || '待定范围'}</span>
-                              <span className="hidden font-semibold text-accent-text opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 sm:inline">
-                                {episodes.length > 0 ? '进入工作台' : '生成并进入'}
-                              </span>
-                            </div>
-                          </div>
-                          <p className="mt-2 text-xs leading-5 text-text-2">{episode.hook}</p>
-                        </button>
-                      ))}
+                {!readOnly && !hasEpisodes ? (
+                  <>
+                    <div className="mt-4 flex flex-col gap-3 rounded-[16px] bg-accent-bg/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-text-0">{selectedBriefId ? '策略已选择' : '请先选择一套策略'}</div>
+                        <p className="mt-1 text-sm leading-6 text-text-2">生成后会进入分集列表，可继续生成试播正文并进入工作台。</p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-9 shrink-0 rounded-full px-4"
+                        disabled={planBusy || blueprintBusy || !selectedBriefId || hasSourceIssue}
+                        onClick={() => { void createEpisodesFromPlan() }}
+                      >
+                        {blueprintBusy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                        {blueprintBusy ? '生成中' : '生成分集蓝图'}
+                      </Button>
                     </div>
-                  ) : planTab === 'characters' ? (
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {adaptationPlan.character_bible.map((character) => (
-                        <CharacterBibleCard key={character.name} character={character} onOpen={setSelectedPlanCharacter} />
-                      ))}
+                  {blueprintTask && (blueprintTaskActive || blueprintTaskFailed) ? (
+                    <div
+                      role={blueprintTaskFailed ? 'alert' : 'status'}
+                      aria-live="polite"
+                      className="mt-3 rounded-[12px] border border-border bg-bg-2/70 px-3 py-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-text-0">
+                          {blueprintTaskFailed ? (
+                            <AlertTriangle size={14} className="shrink-0 text-warning" />
+                          ) : (
+                            <Loader2 size={14} className="shrink-0 animate-spin text-accent-text" />
+                          )}
+                          <span className="truncate">
+                            {blueprintTaskFailed ? '分集蓝图任务失败' : formatBlueprintPhase(blueprintTask.result_summary)}
+                          </span>
+                        </div>
+                        <span className="shrink-0 text-xs font-semibold text-text-2">{blueprintTaskProgress}%</span>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-0">
+                        <div
+                          className={`h-full rounded-full ${blueprintTaskFailed ? 'bg-warning' : 'bg-accent'}`}
+                          style={{ width: `${blueprintTaskProgress}%` }}
+                        />
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-text-2">
+                        {blueprintTaskFailed
+                          ? blueprintTask.error_message || '请检查远程 Agent 配置后重试。'
+                          : formatBlueprintDetail(blueprintTask.result_summary)}
+                      </p>
+                      {!readOnly ? (
+                        <div className="mt-3 flex flex-wrap justify-end gap-2">
+                          {blueprintTaskActive ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 rounded-full px-3 text-xs"
+                              disabled={taskActionBusyId === blueprintTask.id}
+                              onClick={() => { void cancelAiFirstTask(blueprintTask.id, '分集蓝图任务') }}
+                            >
+                              {taskActionBusyId === blueprintTask.id ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+                              取消
+                            </Button>
+                          ) : blueprintTaskFailed ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 rounded-full px-3 text-xs"
+                              disabled={taskActionBusyId === blueprintTask.id}
+                              onClick={() => { void retryAiFirstTask(blueprintTask.id, '分集蓝图任务') }}
+                            >
+                              {taskActionBusyId === blueprintTask.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                              重试蓝图
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
-                  ) : (
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {adaptationPlan.scene_bible.map((scene) => (
-                        <SceneBibleCard key={`${scene.name}-${scene.location}`} scene={scene} />
-                      ))}
-                    </div>
-                  )}
-                </div>
+                  ) : null}
+                  </>
+                ) : null}
               </>
             ) : (
               <div className="flex min-h-[220px] flex-col items-center justify-center text-center">
                 <Wand2 size={36} className="text-text-3" />
-                <p className="mt-4 text-sm text-text-2">暂无方案草稿。</p>
+                <p className="mt-4 text-sm text-text-2">暂无改编策略。</p>
               </div>
             )}
           </div>
@@ -2195,29 +3383,32 @@ export default function DramaDetailPage() {
       {/* Add Episode Dialog */}
       </div>
 
-      <Dialog open={sourcePickerOpen} onOpenChange={setSourcePickerOpen}>
-        <DialogContent className="flex max-h-[min(88dvh,760px)] w-[calc(100vw-2rem)] max-w-[860px] flex-col gap-0 overflow-hidden rounded-[22px] border-border bg-bg-surface p-0 shadow-shadow-elevated sm:max-w-[860px]">
+      <Dialog
+        open={sourcePickerOpen}
+        onOpenChange={(open) => {
+          setSourcePickerOpen(open)
+          if (!open) setSelectedWritingSourceId(null)
+        }}
+      >
+        <DialogContent variant="workspace" size="wide">
           <DialogTitle className="sr-only">从小说模块引入</DialogTitle>
           <DialogDescription className="sr-only">
-            选择已有小说作品并导入当前短剧项目，导入后会替换现有源稿并继续用于生成方案草稿。
+            选择已有小说作品并导入当前短剧项目，导入后会替换现有源稿并继续用于生成改编策略。
           </DialogDescription>
-          <DialogHeaderBar className="border-b-0 bg-transparent px-7 pb-3 pt-7 sm:px-8 sm:pt-8">
+          <DialogHeaderBar variant="workspace">
             <div className="flex items-start gap-4 pr-12">
-              <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-accent-glow bg-accent-bg text-accent">
+              <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-[11px] bg-accent-bg text-accent">
                 <BookOpen size={20} />
               </div>
               <div className="min-w-0">
                 <div className="text-[22px] font-bold leading-tight tracking-[-0.018em] text-text-0">
                   从小说模块引入
                 </div>
-                <p className="mt-2 text-sm leading-6 text-text-2">
-                  选择一个已有小说作品，系统会导出全文并写入当前项目的小说源稿。后续会从这里继续生成方案草稿。
-                </p>
               </div>
             </div>
           </DialogHeaderBar>
 
-          <DialogMain className="min-h-0 flex-1 gap-4 overflow-hidden px-7 pb-5 pt-2 sm:px-8">
+          <DialogMain variant="workspace" className="gap-4 overflow-hidden">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <Input
                 value={writingSourceQuery}
@@ -2226,12 +3417,12 @@ export default function DramaDetailPage() {
                   if (event.key === 'Enter') void loadWritingSources(writingSourceQuery)
                 }}
                 placeholder="搜索小说标题或梗概"
-                className="h-10"
+                className="h-10 rounded-[10px] border-border/60 shadow-none"
               />
               <Button
                 type="button"
                 variant="outline"
-                className="h-10 shrink-0 rounded-[9px] px-4"
+                className="h-10 shrink-0 rounded-[10px] border-border/60 px-4 shadow-none"
                 disabled={writingSourceLoading}
                 onClick={() => void loadWritingSources(writingSourceQuery)}
               >
@@ -2240,87 +3431,142 @@ export default function DramaDetailPage() {
               </Button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-[14px] border border-border bg-bg-2 p-3">
-              {writingSourceLoading ? (
-                <div className="flex min-h-[280px] items-center justify-center text-text-3">
-                  <Loader2 size={28} className="animate-spin" />
-                </div>
-              ) : writingSources.length === 0 ? (
-                <div className="flex min-h-[280px] flex-col items-center justify-center px-6 text-center">
-                  <BookOpen size={38} className="text-text-3" strokeWidth={1.7} />
-                  <h3 className="mt-4 font-body text-base font-black tracking-normal text-text-0">暂无可引入小说</h3>
-                  <p className="mt-2 max-w-md text-sm leading-6 text-text-2">
-                    先去小说模块新建或完善一部小说，再回到这里引入为短剧源稿。
-                  </p>
-                  <Button
-                    type="button"
-                    className="mt-5 h-9 rounded-[9px] px-4"
-                    onClick={() => router.push('/writing')}
-                  >
-                    <Plus size={14} />
-                    去小说模块
-                  </Button>
-                </div>
-              ) : (
-                <div className="grid gap-3">
-                  {writingSources.map((item) => {
-                    const importing = writingSourceImportingId === item.id
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className="group flex min-h-[112px] w-full items-start gap-4 rounded-[12px] border border-border bg-bg-0 p-4 text-left shadow-shadow-xs transition-colors hover:border-accent hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-70"
-                        disabled={writingSourceImportingId != null}
-                        onClick={() => void importWritingSource(item)}
-                      >
-                        <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-accent-bg text-accent">
-                          {importing ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="line-clamp-1 font-body text-base font-black tracking-normal text-text-0 group-hover:text-accent">
-                              {item.title}
-                            </h3>
-                            <span className="rounded-full border border-border bg-bg-2 px-2.5 py-1 text-xs text-text-2">
-                              {item.document_count} 文档
-                            </span>
+            {writingSourceLoading ? (
+              <div className="flex min-h-[280px] flex-1 items-center justify-center rounded-[14px] bg-[color-mix(in_srgb,var(--color-bg-2)_52%,var(--color-bg-0))] text-text-3">
+                <Loader2 size={28} className="animate-spin" />
+              </div>
+            ) : writingSources.length === 0 ? (
+              <div className="flex min-h-[280px] flex-1 flex-col items-center justify-center rounded-[14px] bg-[color-mix(in_srgb,var(--color-bg-2)_52%,var(--color-bg-0))] px-6 text-center">
+                <BookOpen size={38} className="text-text-3" strokeWidth={1.7} />
+                <h3 className="mt-4 font-body text-base font-black tracking-normal text-text-0">暂无可引入小说</h3>
+                <p className="mt-2 max-w-md text-sm leading-6 text-text-2">
+                  先去小说模块新建或完善一部小说，再回到这里引入为短剧源稿。
+                </p>
+              </div>
+            ) : (
+              <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+                <div className="min-h-0 overflow-y-auto rounded-[14px] bg-[color-mix(in_srgb,var(--color-bg-2)_52%,var(--color-bg-0))] p-2.5">
+                  <div className="grid gap-3">
+                    {writingSources.map((item) => {
+                      const importing = writingSourceImportingId === item.id
+                      const selected = selectedWritingSourceId === item.id
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`group flex min-h-[112px] w-full items-start gap-4 rounded-[12px] border p-4 text-left shadow-[0_1px_0_rgba(40,28,18,0.04)] transition-[background-color,border-color,transform] duration-200 disabled:cursor-not-allowed disabled:opacity-70 ${
+                            selected
+                              ? 'border-accent/35 bg-accent-bg/70'
+                              : 'border-transparent bg-bg-0 hover:-translate-y-0.5 hover:bg-bg-0/90'
+                          }`}
+                          disabled={writingSourceImportingId != null}
+                          onClick={() => setSelectedWritingSourceId(item.id)}
+                        >
+                          <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-accent-bg text-accent">
+                            {importing ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
                           </div>
-                          <p className="mt-2 line-clamp-2 text-sm leading-6 text-text-2">
-                            {item.synopsis || '暂无梗概，导入时会读取作品导出的完整 Markdown。'}
-                          </p>
-                          <div className="mt-3 text-xs text-text-3">
-                            更新 {item.updated_at ? new Date(item.updated_at).toLocaleDateString() : '未知'}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className={`line-clamp-1 font-body text-base font-black tracking-normal ${selected ? 'text-accent' : 'text-text-0 group-hover:text-accent'}`}>
+                                {item.title}
+                              </h3>
+                              <span className="rounded-full border border-border bg-bg-2 px-2.5 py-1 text-xs text-text-2">
+                                {item.document_count} 文档
+                              </span>
+                              {selected ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-1 text-xs font-semibold text-on-accent">
+                                  <CheckCircle2 size={12} />
+                                  已选中
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="mt-2 line-clamp-2 text-sm leading-6 text-text-2">
+                              {item.synopsis || '暂无梗概，导入时会读取作品导出的完整 Markdown。'}
+                            </p>
+                            <div className="mt-3 text-xs text-text-3">
+                              更新 {item.updated_at ? new Date(item.updated_at).toLocaleDateString() : '未知'}
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex min-h-[320px] flex-col rounded-[18px] border border-border/60 bg-bg-surface p-4 shadow-shadow-xs">
+                  {selectedWritingSource ? (
+                    <>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold uppercase tracking-[0.08em] text-text-3">已选小说</div>
+                          <div className="mt-2 line-clamp-1 font-body text-lg font-black tracking-normal text-text-0">
+                            {selectedWritingSource.title}
                           </div>
                         </div>
-                      </button>
-                    )
-                  })}
+                        <span className="inline-flex h-8 shrink-0 items-center rounded-full border border-border bg-bg-2 px-3 text-xs text-text-2">
+                          {selectedWritingSource.document_count} 文档
+                        </span>
+                      </div>
+                      <p className="mt-3 line-clamp-3 text-sm leading-6 text-text-2">
+                        {selectedWritingSource.synopsis || '暂无梗概，导入时会读取作品导出的完整 Markdown。'}
+                      </p>
+
+                      <div className="mt-5 flex items-center gap-2 text-sm font-semibold text-text-0">
+                        <span className="inline-flex size-6 items-center justify-center rounded-full bg-bg-2 text-xs font-semibold text-accent-text">A</span>
+                        改编目标
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-text-3">
+                        选中小说后，先确认这次改编的目标参数；导入完成后会带回当前短剧项目。
+                      </p>
+                      <AdaptationTargetFields
+                        gridClassName="mt-4 sm:grid-cols-2"
+                        targetEpisodeCount={pickerTargetEpisodes}
+                        onTargetEpisodeCountChange={setPickerTargetEpisodes}
+                        episodeDuration={pickerEpisodeDuration}
+                        onEpisodeDurationChange={setPickerEpisodeDuration}
+                        visualStyle={pickerVisualStyle}
+                        onVisualStyleChange={setPickerVisualStyle}
+                        aspectRhythm={pickerAspectRhythm}
+                        onAspectRhythmChange={setPickerAspectRhythm}
+                      />
+
+                      <div className="mt-4 rounded-[14px] border border-accent-glow bg-accent-bg/60 px-3.5 py-3 text-xs leading-5 text-text-2">
+                        导入后会替换当前小说源稿；如果项目里已有旧方案草稿，它会失效，需要基于新源稿重新生成改编策略。
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex min-h-full flex-1 flex-col items-center justify-center px-6 text-center">
+                      <Wand2 size={34} className="text-text-3" strokeWidth={1.8} />
+                      <h3 className="mt-4 font-body text-base font-black tracking-normal text-text-0">先选一部小说</h3>
+                      <p className="mt-2 text-sm leading-6 text-text-2">
+                        选中左侧作品后，这里会立即出现改编目标参数，确认好再导入会更顺手。
+                      </p>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </DialogMain>
 
-          <DialogActions className="items-center justify-between gap-3 border-t border-border bg-bg-0/70 px-7 py-5 sm:flex-row sm:px-8">
-            <p className="text-xs leading-5 text-text-3">
-              引入会替换当前小说源稿，并清空旧改编规划；已有分集不会被自动删除。
-            </p>
+          <DialogActions variant="workspace" className="justify-end sm:flex-row sm:items-center sm:justify-end">
             <div className="flex shrink-0 justify-end gap-3">
               <Button
                 type="button"
-                variant="outline"
-                className="h-9 rounded-[var(--radius-sm)] px-4"
-                onClick={() => router.push('/writing')}
-              >
-                去小说模块
-              </Button>
-              <Button
-                type="button"
                 variant="ghost"
-                className="h-9 rounded-[var(--radius-sm)] px-4"
+                className="h-9 rounded-[10px] px-4"
                 onClick={() => setSourcePickerOpen(false)}
                 disabled={writingSourceImportingId != null}
               >
                 取消
+              </Button>
+              <Button
+                type="button"
+                className="h-9 rounded-[10px] px-4"
+                disabled={!selectedWritingSource || writingSourceImportingId != null}
+                onClick={() => void importSelectedWritingSource()}
+              >
+                {writingSourceImportingId != null ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                导入并继续
               </Button>
             </div>
           </DialogActions>
@@ -2330,27 +3576,34 @@ export default function DramaDetailPage() {
       <CharacterBibleDialog character={selectedPlanCharacter} onClose={() => setSelectedPlanCharacter(null)} />
 
       <Dialog open={sourceDialogOpen} onOpenChange={setSourceDialogOpen}>
-        <DialogContent
-          aria-describedby="novel-source-dialog-description"
-          className="flex max-h-[min(88dvh,760px)] w-[min(860px,calc(100vw-2rem))] max-w-[860px] flex-col gap-0 overflow-hidden rounded-[22px] border-border bg-bg-surface p-0 shadow-shadow-elevated sm:max-w-[860px]"
-        >
-          <DialogHeaderBar className="border-b border-border/70 bg-bg-0/90 px-6 py-5 sm:px-7 sm:py-6">
-            <div className="flex items-start gap-3.5 pr-11">
+        <DialogContent variant="workspace" size="wide">
+          <DialogHeaderBar variant="workspace">
+            <div
+              className={
+                sourceDialogMode === 'view'
+                  ? 'flex items-start gap-3.5 pr-11 sm:pr-12'
+                  : 'flex items-start gap-3.5 pr-11 sm:pr-12'
+              }
+            >
               <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-accent-glow bg-accent-bg text-accent">
                 <BookOpen size={18} />
               </div>
               <div className="min-w-0">
                 <DialogTitle className="font-body text-xl font-semibold leading-tight tracking-[-0.012em] text-text-0">
-                  {sourceDialogMode === 'view' ? '查看小说源稿' : novelSource ? '重新导入小说源稿' : '导入小说源稿'}
+                  {sourceDialogMode === 'view' ? '查看小说剧本' : '粘贴小说剧本'}
                 </DialogTitle>
-                <DialogDescription id="novel-source-dialog-description" className="mt-1.5 max-w-[64ch] text-sm leading-6 text-text-2">
-                  第一阶段先支持粘贴全文。保存后会写入项目 metadata，并统计字数和章节，供改编规划使用。
-                </DialogDescription>
               </div>
             </div>
           </DialogHeaderBar>
 
-          <DialogMain className="min-h-0 flex-1 gap-5 overflow-y-auto px-6 py-5 sm:px-7">
+          <DialogMain
+            variant="workspace"
+            className={
+              sourceDialogMode === 'view'
+                ? 'min-h-0 flex-1 gap-5 overflow-y-auto !p-0'
+                : 'gap-5'
+            }
+          >
             {sourceDialogMode === 'edit' && adaptationPlan ? (
               <div className="flex gap-3 rounded-[14px] border border-accent-glow bg-accent-bg px-4 py-3">
                 <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-bg-surface/70 text-accent">
@@ -2377,75 +3630,99 @@ export default function DramaDetailPage() {
                 </div>
               </div>
             ) : null}
-
-            <div className="rounded-[16px] border border-border bg-bg-0 p-4 shadow-shadow-xs">
-              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                <label className="flex min-w-0 flex-col gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-[0.08em] text-text-3">源稿标题</span>
+            {sourceDialogMode === 'view' ? (
+              <div className="flex flex-col gap-4 px-6 pb-6 sm:px-7 sm:pb-7">
+                <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                   <Input
+                    aria-label="源稿标题"
                     value={sourceTitleDraft}
                     onChange={(event) => setSourceTitleDraft(event.target.value)}
                     placeholder="例如：时光邮局"
                     className="h-10 text-sm"
-                    disabled={sourceDialogMode === 'view'}
+                    disabled
                   />
-                </label>
-                <div className="flex flex-wrap gap-2 text-xs text-text-2 sm:justify-end">
-                  <span className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-bg-2 px-3">
-                    <FileText size={13} />
-                    {formatCount(sourceDraftWordCount)} 字
-                  </span>
-                  <span className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-bg-2 px-3">
-                    <LayoutGrid size={13} />
-                    {sourceDraftChapterCount} 章
-                  </span>
+                  <div className="flex flex-wrap gap-2 text-xs text-text-2 sm:justify-end">
+                    <span className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-bg-2 px-3">
+                      <FileText size={13} />
+                      {formatCount(sourceDraftWordCount)} 字
+                    </span>
+                    <span className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-bg-2 px-3">
+                      <LayoutGrid size={13} />
+                      {sourceDraftChapterCount} 章
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <p className="mt-2 text-xs leading-5 text-text-3">标题仅用于识别源稿，不影响已创建分集。</p>
-            </div>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-2">
-              <div className="flex items-center justify-between gap-3">
-                <label htmlFor="novel-source-content" className="text-xs font-semibold uppercase tracking-[0.08em] text-text-3">
-                  源稿正文
-                </label>
-                <span className="shrink-0 text-xs text-text-3">{sourceContentDraft.length.toLocaleString()} 字符</span>
+                <textarea
+                  id="novel-source-content"
+                  aria-label="源稿正文"
+                  value={sourceContentDraft}
+                  onChange={(event) => setSourceContentDraft(event.target.value)}
+                  placeholder="请粘贴整本小说全文..."
+                  readOnly
+                  aria-invalid={sourceDialogHasBlockingIssue ? true : undefined}
+                  aria-describedby={sourceDialogHasBlockingIssue ? 'novel-source-content-error' : undefined}
+                  className="h-[clamp(260px,34dvh,340px)] min-h-[260px] w-full shrink-0 resize-none rounded-[18px] border border-border bg-bg-input px-4 py-3.5 text-sm leading-7 text-text-0 shadow-inset outline-none transition-[border-color,box-shadow] placeholder:text-text-3 read-only:bg-bg-2 focus:border-border-focus focus:ring-[3px] focus:ring-accent-glow"
+                />
               </div>
-              <textarea
-                id="novel-source-content"
-                value={sourceContentDraft}
-                onChange={(event) => setSourceContentDraft(event.target.value)}
-                placeholder="请粘贴整本小说全文..."
-                readOnly={sourceDialogMode === 'view'}
-                aria-invalid={sourceDialogHasBlockingIssue ? true : undefined}
-                aria-describedby={sourceDialogHasBlockingIssue ? 'novel-source-content-help novel-source-content-error' : 'novel-source-content-help'}
-                className="h-[clamp(260px,34dvh,340px)] min-h-[260px] w-full shrink-0 resize-none rounded-[18px] border border-border bg-bg-input px-4 py-3.5 text-sm leading-7 text-text-0 shadow-inset outline-none transition-[border-color,box-shadow] placeholder:text-text-3 read-only:bg-bg-2 focus:border-border-focus focus:ring-[3px] focus:ring-accent-glow"
-              />
-              <p id="novel-source-content-help" className="text-xs leading-5 text-text-3">
-                建议粘贴完整正文；系统会按章节标记统计章节，没有章节标记时会按全文处理。
-              </p>
-            </div>
+            ) : (
+              <>
+                <div className="rounded-[16px] border border-border bg-bg-0 p-4 shadow-shadow-xs">
+                  <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                    <label className="flex min-w-0 flex-col gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-[0.08em] text-text-3">源稿标题</span>
+                      <Input
+                        aria-label="源稿标题"
+                        value={sourceTitleDraft}
+                        onChange={(event) => setSourceTitleDraft(event.target.value)}
+                        placeholder="例如：时光邮局"
+                        className="h-10 text-sm"
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-2 text-xs text-text-2 sm:justify-end">
+                      <span className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-bg-2 px-3">
+                        <FileText size={13} />
+                        {formatCount(sourceDraftWordCount)} 字
+                      </span>
+                      <span className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-bg-2 px-3">
+                        <LayoutGrid size={13} />
+                        {sourceDraftChapterCount} 章
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex min-h-0 flex-1 flex-col gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <label htmlFor="novel-source-content" className="text-xs font-semibold uppercase tracking-[0.08em] text-text-3">
+                      源稿正文
+                    </label>
+                    <span className="shrink-0 text-xs text-text-3">{sourceContentDraft.length.toLocaleString()} 字符</span>
+                  </div>
+                  <textarea
+                    id="novel-source-content"
+                    aria-label="源稿正文"
+                    value={sourceContentDraft}
+                    onChange={(event) => setSourceContentDraft(event.target.value)}
+                    placeholder="请粘贴整本小说全文..."
+                    aria-invalid={sourceDialogHasBlockingIssue ? true : undefined}
+                    aria-describedby={sourceDialogHasBlockingIssue ? 'novel-source-content-help novel-source-content-error' : 'novel-source-content-help'}
+                    className="h-[clamp(260px,34dvh,340px)] min-h-[260px] w-full shrink-0 resize-none rounded-[18px] border border-border bg-bg-input px-4 py-3.5 text-sm leading-7 text-text-0 shadow-inset outline-none transition-[border-color,box-shadow] placeholder:text-text-3 read-only:bg-bg-2 focus:border-border-focus focus:ring-[3px] focus:ring-accent-glow"
+                  />
+                  <p id="novel-source-content-help" className="text-xs leading-5 text-text-3">
+                    建议粘贴完整正文；系统会按章节标记统计章节，没有章节标记时会按全文处理。
+                  </p>
+                </div>
+              </>
+            )}
           </DialogMain>
 
-          <DialogActions className="items-start justify-between gap-4 border-t border-border bg-bg-0/90 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
-            <p className="max-w-[52ch] text-xs leading-5 text-text-3">
-              源稿用于项目级改编规划；快速按标记分集仍保留在分集列表空状态中。
-            </p>
-            <div className="flex w-full shrink-0 flex-col-reverse gap-2 sm:w-auto sm:flex-row sm:justify-end">
-              <Button type="button" variant="ghost" className="h-10 w-full rounded-[var(--radius-sm)] px-4 sm:w-auto" onClick={() => setSourceDialogOpen(false)} disabled={sourceSaving}>
-                {sourceDialogMode === 'view' ? '关闭' : '取消'}
-              </Button>
-              {sourceDialogMode === 'view' && hasSourceIssue ? (
-                <Button
-                  type="button"
-                  className="h-10 w-full rounded-[var(--radius-sm)] px-5 sm:w-auto"
-                  onClick={() => setSourceDialogMode('edit')}
-                >
-                  <RefreshCw size={14} />
-                  修复源稿
+          {sourceDialogMode === 'edit' ? (
+            <DialogActions variant="workspace" className="border-0 bg-transparent !p-0">
+              <div className="flex w-full shrink-0 flex-col-reverse gap-2 px-6 pb-6 sm:w-auto sm:flex-row sm:justify-end sm:px-7 sm:pb-7">
+                <Button type="button" variant="ghost" className="h-10 w-full rounded-[var(--radius-sm)] px-4 sm:w-auto" onClick={() => setSourceDialogOpen(false)} disabled={sourceSaving}>
+                  取消
                 </Button>
-              ) : null}
-              {sourceDialogMode === 'edit' ? (
                 <Button
                   type="button"
                   className="h-10 w-full rounded-[var(--radius-sm)] px-5 sm:w-auto"
@@ -2455,18 +3732,18 @@ export default function DramaDetailPage() {
                   {sourceSaving ? <Loader2 size={14} className="animate-spin" /> : <FileUp size={14} />}
                   {sourceSaving ? '保存中...' : '保存源稿'}
                 </Button>
-              ) : null}
-            </div>
-          </DialogActions>
+              </div>
+            </DialogActions>
+          ) : null}
         </DialogContent>
       </Dialog>
 
       <Dialog open={projectDefaultsDialogOpen} onOpenChange={setProjectDefaultsDialogOpen}>
-        <DialogContent layout="panel" size="large" className="animate-scale-in">
+        <DialogContent variant="form" size="large" className="animate-scale-in">
           <DialogDescription className="sr-only">
             配置当前项目默认使用的图片、视频和配音模型，后续制作流程会优先继承这些设定。
           </DialogDescription>
-          <DialogHeaderBar className="border-0 bg-transparent">
+          <DialogHeaderBar variant="form">
             <div className="flex gap-3.5">
               <div
                 className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-accent-glow bg-accent-bg text-accent shadow-shadow-xs"
@@ -2479,13 +3756,13 @@ export default function DramaDetailPage() {
                   项目默认设定
                 </DialogTitle>
                 <p className="mt-2 text-sm leading-6 text-text-2">
-                  固定本项目常用的图片、视频和配音模型；角色、主角和音色由方案草稿与后续制作流程生成。
+                  固定本项目常用的图片、视频和配音模型；角色、主角和音色由改编策略与后续制作流程生成。
                 </p>
               </div>
             </div>
           </DialogHeaderBar>
 
-          <DialogMain className="min-h-0 flex-1 overflow-y-auto border-t border-border/70">
+          <DialogMain variant="form">
             {missingConfigHints.length > 0 ? (
               <div role="alert" className="mb-4 rounded-[12px] border border-warning/30 bg-warning-bg px-4 py-3">
                 <div className="text-sm font-semibold text-warning">仍缺少可用 AI 配置</div>
@@ -2529,7 +3806,7 @@ export default function DramaDetailPage() {
 
           </DialogMain>
 
-          <DialogActions>
+          <DialogActions variant="form">
             <Button
               type="button"
               variant="ghost"
@@ -2556,12 +3833,12 @@ export default function DramaDetailPage() {
       </Dialog>
 
       <Dialog open={splitDialog} onOpenChange={setSplitDialog}>
-        <DialogContent className="flex max-h-[min(90dvh,820px)] w-[calc(100vw-2rem)] max-w-[920px] flex-col gap-0 overflow-hidden rounded-[22px] border-border bg-bg-surface p-0 shadow-shadow-elevated sm:max-w-[920px] lg:w-[min(920px,calc(100vw-2rem))]">
+        <DialogContent variant="workspace" size="wide">
           <DialogTitle className="sr-only">快速按标记分集</DialogTitle>
           <DialogDescription className="sr-only">
             粘贴带有集数或章节标记的剧本文本，系统会按标记自动拆分并写入各集原始内容。
           </DialogDescription>
-          <DialogHeaderBar className="border-b-0 bg-transparent px-7 pb-3 pt-7 sm:px-8 sm:pt-8">
+          <DialogHeaderBar variant="workspace">
             <div className="flex items-start gap-4 pr-12">
               <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-accent-glow bg-accent-bg text-accent">
                 <FileUp size={20} />
@@ -2575,7 +3852,7 @@ export default function DramaDetailPage() {
             </div>
           </DialogHeaderBar>
 
-          <DialogMain className="min-h-0 flex-1 gap-4 overflow-hidden px-7 pb-5 pt-2 sm:px-8">
+          <DialogMain variant="workspace" className="gap-4 overflow-hidden">
             <div className="rounded-[16px] border border-accent-glow bg-accent-bg px-4 py-3">
               <div className="text-xs font-semibold text-accent-text">推荐格式</div>
               <p className="mt-1 text-[13px] leading-6 text-text-2">
@@ -2602,7 +3879,7 @@ export default function DramaDetailPage() {
             </label>
           </DialogMain>
 
-          <DialogActions className="items-center justify-between gap-3 border-t border-border bg-bg-0/70 px-7 py-5 sm:flex-row sm:px-8">
+          <DialogActions variant="workspace" className="items-center justify-between sm:flex-row">
             <p className="text-xs leading-5 text-text-3">
               创建后可在分集卡片进入制作页继续改写剧本。
             </p>
@@ -2624,17 +3901,17 @@ export default function DramaDetailPage() {
       </Dialog>
 
       <Dialog open={addDialog} onOpenChange={setAddDialog}>
-        <DialogContent className="flex max-h-[min(760px,calc(100dvh-2rem))] w-[min(620px,calc(100%-2rem))] max-w-[620px] flex-col gap-0 overflow-hidden rounded-[28px] border-border/70 bg-bg-surface p-0 shadow-shadow-elevated sm:p-0">
+        <DialogContent variant="form" size="standard">
           <DialogTitle className="sr-only">创建新集</DialogTitle>
           <DialogDescription className="sr-only">
             为当前短剧项目创建新的一集，并可在创建后直接进入单集制作页面。
           </DialogDescription>
-          <DialogHeaderBar className="border-b-0 bg-transparent px-0 sm:pb-3">
+          <DialogHeaderBar variant="form">
             <div className="text-[1.55rem] font-semibold tracking-[-0.018em] text-text-0">添加新集</div>
             <p className="mt-1 text-sm text-text-2">设置本集标题，创建后可直接进入单集制作。</p>
           </DialogHeaderBar>
 
-          <DialogMain className="min-h-0 flex-1 gap-4 overflow-y-auto p-0">
+          <DialogMain variant="form" className="gap-4">
             <label className="flex flex-col gap-2">
               <span className="text-xs font-medium text-text-1">集标题（可选）</span>
               <Input
@@ -2646,7 +3923,7 @@ export default function DramaDetailPage() {
             </label>
           </DialogMain>
 
-          <DialogActions className="flex-col items-stretch gap-3 px-10 sm:px-10">
+          <DialogActions variant="form" className="flex-col items-stretch gap-3">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-text-3">项目默认配置和模型可在后续制作时继承或覆盖。</p>
             </div>
@@ -2667,25 +3944,25 @@ export default function DramaDetailPage() {
       </Dialog>
 
       <Dialog open={!!previewScriptEpisode} onOpenChange={(open) => { if (!open) setPreviewScriptEpisode(null) }}>
-        <DialogContent className="flex max-h-[min(88dvh,820px)] w-[min(720px,calc(100%-2rem))] max-w-[720px] flex-col gap-0 overflow-hidden rounded-[var(--radius-xl)] border-border bg-bg-surface p-0 shadow-shadow-elevated">
+        <DialogContent variant="workspace" size="large">
           <DialogTitle className="sr-only">分集正文预览</DialogTitle>
           <DialogDescription className="sr-only">
             只读预览当前分集的正文内容，可在关闭后返回列表继续创作或登录后编辑。
           </DialogDescription>
-          <DialogHeaderBar className="sm:pb-4">
+          <DialogHeaderBar variant="workspace">
             <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Read only</div>
             <div className="mt-2 text-lg font-bold text-text-0">
               {previewScriptEpisode ? `${previewScriptEpisode.title || `第 ${previewScriptEpisode.episode_number} 集`} · 正文` : ''}
             </div>
           </DialogHeaderBar>
-          <DialogMain className="min-h-0 flex-1 overflow-y-auto pt-0">
+          <DialogMain variant="workspace" className="pt-5">
             {previewScriptEpisode ? (
               <pre className="whitespace-pre-wrap break-words rounded-[var(--radius-md)] border border-border bg-bg-2 p-4 text-sm leading-7 text-text-1">
                 {episodePreviewText(previewScriptEpisode) || '（无内容）'}
               </pre>
             ) : null}
           </DialogMain>
-          <DialogActions className="border-t border-border px-5 py-4 sm:px-6">
+          <DialogActions variant="workspace">
             <Button type="button" variant="outline" className="h-9 rounded-[10px]" onClick={() => setPreviewScriptEpisode(null)}>
               关闭
             </Button>
@@ -2698,20 +3975,33 @@ export default function DramaDetailPage() {
       </Dialog>
 
       <Dialog open={!!previewVideoUrl} onOpenChange={(open) => { if (!open) setPreviewVideoUrl(null) }}>
-        <DialogContent className="w-[min(960px,calc(100%-2rem))] max-w-[960px] rounded-[var(--radius-xl)] border-border bg-bg-surface p-0 shadow-shadow-elevated">
+        <DialogContent variant="media">
           <DialogTitle className="sr-only">视频预览</DialogTitle>
           <DialogDescription className="sr-only">
             预览当前短剧分集生成的视频内容，可直接在弹窗内播放查看效果。
           </DialogDescription>
-          <DialogHeaderBar className="sm:pb-5">
-            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Video Preview</div>
-            <div className="mt-2 text-lg font-bold text-text-0">{previewVideoTitle || '视频预览'}</div>
-          </DialogHeaderBar>
-          <DialogMain className="pt-0">
-            {previewVideoUrl ? (
-              <video src={previewVideoUrl} controls className="aspect-video w-full rounded-[var(--radius-md)] bg-bg-2" />
-            ) : null}
-          </DialogMain>
+          <button
+            type="button"
+            onClick={() => setPreviewVideoUrl(null)}
+            className="fixed right-4 top-4 z-50 inline-flex size-8 items-center justify-center rounded-sm border border-white/25 bg-black/25 text-white/90 transition-colors hover:bg-black/45 hover:text-white sm:right-6 sm:top-6"
+            aria-label="关闭预览"
+            title="关闭"
+          >
+            <X size={14} aria-hidden />
+          </button>
+          <div className="flex min-h-0 flex-1 items-center justify-center p-3 sm:p-6">
+            <div className="w-[min(960px,calc(100vw-2rem))] overflow-hidden rounded-[var(--radius-xl)] border border-border bg-bg-surface shadow-shadow-elevated">
+              <DialogHeaderBar variant="workspace">
+                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-3">Video Preview</div>
+                <div className="mt-2 text-lg font-bold text-text-0">{previewVideoTitle || '视频预览'}</div>
+              </DialogHeaderBar>
+              <DialogMain variant="media" className="bg-black/70 p-3 sm:p-5">
+                {previewVideoUrl ? (
+                  <video src={previewVideoUrl} controls className="aspect-video w-full rounded-[var(--radius-md)] bg-bg-2" />
+                ) : null}
+              </DialogMain>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

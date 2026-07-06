@@ -22,6 +22,11 @@ import {
   redactUrl,
   shouldKeepVoice,
 } from './ai-configs.utils'
+import {
+  decryptAiConfigSecret,
+  maybeDecryptAiConfigSecret,
+  prepareAiConfigSecretForStorage,
+} from './ai-configs.crypto'
 import { isMockAiConfigRow, isMockVoiceRow } from './ai-configs.mock'
 
 const configListQuerySchema = z.object({
@@ -84,7 +89,7 @@ function parseSettings(value: string | null) {
 function normalizeAiConfig(row: typeof aiServiceConfigs.$inferSelect) {
   return toSnakeCase({
     ...row,
-    apiKey: maskApiKey(row.apiKey),
+    apiKey: maskApiKey(maybeDecryptAiConfigSecret(row.apiKey)),
     model: parseModel(row.model),
     settings: parseSettings(row.settings),
     isActive: row.isActive ?? true,
@@ -156,7 +161,7 @@ export class AiConfigsController {
         name: payload.name,
         description: payload.description,
         baseUrl: payload.base_url,
-        apiKey: payload.api_key,
+        apiKey: prepareAiConfigSecretForStorage(payload.api_key),
         model: JSON.stringify(parsePayloadModel(payload.model)),
         settings: payload.settings ? JSON.stringify(payload.settings) : null,
         priority: payload.priority || 0,
@@ -218,7 +223,7 @@ export class AiConfigsController {
     if ('api_key' in payload && payload.api_key !== undefined) {
       const rawKey = String(payload.api_key)
       if (!rawKey.includes('*')) {
-        updates.apiKey = rawKey
+        updates.apiKey = prepareAiConfigSecretForStorage(rawKey)
         hasUpdates = true
       }
     }
@@ -403,7 +408,7 @@ export class AiConfigsController {
         name: preset.name,
         description: preset.description,
         baseUrl: preset.baseUrl,
-        apiKey,
+        apiKey: prepareAiConfigSecretForStorage(apiKey),
         model: JSON.stringify([preset.model]),
         priority: preset.priority,
         isActive: true,
@@ -501,12 +506,13 @@ export class AiVoicesController {
   }
 
   private async syncMinimaxVoices(config: typeof aiServiceConfigs.$inferSelect) {
-    if (!config?.apiKey) return 0
+    const apiKey = decryptAiConfigSecret(config?.apiKey)
+    if (!apiKey) return 0
 
     const response = await fetch(joinProviderUrl(config.baseUrl, '/v1', '/get_voice'), {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ voice_type: 'all' }),
