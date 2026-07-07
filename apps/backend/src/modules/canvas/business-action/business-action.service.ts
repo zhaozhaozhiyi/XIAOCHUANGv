@@ -89,13 +89,17 @@ export class BusinessActionService {
     const targetX = Number.isFinite(input.positionX) ? Number(input.positionX) : ((sourceNode?.positionX ?? 120) + 300)
     const targetY = Number.isFinite(input.positionY) ? Number(input.positionY) : (sourceNode?.positionY ?? 120)
 
+    const targetLabel = input.userInput?.slice(0, 40) || `[${input.actionLabel}] 结果`
+
     if (insertNewNode) {
       await this.db.db.insert(canvasNodes).values({
         id: targetNodeId,
         canvasId,
         nodeDefId: targetNodeType,
-        label: input.userInput?.slice(0, 40) || `[${input.actionLabel}] 结果`,
+        label: targetLabel,
         dataJson: JSON.stringify({
+          label: targetLabel,
+          title: targetLabel,
           prompt: executeData.prompt,
           references: sourceNode ? [{ node_id: sourceNode.id, node_type: sourceNode.nodeDefId }] : [],
           status: 'generating',
@@ -152,11 +156,13 @@ export class BusinessActionService {
       node: insertNewNode ? {
         id: targetNodeId,
         type: targetNodeType,
-        position: { x: targetX, y: targetY },
-        data: {
-          prompt: executeData.prompt,
-          references: sourceNode ? [{ node_id: sourceNode.id, node_type: sourceNode.nodeDefId }] : [],
-          status: 'generating',
+          position: { x: targetX, y: targetY },
+          data: {
+            label: targetLabel,
+            title: targetLabel,
+            prompt: executeData.prompt,
+            references: sourceNode ? [{ node_id: sourceNode.id, node_type: sourceNode.nodeDefId }] : [],
+            status: 'generating',
         },
       } : null,
     }

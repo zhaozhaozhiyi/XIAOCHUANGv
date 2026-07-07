@@ -12,6 +12,7 @@
  */
 
 import { useState } from 'react'
+import { useReactFlow } from '@xyflow/react'
 import {
   ClipboardPaste,
   FolderHeart,
@@ -34,6 +35,7 @@ import {
 import { AddNodeSubmenu } from './AddNodeSubmenu'
 import { CanvasUploadDialog } from './CanvasUploadDialog'
 import { QuickGenerateDialog } from './QuickGenerateDialog'
+import type { CanvasNode } from '@/lib/canvas/types'
 
 interface Props {
   children: React.ReactNode
@@ -57,13 +59,26 @@ export function CanvasContextMenu({
   canPaste,
 }: Props) {
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [uploadPosition, setUploadPosition] = useState<{ x: number; y: number } | null>(null)
   const [quickOpen, setQuickOpen] = useState(false)
+  const reactFlow = useReactFlow<CanvasNode>()
+
+  const rememberContextPosition = (event: React.MouseEvent) => {
+    const pos = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    setUploadPosition({ x: pos.x, y: pos.y })
+  }
 
   return (
     <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="size-full">{children}</div>
+          <div
+            className="size-full"
+            data-testid="canvas-context-menu-surface"
+            onContextMenu={rememberContextPosition}
+          >
+            {children}
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="min-w-[180px]">
           <ContextMenuItem onClick={() => setUploadOpen(true)}>
@@ -102,8 +117,8 @@ export function CanvasContextMenu({
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      <CanvasUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
-      <QuickGenerateDialog open={quickOpen} onOpenChange={setQuickOpen} />
+      <CanvasUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} position={uploadPosition} />
+      <QuickGenerateDialog open={quickOpen} onOpenChange={setQuickOpen} position={uploadPosition} />
     </>
   )
 }

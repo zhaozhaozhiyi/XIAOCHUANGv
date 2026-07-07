@@ -4,6 +4,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { DatabaseService } from '../../../db/database.service'
 import { canvasEdges, canvasNodes } from '../../../db/schema'
 import { CanvasNodeResultService } from '../canvas-node-result.service'
+import { CANVAS_ASSET_SOURCE_TYPES } from '../canvas-source-types'
 import type { CanvasTaskResult } from './canvas-execution.types'
 
 @Injectable()
@@ -41,7 +42,9 @@ export class CanvasResultBackfillService {
         target.id,
         this.nodeResultService.buildResultFromExecution(nodeDefId, url, {
           thumbnail_url: result.outputs.find((item) => item.type === 'image')?.url ?? null,
-          source_type: nodeDefId === 'concat' || nodeDefId === 'export' ? 'canvas_export' : 'canvas_generation',
+          source_type: nodeDefId === 'concat' || nodeDefId === 'export'
+            ? CANVAS_ASSET_SOURCE_TYPES.EXPORT
+            : CANVAS_ASSET_SOURCE_TYPES.GENERATION,
           metadata: {
             outputs: result.outputs,
             execute_node_id: executeNodeId,

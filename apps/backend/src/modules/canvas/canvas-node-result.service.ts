@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 
 import { DatabaseService } from '../../db/database.service'
 import { canvasNodes } from '../../db/schema'
+import { CANVAS_ASSET_SOURCE_TYPES, normalizeCanvasAssetSourceType } from './canvas-source-types'
 
 export type CanvasNodeResultKind = 'image' | 'video' | 'audio' | 'text' | 'file'
 
@@ -47,68 +48,75 @@ function resultKindForExecuteNode(nodeDefId: string): CanvasNodeResultKind {
   return 'file'
 }
 
+function toFlowNode(node: typeof canvasNodes.$inferSelect, data: Record<string, unknown>) {
+  return {
+    id: node.id,
+    type: node.nodeDefId,
+    position: { x: node.positionX, y: node.positionY },
+    width: node.width,
+    height: node.height,
+    data,
+    hidden: node.isHidden || undefined,
+  }
+}
+
 @Injectable()
 export class CanvasNodeResultService {
   constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
 
   async appendResult(canvasId: string, nodeId: string, input: AppendResultInput) {
-    const [node] = await this.db.db
-      .select()
-      .from(canvasNodes)
-      .where(and(eq(canvasNodes.id, nodeId), eq(canvasNodes.canvasId, canvasId)))
+    return this.db.db.transaction(async (tx) => {
+      const [node] = await tx
+        .select()
+        .from(canvasNodes)
+        .where(and(eq(canvasNodes.id, nodeId), eq(canvasNodes.canvasId, canvasId)))
+        .for('update')
 
-    if (!node) throw new NotFoundException('node_not_found')
+      if (!node) throw new NotFoundException('node_not_found')
 
-    const data = safeJsonParse<Record<string, unknown>>(node.dataJson, {})
-    const currentResults = Array.isArray(data.results)
-      ? (data.results as CanvasNodeResult[]).filter((item) => item && typeof item === 'object')
-      : []
-    const result: CanvasNodeResult = {
-      id: uid('res'),
-      kind: input.kind,
-      url: input.url,
-      thumbnail_url: input.thumbnail_url ?? null,
-      mime_type: input.mime_type ?? null,
-      title: input.title ?? null,
-      prompt: input.prompt ?? (typeof data.prompt === 'string' ? data.prompt : null),
-      provider: input.provider ?? null,
-      model: input.model ?? null,
-      action_label: input.action_label ?? null,
-      run_id: input.run_id ?? null,
-      task_id: input.task_id ?? null,
-      asset_id: input.asset_id ?? null,
-      source_type: input.source_type ?? null,
-      created_at: new Date().toISOString(),
-      metadata: input.metadata ?? {},
-    }
+      const data = safeJsonParse<Record<string, unknown>>(node.dataJson, {})
+      const currentResults = Array.isArray(data.results)
+        ? (data.results as CanvasNodeResult[]).filter((item) => item && typeof item === 'object')
+        : []
+      const result: CanvasNodeResult = {
+        id: uid('res'),
+        kind: input.kind,
+        url: input.url,
+        thumbnail_url: input.thumbnail_url ?? null,
+        mime_type: input.mime_type ?? null,
+        title: input.title ?? null,
+        prompt: input.prompt ?? (typeof data.prompt === 'string' ? data.prompt : null),
+        provider: input.provider ?? null,
+        model: input.model ?? null,
+        action_label: input.action_label ?? null,
+        run_id: input.run_id ?? null,
+        task_id: input.task_id ?? null,
+        asset_id: input.asset_id ?? null,
+        source_type: input.source_type ?? null,
+        created_at: new Date().toISOString(),
+        metadata: input.metadata ?? {},
+      }
 
-    const nextData = this.applyCurrentResult(
-      node.nodeDefId,
-      {
-        ...data,
-        results: [result, ...currentResults.filter((item) => item.id !== result.id)].slice(0, 20),
-        current_result_id: result.id,
-      },
-      result,
-    )
+      const nextData = this.applyCurrentResult(
+        node.nodeDefId,
+        {
+          ...data,
+          results: [result, ...currentResults.filter((item) => item.id !== result.id)].slice(0, 20),
+          current_result_id: result.id,
+        },
+        result,
+      )
 
-    await this.db.db
-      .update(canvasNodes)
-      .set({ dataJson: JSON.stringify(nextData), updatedAt: new Date() })
-      .where(eq(canvasNodes.id, node.id))
+      await tx
+        .update(canvasNodes)
+        .set({ dataJson: JSON.stringify(nextData), updatedAt: new Date() })
+        .where(eq(canvasNodes.id, node.id))
 
-    return {
-      result,
-      node: {
-        id: node.id,
-        type: node.nodeDefId,
-        position: { x: node.positionX, y: node.positionY },
-        width: node.width,
-        height: node.height,
-        data: nextData,
-        hidden: node.isHidden || undefined,
-      },
-    }
+      return {
+        result,
+        node: toFlowNode(node, nextData),
+      }
+    })
   }
 
   async listResults(canvasId: string, nodeId: string) {
@@ -126,57 +134,63 @@ export class CanvasNodeResultService {
   }
 
   async selectResult(canvasId: string, nodeId: string, resultId: string) {
-    const [node] = await this.db.db
-      .select()
-      .from(canvasNodes)
-      .where(and(eq(canvasNodes.id, nodeId), eq(canvasNodes.canvasId, canvasId)))
+    return this.db.db.transaction(async (tx) => {
+      const [node] = await tx
+        .select()
+        .from(canvasNodes)
+        .where(and(eq(canvasNodes.id, nodeId), eq(canvasNodes.canvasId, canvasId)))
+        .for('update')
 
-    if (!node) throw new NotFoundException('node_not_found')
-    const data = safeJsonParse<Record<string, unknown>>(node.dataJson, {})
-    const results = Array.isArray(data.results) ? (data.results as CanvasNodeResult[]) : []
-    const result = results.find((item) => item.id === resultId)
-    if (!result) throw new BadRequestException('result_not_found')
+      if (!node) throw new NotFoundException('node_not_found')
+      const data = safeJsonParse<Record<string, unknown>>(node.dataJson, {})
+      const results = Array.isArray(data.results) ? (data.results as CanvasNodeResult[]) : []
+      const result = results.find((item) => item.id === resultId)
+      if (!result) throw new BadRequestException('result_not_found')
 
-    const nextData = this.applyCurrentResult(
-      node.nodeDefId,
-      { ...data, current_result_id: result.id, results },
-      result,
-    )
+      const nextData = this.applyCurrentResult(
+        node.nodeDefId,
+        { ...data, current_result_id: result.id, results },
+        result,
+      )
 
-    await this.db.db
-      .update(canvasNodes)
-      .set({ dataJson: JSON.stringify(nextData), updatedAt: new Date() })
-      .where(eq(canvasNodes.id, node.id))
+      await tx
+        .update(canvasNodes)
+        .set({ dataJson: JSON.stringify(nextData), updatedAt: new Date() })
+        .where(eq(canvasNodes.id, node.id))
 
-    return {
-      result,
-      node: {
-        id: node.id,
-        type: node.nodeDefId,
-        position: { x: node.positionX, y: node.positionY },
-        width: node.width,
-        height: node.height,
-        data: nextData,
-        hidden: node.isHidden || undefined,
-      },
-    }
+      return {
+        result,
+        node: toFlowNode(node, nextData),
+      }
+    })
   }
 
   async markAssetId(canvasId: string, nodeId: string, resultId: string, assetId: number) {
-    const [node] = await this.db.db
-      .select()
-      .from(canvasNodes)
-      .where(and(eq(canvasNodes.id, nodeId), eq(canvasNodes.canvasId, canvasId)))
+    return this.db.db.transaction(async (tx) => {
+      const [node] = await tx
+        .select()
+        .from(canvasNodes)
+        .where(and(eq(canvasNodes.id, nodeId), eq(canvasNodes.canvasId, canvasId)))
+        .for('update')
 
-    if (!node) throw new NotFoundException('node_not_found')
-    const data = safeJsonParse<Record<string, unknown>>(node.dataJson, {})
-    const results = Array.isArray(data.results) ? (data.results as CanvasNodeResult[]) : []
-    const nextResults = results.map((item) => item.id === resultId ? { ...item, asset_id: assetId } : item)
+      if (!node) throw new NotFoundException('node_not_found')
+      const data = safeJsonParse<Record<string, unknown>>(node.dataJson, {})
+      const results = Array.isArray(data.results) ? (data.results as CanvasNodeResult[]) : []
+      if (!results.some((item) => item.id === resultId)) throw new BadRequestException('result_not_found')
+      const nextResults = results.map((item) => item.id === resultId ? { ...item, asset_id: assetId } : item)
+      const currentResultId = typeof data.current_result_id === 'string'
+        && nextResults.some((item) => item.id === data.current_result_id)
+        ? data.current_result_id
+        : nextResults[0]?.id ?? null
+      const nextData = { ...data, results: nextResults, current_result_id: currentResultId }
 
-    await this.db.db
-      .update(canvasNodes)
-      .set({ dataJson: JSON.stringify({ ...data, results: nextResults }), updatedAt: new Date() })
-      .where(eq(canvasNodes.id, node.id))
+      await tx
+        .update(canvasNodes)
+        .set({ dataJson: JSON.stringify(nextData), updatedAt: new Date() })
+        .where(eq(canvasNodes.id, node.id))
+
+      return toFlowNode(node, nextData)
+    })
   }
 
   buildResultFromExecution(nodeDefId: string, url: string, extra?: Partial<CanvasNodeResult>): AppendResultInput {
@@ -191,7 +205,7 @@ export class CanvasNodeResultService {
       action_label: extra?.action_label ?? null,
       run_id: extra?.run_id ?? null,
       task_id: extra?.task_id ?? null,
-      source_type: extra?.source_type ?? 'canvas_generation',
+      source_type: normalizeCanvasAssetSourceType(extra?.source_type, CANVAS_ASSET_SOURCE_TYPES.GENERATION),
       metadata: extra?.metadata ?? {},
     }
   }

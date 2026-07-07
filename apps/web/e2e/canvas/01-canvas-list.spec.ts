@@ -23,8 +23,8 @@ test.describe('canvas list', () => {
 
   test('点击画布卡片正文区域跳转到编辑器', async ({ page }) => {
     const card = page.getByTestId('canvas-card-cnv_demo_drama')
-    await card.locator('p').click()
-    await page.waitForURL(/\/canvas\/cnv_demo_drama$/, { timeout: 15_000 })
+    await card.getByRole('link', { name: /^演示画布/ }).click()
+    await expect(page).toHaveURL(/\/canvas\/cnv_demo_drama(?:$|[?#])/, { timeout: 15_000 })
     await expect(page.getByText(/演示画布/).first()).toBeVisible()
   })
 
