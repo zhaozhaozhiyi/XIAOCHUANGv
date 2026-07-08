@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
 import { canvases, canvasNodes, canvasEdges, canvasViewports } from '../../db/schema'
+import { canvasAdvisoryLockSql } from './canvas-lock.util'
 
 function now() {
   return new Date()
@@ -75,6 +76,10 @@ export class CanvasSaveService {
     const nodesToSave = this.applyStoryboardPortContext(nodes, edges)
 
     await this.db.db.transaction(async (tx) => {
+      // 0. canvas-level advisory lock：与 canvas-result-backfill 的 appendResult 用同一把锁，
+      //    保证全量删插期间不会有 backfill 往即将被删除/覆盖的节点写 results（丢失竞态）。
+      await tx.execute(canvasAdvisoryLockSql(canvasId))
+
       // 1. 视口
       if (viewport) {
         await tx.update(canvasViewports)

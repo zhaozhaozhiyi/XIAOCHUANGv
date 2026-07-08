@@ -45,26 +45,35 @@ export class CanvasRunService {
   // 前端期望: { code:0, data: { run_id, version_id, total } }
 
   async triggerRun(canvasId: string, userId: number, versionLabel?: string) {
-    const [activeRun] = await this.db.db
-      .select()
-      .from(canvasRuns)
-      .where(and(eq(canvasRuns.canvasId, canvasId), inArray(canvasRuns.status, ['pending', 'running'])))
-
-    if (activeRun) throw new BadRequestException('a run is already in progress')
-
-    const allNodes = await this.db.db
-      .select()
-      .from(canvasNodes)
-      .where(and(eq(canvasNodes.canvasId, canvasId), eq(canvasNodes.isHidden, false)))
-
-    const executableNodes = allNodes.filter((n) => EXECUTE_NODE_TYPES.includes(n.nodeDefId))
-    if (executableNodes.length === 0) throw new BadRequestException('no executable nodes on this canvas')
-
     const versionId = uid('ver')
     const runId = uid('run')
+    let totalNodes = 0
 
     try {
       await this.db.db.transaction(async (tx) => {
+        // SELECT FOR UPDATE 锁 canvas 行，串行化同画布的并发 triggerRun/business-action，
+        // 让"活跃 run 检查 + 节点快照 + 插入"在同一锁下原子完成（根治 TOCTOU）。
+        const [canvas] = await tx
+          .select()
+          .from(canvases)
+          .where(eq(canvases.id, canvasId))
+          .for('update')
+        if (!canvas) throw new NotFoundException('canvas_not_found')
+
+        const [activeRun] = await tx
+          .select()
+          .from(canvasRuns)
+          .where(and(eq(canvasRuns.canvasId, canvasId), inArray(canvasRuns.status, ['pending', 'running'])))
+        if (activeRun) throw new BadRequestException('a run is already in progress')
+
+        const allNodes = await tx
+          .select()
+          .from(canvasNodes)
+          .where(and(eq(canvasNodes.canvasId, canvasId), eq(canvasNodes.isHidden, false)))
+        const executableNodes = allNodes.filter((n) => EXECUTE_NODE_TYPES.includes(n.nodeDefId))
+        if (executableNodes.length === 0) throw new BadRequestException('no executable nodes on this canvas')
+        totalNodes = executableNodes.length
+
         await tx.insert(canvasVersions).values({
           id: versionId,
           canvasId,
@@ -111,7 +120,7 @@ export class CanvasRunService {
       this.logger.error(`canvas run orchestration failed: ${runId}`, err)
     })
 
-    return { run_id: runId, version_id: versionId, total: executableNodes.length }
+    return { run_id: runId, version_id: versionId, total: totalNodes }
   }
 
   // ═══════════════════════════════════════════════════════════

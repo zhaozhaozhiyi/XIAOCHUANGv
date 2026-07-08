@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 
 import { DatabaseService } from '../../db/database.service'
 import { canvasNodes } from '../../db/schema'
+import { canvasAdvisoryLockSql } from './canvas-lock.util'
 import { CANVAS_ASSET_SOURCE_TYPES, normalizeCanvasAssetSourceType } from './canvas-source-types'
 
 export type CanvasNodeResultKind = 'image' | 'video' | 'audio' | 'text' | 'file'
@@ -66,6 +67,9 @@ export class CanvasNodeResultService {
 
   async appendResult(canvasId: string, nodeId: string, input: AppendResultInput) {
     return this.db.db.transaction(async (tx) => {
+      // 与 canvas-save 全量删插用同一把 canvas advisory lock，避免 save 删节点时把刚写入的 results 覆盖丢失。
+      await tx.execute(canvasAdvisoryLockSql(canvasId))
+
       const [node] = await tx
         .select()
         .from(canvasNodes)

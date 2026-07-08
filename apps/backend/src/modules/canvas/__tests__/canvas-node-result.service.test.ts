@@ -59,6 +59,7 @@ function createDbMock(initialNode: MockNode) {
         }),
       })),
     })),
+    execute: vi.fn(() => Promise.resolve()),
   })
 
   const db = {

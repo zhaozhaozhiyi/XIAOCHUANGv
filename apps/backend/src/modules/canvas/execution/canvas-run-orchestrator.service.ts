@@ -109,39 +109,44 @@ export class CanvasRunOrchestratorService {
   }
 
   private async finalizeRun(runId: string): Promise<void> {
-    const tasks = await this.db.db.select().from(canvasTasks).where(eq(canvasTasks.runId, runId))
-    if (!tasks.length) return
+    await this.db.db.transaction(async (tx) => {
+      // 锁 run 行串行化并发 finalizeRun（多个 onTaskSettled 同时触发），避免重复统计/终态覆盖。
+      const [run] = await tx
+        .select()
+        .from(canvasRuns)
+        .where(eq(canvasRuns.id, runId))
+        .for('update')
+      if (!run || run.status === 'cancelled') return
 
-    const completed = tasks.filter((t) => t.status === 'completed').length
-    const failed = tasks.filter((t) => t.status === 'failed').length
-    const skipped = tasks.filter((t) => t.status === 'skipped').length
-    const pending = tasks.filter((t) => !TERMINAL.has(t.status)).length
+      const tasks = await tx.select().from(canvasTasks).where(eq(canvasTasks.runId, runId))
+      if (!tasks.length) return
 
-    const progress = tasks.length ? completed / tasks.length : 0
+      const completed = tasks.filter((t) => t.status === 'completed').length
+      const failed = tasks.filter((t) => t.status === 'failed').length
+      const skipped = tasks.filter((t) => t.status === 'skipped').length
+      const pending = tasks.filter((t) => !TERMINAL.has(t.status)).length
+      const progress = tasks.length ? completed / tasks.length : 0
 
-    await this.db.db
-      .update(canvasRuns)
-      .set({
-        completedNodes: completed,
-        failedNodes: failed,
-        skippedNodes: skipped,
-        progress,
-      })
-      .where(eq(canvasRuns.id, runId))
+      // 计数/进度在锁内更新，不会被并发 finalizeRun clobber
+      await tx
+        .update(canvasRuns)
+        .set({ completedNodes: completed, failedNodes: failed, skippedNodes: skipped, progress })
+        .where(eq(canvasRuns.id, runId))
 
-    if (pending > 0) return
+      if (pending > 0) return
+      // 已是终态（completed/failed/partially-failed）则不覆盖；只有 running/pending 才推进到终态
+      if (run.status !== 'running' && run.status !== 'pending') return
 
-    const [run] = await this.db.db.select().from(canvasRuns).where(eq(canvasRuns.id, runId))
-    if (!run || run.status === 'cancelled') return
+      // 三终态：全成功→completed、全失败→failed、部分失败→partially-failed
+      let status: string
+      if (failed === 0) status = 'completed'
+      else if (completed === 0) status = 'failed'
+      else status = 'partially-failed'
 
-    let status: string
-    if (failed === 0) status = 'completed'
-    else if (completed === 0) status = 'failed'
-    else status = 'partially-failed'
-
-    await this.db.db
-      .update(canvasRuns)
-      .set({ status, completedAt: now() })
-      .where(eq(canvasRuns.id, runId))
+      await tx
+        .update(canvasRuns)
+        .set({ status, completedAt: now() })
+        .where(eq(canvasRuns.id, runId))
+    })
   }
 }
