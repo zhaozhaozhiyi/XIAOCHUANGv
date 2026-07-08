@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 
 import { DatabaseService } from '../../../db/database.service'
@@ -8,6 +8,15 @@ import { CanvasRunOrchestratorService } from '../execution/canvas-run-orchestrat
 
 function now() { return new Date() }
 function uid(p: string) { return `${p}_${randomUUID().slice(0, 8)}` }
+
+// 识别 canvas_runs 部分唯一索引抛出的唯一约束冲突，转成 'a run is already in progress'。
+function isCanvasRunActiveViolation(error: unknown): boolean {
+  const e = error as { code?: string; constraint?: string; constraint_name?: string } | null
+  return !!e && e.code === '23505' && (
+    String(e.constraint || '').includes('canvas_runs_active_unique') ||
+    String(e.constraint_name || '').includes('canvas_runs_active_unique')
+  )
+}
 
 const BUSINESS_ACTION_MAP: Record<string, { executeNodeDefId: string; module: string; method: string }> = {
   '构想画面': { executeNodeDefId: 'text-to-image', module: 'images', method: 'generate' },
@@ -91,59 +100,76 @@ export class BusinessActionService {
 
     const targetLabel = input.userInput?.slice(0, 40) || `[${input.actionLabel}] 结果`
 
-    if (insertNewNode) {
-      await this.db.db.insert(canvasNodes).values({
-        id: targetNodeId,
-        canvasId,
-        nodeDefId: targetNodeType,
-        label: targetLabel,
-        dataJson: JSON.stringify({
-          label: targetLabel,
-          title: targetLabel,
-          prompt: executeData.prompt,
-          references: sourceNode ? [{ node_id: sourceNode.id, node_type: sourceNode.nodeDefId }] : [],
-          status: 'generating',
-        }),
-        positionX: targetX,
-        positionY: targetY,
-        isHidden: false,
-        createdAt: now(),
-        updatedAt: now(),
-      })
-    }
+    // 一画布一活跃 run：business-action 也受部分唯一索引约束，先做活跃 run 检查给出友好错误。
+    const [activeRun] = await this.db.db
+      .select()
+      .from(canvasRuns)
+      .where(and(eq(canvasRuns.canvasId, canvasId), inArray(canvasRuns.status, ['pending', 'running'])))
+    if (activeRun) throw new BadRequestException('a run is already in progress')
 
     const hiddenNodeId = uid('node')
-    await this.db.db.insert(canvasNodes).values({
-      id: hiddenNodeId, canvasId,
-      nodeDefId: action.executeNodeDefId,
-      label: `[${input.actionLabel}]`,
-      dataJson: JSON.stringify(executeData),
-      positionX: targetX + 300, positionY: targetY,
-      isHidden: true, createdAt: now(), updatedAt: now(),
-    })
-
-    const outPort = { 'text-to-image': 'image', 'image-to-video': 'video', 'text-to-speech': 'audio' }[action.executeNodeDefId] ?? 'text'
-    const inPort = TARGET_INPUT_PORT[action.executeNodeDefId] ?? 'in:image'
-    await this.db.db.insert(canvasEdges).values({
-      id: uid('edge'), canvasId,
-      sourceNodeId: hiddenNodeId, targetNodeId,
-      edgeKind: 'dataflow', sourcePort: `out:${outPort}`, targetPort: inPort, createdAt: now(),
-    })
-
     const versionId = uid('ver')
     const runId = uid('run')
     const taskId = uid('task')
+    const outPort = { 'text-to-image': 'image', 'image-to-video': 'video', 'text-to-speech': 'audio' }[action.executeNodeDefId] ?? 'text'
+    const inPort = TARGET_INPUT_PORT[action.executeNodeDefId] ?? 'in:image'
 
-    await this.db.db.insert(canvasVersions).values({
-      id: versionId, canvasId, type: 'run', label: `BA: ${input.actionLabel}`, runId, nodeCount: 1, createdAt: now(),
-    })
-    await this.db.db.insert(canvasRuns).values({
-      id: runId, canvasId, versionId, status: 'pending', totalNodes: 1, createdAt: now(),
-    })
-    await this.db.db.insert(canvasTasks).values({
-      id: taskId, runId, canvasId, nodeId: hiddenNodeId, nodeDefId: action.executeNodeDefId,
-      status: 'pending', paramsJson: JSON.stringify(executeData), createdAt: now(),
-    })
+    // 全部插入放一个事务：并发 run 撞唯一索引时整体回滚，不留孤儿 node/edge/version/task。
+    try {
+      await this.db.db.transaction(async (tx) => {
+        if (insertNewNode) {
+          await tx.insert(canvasNodes).values({
+            id: targetNodeId,
+            canvasId,
+            nodeDefId: targetNodeType,
+            label: targetLabel,
+            dataJson: JSON.stringify({
+              label: targetLabel,
+              title: targetLabel,
+              prompt: executeData.prompt,
+              references: sourceNode ? [{ node_id: sourceNode.id, node_type: sourceNode.nodeDefId }] : [],
+              status: 'generating',
+            }),
+            positionX: targetX,
+            positionY: targetY,
+            isHidden: false,
+            createdAt: now(),
+            updatedAt: now(),
+          })
+        }
+
+        await tx.insert(canvasNodes).values({
+          id: hiddenNodeId, canvasId,
+          nodeDefId: action.executeNodeDefId,
+          label: `[${input.actionLabel}]`,
+          dataJson: JSON.stringify(executeData),
+          positionX: targetX + 300, positionY: targetY,
+          isHidden: true, createdAt: now(), updatedAt: now(),
+        })
+
+        await tx.insert(canvasEdges).values({
+          id: uid('edge'), canvasId,
+          sourceNodeId: hiddenNodeId, targetNodeId,
+          edgeKind: 'dataflow', sourcePort: `out:${outPort}`, targetPort: inPort, createdAt: now(),
+        })
+
+        await tx.insert(canvasVersions).values({
+          id: versionId, canvasId, type: 'run', label: `BA: ${input.actionLabel}`, runId, nodeCount: 1, createdAt: now(),
+        })
+        await tx.insert(canvasRuns).values({
+          id: runId, canvasId, versionId, status: 'pending', totalNodes: 1, createdAt: now(),
+        })
+        await tx.insert(canvasTasks).values({
+          id: taskId, runId, canvasId, nodeId: hiddenNodeId, nodeDefId: action.executeNodeDefId,
+          status: 'pending', paramsJson: JSON.stringify(executeData), createdAt: now(),
+        })
+      })
+    } catch (error) {
+      if (isCanvasRunActiveViolation(error)) {
+        throw new BadRequestException('a run is already in progress')
+      }
+      throw error
+    }
 
     void this.orchestrator.startRun(runId, userId).catch((err) => {
       this.logger.error(`business action orchestration failed: ${runId}`, err)

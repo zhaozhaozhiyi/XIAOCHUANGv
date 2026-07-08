@@ -18,6 +18,16 @@ import { CanvasRunOrchestratorService } from './execution/canvas-run-orchestrato
 function now() { return new Date() }
 function uid(p: string) { return `${p}_${randomUUID().slice(0, 8)}` }
 
+// 识别 canvas_runs 部分唯一索引（idx_canvas_runs_active_unique）抛出的唯一约束冲突，
+// 用于把 DB 层兜底竞态转成友好的 'a run is already in progress'。
+function isCanvasRunActiveViolation(error: unknown): boolean {
+  const e = error as { code?: string; constraint?: string; constraint_name?: string } | null
+  return !!e && e.code === '23505' && (
+    String(e.constraint || '').includes('canvas_runs_active_unique') ||
+    String(e.constraint_name || '').includes('canvas_runs_active_unique')
+  )
+}
+
 const EXECUTE_NODE_TYPES = ['text-to-image', 'image-to-video', 'text-to-speech', 'concat', 'export']
 
 @Injectable()
@@ -53,39 +63,49 @@ export class CanvasRunService {
     const versionId = uid('ver')
     const runId = uid('run')
 
-    await this.db.db.insert(canvasVersions).values({
-      id: versionId,
-      canvasId,
-      type: 'run',
-      label: versionLabel ?? `Run ${now().toISOString()}`,
-      runId,
-      nodeCount: executableNodes.length,
-      createdAt: now(),
-    })
+    try {
+      await this.db.db.transaction(async (tx) => {
+        await tx.insert(canvasVersions).values({
+          id: versionId,
+          canvasId,
+          type: 'run',
+          label: versionLabel ?? `Run ${now().toISOString()}`,
+          runId,
+          nodeCount: executableNodes.length,
+          createdAt: now(),
+        })
 
-    await this.db.db.insert(canvasRuns).values({
-      id: runId,
-      canvasId,
-      versionId,
-      status: 'pending',
-      totalNodes: executableNodes.length,
-      createdAt: now(),
-    })
+        await tx.insert(canvasRuns).values({
+          id: runId,
+          canvasId,
+          versionId,
+          status: 'pending',
+          totalNodes: executableNodes.length,
+          createdAt: now(),
+        })
 
-    for (const node of executableNodes) {
-      await this.db.db.insert(canvasTasks).values({
-        id: uid('task'),
-        runId,
-        canvasId,
-        nodeId: node.id,
-        nodeDefId: node.nodeDefId,
-        status: 'pending',
-        paramsJson: node.dataJson,
-        createdAt: now(),
+        for (const node of executableNodes) {
+          await tx.insert(canvasTasks).values({
+            id: uid('task'),
+            runId,
+            canvasId,
+            nodeId: node.id,
+            nodeDefId: node.nodeDefId,
+            status: 'pending',
+            paramsJson: node.dataJson,
+            createdAt: now(),
+          })
+        }
+
+        await tx.update(canvases).set({ currentVersionId: versionId }).where(eq(canvases.id, canvasId))
       })
+    } catch (error) {
+      // 并发触发同一画布的 run 时，部分唯一索引兜底抛 23505；转成友好错误并保持事务回滚（无孤儿 version/task）。
+      if (isCanvasRunActiveViolation(error)) {
+        throw new BadRequestException('a run is already in progress')
+      }
+      throw error
     }
-
-    await this.db.db.update(canvases).set({ currentVersionId: versionId }).where(eq(canvases.id, canvasId))
 
     void this.orchestrator.startRun(runId, userId).catch((err) => {
       this.logger.error(`canvas run orchestration failed: ${runId}`, err)

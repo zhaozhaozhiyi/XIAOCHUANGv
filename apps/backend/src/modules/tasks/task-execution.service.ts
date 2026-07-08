@@ -5,7 +5,9 @@ import { DatabaseService } from '../../db/database.service'
 import { taskLogs, tasks } from '../../db/schema'
 import { TaskDomainRegistry } from './task-domain.registry'
 
-const LOCK_TTL_MS = 10 * 60_000
+// 视频生成 provider 超时最长 10 分钟（见 videos.service.ts AbortSignal.timeout(600_000)），
+// 锁 TTL 必须大于所有 provider 超时，否则锁过期后 recover worker 会抢走任务重跑、重复扣费。
+const LOCK_TTL_MS = 15 * 60_000
 const MAX_RETRY_ATTEMPTS = 7
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'canceled', 'cancelled', 'dead_letter'])
 
@@ -115,6 +117,7 @@ export class TaskExecutionService {
 
   private async refreshTaskLock(taskId: number, workerId: string) {
     const timestamp = this.now()
+    // 仅刷新自己持有的锁，避免并发下覆盖其他 worker 已抢占的锁
     await this.databaseService.db
       .update(tasks)
       .set({
@@ -123,7 +126,7 @@ export class TaskExecutionService {
         lockExpiresAt: new Date(timestamp.getTime() + LOCK_TTL_MS),
         updatedAt: timestamp,
       })
-      .where(eq(tasks.id, taskId))
+      .where(and(eq(tasks.id, taskId), eq(tasks.lockedBy, workerId)))
   }
 
   private async claimQueuedTask(task: typeof tasks.$inferSelect, workerId: string) {
@@ -207,6 +210,16 @@ export class TaskExecutionService {
     if (task.status === 'running' && !this.canRecoverRunningTask(task, workerId)) return 'locked_elsewhere'
     if (task.status === 'running') await this.refreshTaskLock(task.id, workerId)
 
-    return this.taskDomainRegistry.execute(task)
+    // 长任务（如视频生成轮询最长 50 分钟）执行期间周期性续租，避免锁 TTL 过期后被
+    // recover worker 抢占重跑、重复扣费。refreshTaskLock 带 WHERE lockedBy=workerId，
+    // 仅刷新自己持有的锁；新 claim 的 queued 任务 lockedBy 已置为 workerId，同样命中。
+    const heartbeat = setInterval(() => {
+      void this.refreshTaskLock(task.id, workerId).catch(() => undefined)
+    }, Math.floor(LOCK_TTL_MS / 3))
+    try {
+      return await this.taskDomainRegistry.execute(task)
+    } finally {
+      clearInterval(heartbeat)
+    }
   }
 }

@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt, not, or } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
 import { dramas, episodes, storyboards, tasks, videoGenerations } from '../../db/schema'
@@ -531,13 +531,41 @@ export class VideosService {
   }
 
   private async handleVideoComplete(id: number, videoUrl: string, duration: number | null | undefined, storyboardId?: number | null) {
-    const [record] = await this.databaseService.db
-      .select()
-      .from(videoGenerations)
-      .where(eq(videoGenerations.id, id))
-    if (!record || isTerminalVideoGenerationStatus(record.status)) return
+    // 1. CAS claim：先把记录从非终态推进到中间态 'finalizing'，只有 claim 成功者才继续。
+    //    这一步在下载之前，确保并发重复 webhook（Vidu 重试/轮询与回调同时到达）只有一个会真正下载，
+    //    从根上消除"重复下载 + 重复写 storyboard"。允许回收超过 5 分钟的陈旧 'finalizing'（claim 者已死）。
+    const claimCutoff = new Date(now().getTime() - 5 * 60_000)
+    const [claimed] = await this.databaseService.db
+      .update(videoGenerations)
+      .set({ status: 'finalizing', updatedAt: now() })
+      .where(
+        and(
+          eq(videoGenerations.id, id),
+          not(inArray(videoGenerations.status, ['completed', 'failed', 'canceled', 'cancelled'])),
+          or(
+            not(eq(videoGenerations.status, 'finalizing')),
+            lt(videoGenerations.updatedAt, claimCutoff),
+          ),
+        ),
+      )
+      .returning({ id: videoGenerations.id, storyboardId: videoGenerations.storyboardId })
 
-    const storedFile = await downloadFile(this.storageService, videoUrl, 'videos')
+    if (!claimed) return // 已被另一并发调用 claim 或终结
+
+    // 2. 仅 claim 成功者下载
+    let storedFile
+    try {
+      storedFile = await downloadFile(this.storageService, videoUrl, 'videos')
+    } catch (downloadError) {
+      // 下载失败：回退到 'processing'，让后续 webhook 重试可重新 claim
+      await this.databaseService.db
+        .update(videoGenerations)
+        .set({ status: 'processing', updatedAt: now() })
+        .where(and(eq(videoGenerations.id, id), eq(videoGenerations.status, 'finalizing')))
+      throw downloadError
+    }
+
+    // 3. 从 'finalizing' 推进到 'completed'（CAS，防止异常路径下覆盖终态）
     await this.databaseService.db
       .update(videoGenerations)
       .set({
@@ -547,10 +575,11 @@ export class VideosService {
         completedAt: now(),
         updatedAt: now(),
       })
-      .where(eq(videoGenerations.id, id))
+      .where(and(eq(videoGenerations.id, id), eq(videoGenerations.status, 'finalizing')))
+
     await this.videosTasksService.syncTaskForVideoGeneration(id)
 
-    const targetStoryboardId = storyboardId ?? record.storyboardId
+    const targetStoryboardId = storyboardId ?? claimed.storyboardId
     if (targetStoryboardId) {
       const [storyboard] = await this.databaseService.db
         .select()

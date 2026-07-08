@@ -108,6 +108,28 @@
 | `0.24.0` | 画布 Skill 扩展 | 后续 | 删除节点、建立/删除连线、对话操作编排 |
 | `0.25.0` | 画布生成与资产回用深化 | 后续 | 对话触发生成、保存资产 Skill、资产反向回用、更多运行历史 |
 
+### 3.5 0.23.3 工程债偿还
+
+`0.23.2` 体检（见 [系统体检报告-0.23.2-2026-07-08](./系统体检报告-0.23.2-2026-07-08.md) 与 [应对路线图-0.23.2-2026-07-08](./应对路线图-0.23.2-2026-07-08.md)）发现的安全与正确性硬伤已作为 `0.23.2-post` hotfix 立即处理；以下工程债进入 `0.23.3` 版本列车，与画布 AI 对话主线同期偿还：
+
+| 编号 | 债项 | 范围 | 验收要点 |
+|------|------|------|----------|
+| M2-1 | OpenAPI 响应 schema 补全（契约债·核心） | 分模块：admin→canvas→auth→dramas→media→shared.ts 清理 | 后端 controller 补 `@ApiOkResponse`，`openapi.json` 响应 schema 覆盖率 ≥80%，web/admin 至少一模块改用 `generated.ts` 类型 |
+| M2-2 | 版本基线一次性对齐 | Node 22、TS 6.0.2、Next 统一、package.json version 跟发版、补 root engines | 全仓 `@types/node`/`typescript`/`next` 同版本，release-gates 加 version 一致性校验 |
+| M2-3 | 状态字段加 DB 级约束 | `tasks/canvas/dramas` 状态字段 `checkConstraint` 或 `pgEnum` | 误写非法状态被 DB 拒绝，迁移可回滚 |
+| M2-4 | canvas 子表 FK 补全 | `canvasEdges`/`canvasTasks`/`canvasVersionNodes` 节点引用 `.references()` | 删除节点时关联 edges/tasks 同步清理，迁移前清洗孤儿数据 |
+| M2-5 | 迁移可回滚机制 | 补 down 迁移或引入 node-pg-migrate、清理游离 `canvas_tables.sql`、补 meta snapshot | 关键迁移可回滚验证，snapshot 与迁移对齐 |
+| M2-6 | CI 覆盖度补齐 | 加 `verify:v2-boundaries`、canvas e2e 进 CI、admin 补 typecheck | CI 跑边界检查 + canvas e2e，admin 独立 typecheck |
+| M2-7 | Vidu webhook secret 改 header 传递 | `videos.webhook.ts` callback URL 不含 secret | secret 经 `x-vidu-webhook-secret` header 传递 |
+| M2-8 | `packages/ui` 处置 | 实质填充或删除 | 不再编译空包，或至少一组件跨 web/admin 复用 |
+| M2-9 | `drama/[id]` 巨型文件拆分 | 拆 `useDramaAiFirst` hook + 子组件、`generateCover` 加 AbortController | 主文件 <800 行，卸载即停轮询 |
+| M2-10 | 前台鉴权一致性 | `drama/[id]` 纳入 server 守卫、清理 `/create` 死路由 | cookie 过期访问 `/drama/:id` 被重定向登录 |
+| M2-11 | MSW 边界可视性 | mock 启用时显示 "Mock" 徽章、启动期 loading、清理 public 临时素材 | mock 模式有可视标识，启动无白屏 |
+| M2-12 | i18n 落实或移除 | 落实 `t()` 消费或移除 `messages/en.json` 避免假承诺 | 切换语言界面变化，或无 i18n 残留误导 |
+| M2-13 | `aiServiceConfigs` 索引 + 默认值唯一约束 | `(serviceType, isActive)` 索引 + `(userId, serviceType) WHERE isDefault` 部分唯一索引 | 查询走索引，同用户同类型至多一个 default |
+
+> `0.23.2-post` hotfix 已处理（不进 0.23.3 列车）：uploads 匿名上传加守卫、canvas 节点结果 IDOR 加 ownership、视频任务锁 TTL 提到 15 分钟 + `refreshTaskLock` 加 `WHERE lockedBy`、Vidu webhook 重复处理改 CAS、`canvas_runs` 部分唯一索引兜底 triggerRun 竞态。`0.23.3` 内继续完成画布并发加固专题：triggerRun 事务化、save/backfill advisory lock、finalizeRun CAS、`reloadCanvas` 字段级 merge（详见路线图 M1）。
+
 ## 4. 发布纪律
 
 每个版本必须维护这些内容：
