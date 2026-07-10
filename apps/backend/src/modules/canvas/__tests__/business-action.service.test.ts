@@ -13,13 +13,23 @@ function thenable(result: any) {
 }
 
 function createDbMock(sourceNode: any | null = null) {
+  // 第一次 select 返回 sourceNode（triggerAction 先查源节点），后续 select 返回 []（活跃 run 检查等）。
+  let selectCallCount = 0
+  const txMock = {
+    insert: vi.fn(() => ({ values: vi.fn(() => Promise.resolve()) })),
+    update: vi.fn(() => ({ set: vi.fn(() => ({ where: vi.fn(() => Promise.resolve()) })) })),
+  }
   return {
     db: {
-      select: vi.fn(() => ({
-        from: vi.fn(() => ({
-          where: vi.fn(() => Promise.resolve(sourceNode ? [sourceNode] : [])),
-        })),
-      })),
+      select: vi.fn(() => {
+        const callIdx = selectCallCount++
+        return {
+          from: vi.fn(() => ({
+            where: vi.fn(() => Promise.resolve(callIdx === 0 ? (sourceNode ? [sourceNode] : []) : [])),
+          })),
+        }
+      }),
+      transaction: vi.fn(async (fn: any) => fn(txMock)),
       insert: vi.fn(() => ({
         values: vi.fn(() => Promise.resolve()),
       })),

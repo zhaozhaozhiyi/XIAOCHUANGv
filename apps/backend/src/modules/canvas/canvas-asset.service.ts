@@ -6,6 +6,7 @@ import { DatabaseService } from '../../db/database.service'
 import { assets, canvasNodes } from '../../db/schema'
 import { CanvasService } from './canvas.service'
 import { CanvasNodeResult, CanvasNodeResultService } from './canvas-node-result.service'
+import { CANVAS_ASSET_SOURCE_TYPES, normalizeCanvasAssetSourceType } from './canvas-source-types'
 
 function kindToAssetKind(kind: string) {
   if (kind === 'image' || kind === 'video' || kind === 'audio') return kind
@@ -15,6 +16,15 @@ function kindToAssetKind(kind: string) {
 function safeJsonParse<T>(json: string | null | undefined, fallback: T): T {
   if (!json) return fallback
   try { return JSON.parse(json) as T } catch { return fallback }
+}
+
+function metadataMatchesCanvasResult(
+  metadataJson: string | null | undefined,
+  nodeId: string,
+  resultId: string,
+) {
+  const metadata = safeJsonParse<Record<string, unknown>>(metadataJson, {})
+  return metadata.node_id === nodeId && metadata.result_id === resultId
 }
 
 @Injectable()
@@ -30,14 +40,14 @@ export class CanvasAssetService {
     userId: number,
     input: { node_id: string; result_id?: string; title?: string },
   ) {
-    await this.canvasService.requireOwnedCanvas(canvasId, userId)
+    const canvas = await this.canvasService.requireOwnedCanvas(canvasId, userId)
 
     const [node] = await this.db.db
       .select()
       .from(canvasNodes)
       .where(and(eq(canvasNodes.id, input.node_id), eq(canvasNodes.canvasId, canvasId)))
 
-    if (!node) throw new NotFoundException('node_not_found')
+    if (!node) throw new NotFoundException('canvas_node_not_found')
 
     const data = safeJsonParse<Record<string, unknown>>(node.dataJson, {})
     const results = Array.isArray(data.results) ? (data.results as CanvasNodeResult[]) : []
@@ -46,18 +56,28 @@ export class CanvasAssetService {
       ? results.find((item) => item.id === input.result_id)
       : (results.find((item) => item.id === currentResultId) || results[0])
 
-    if (!result?.url) throw new BadRequestException('result_not_found')
+    if (!result) throw new BadRequestException('canvas_result_not_found')
+    if (!result.url) throw new BadRequestException('canvas_result_has_no_url')
     if (result.asset_id) {
       const [existing] = await this.db.db
         .select()
         .from(assets)
         .where(and(eq(assets.id, result.asset_id), eq(assets.userId, userId), isNull(assets.deletedAt)))
-      if (existing) return existing
+      if (existing) {
+        const nextNode = await this.nodeResultService.markAssetId(canvasId, node.id, result.id, existing.id)
+        return { asset: existing, node: nextNode, result: { ...result, asset_id: existing.id } }
+      }
     }
 
     const sourceType = input.result_id && input.result_id !== currentResultId
-      ? 'canvas_history'
-      : (result.source_type || 'canvas_generation')
+      ? CANVAS_ASSET_SOURCE_TYPES.HISTORY
+      : normalizeCanvasAssetSourceType(result.source_type, CANVAS_ASSET_SOURCE_TYPES.GENERATION)
+
+    const existingAsset = await this.findExistingCanvasAsset(userId, canvasId, node.id, result.id)
+    if (existingAsset) {
+      const nextNode = await this.nodeResultService.markAssetId(canvasId, node.id, result.id, existingAsset.id)
+      return { asset: existingAsset, node: nextNode, result: { ...result, asset_id: existingAsset.id } }
+    }
 
     const [asset] = await this.db.db
       .insert(assets)
@@ -74,8 +94,9 @@ export class CanvasAssetService {
         thumbnailUrl: toPublicMediaUrl(result.thumbnail_url || result.url),
         metadataJson: JSON.stringify({
           canvas_id: canvasId,
+          canvas_title: canvas.title,
           node_id: node.id,
-          node_type: node.nodeDefId,
+          node_def_id: node.nodeDefId,
           result_id: result.id,
           prompt: result.prompt ?? null,
           action_label: result.action_label ?? null,
@@ -87,8 +108,8 @@ export class CanvasAssetService {
       })
       .returning()
 
-    await this.nodeResultService.markAssetId(canvasId, node.id, result.id, asset.id)
-    return asset
+    const nextNode = await this.nodeResultService.markAssetId(canvasId, node.id, result.id, asset.id)
+    return { asset, node: nextNode, result: { ...result, asset_id: asset.id } }
   }
 
   async createAssetFromUpload(args: {
@@ -101,6 +122,8 @@ export class CanvasAssetService {
     mimeType?: string | null
     nodeId?: string | null
     resultId?: string | null
+    canvasTitle?: string | null
+    nodeDefId?: string | null
   }) {
     const [asset] = await this.db.db
       .insert(assets)
@@ -109,14 +132,16 @@ export class CanvasAssetService {
         kind: args.kind,
         title: args.title || '画布上传',
         mimeType: args.mimeType ?? null,
-        sourceType: 'canvas_upload',
+        sourceType: CANVAS_ASSET_SOURCE_TYPES.UPLOAD,
         sourceRef: args.canvasId,
         sourcePath: `/canvas/${args.canvasId}`,
         url: toPublicMediaUrl(args.url),
         thumbnailUrl: toPublicMediaUrl(args.thumbnailUrl || args.url),
         metadataJson: JSON.stringify({
           canvas_id: args.canvasId,
+          canvas_title: args.canvasTitle ?? null,
           node_id: args.nodeId ?? null,
+          node_def_id: args.nodeDefId ?? null,
           result_id: args.resultId ?? null,
         }),
         createdAt: new Date(),
@@ -128,5 +153,14 @@ export class CanvasAssetService {
       await this.nodeResultService.markAssetId(args.canvasId, args.nodeId, args.resultId, asset.id)
     }
     return asset
+  }
+
+  private async findExistingCanvasAsset(userId: number, canvasId: string, nodeId: string, resultId: string) {
+    const rows = await this.db.db
+      .select()
+      .from(assets)
+      .where(and(eq(assets.userId, userId), eq(assets.sourceRef, canvasId), isNull(assets.deletedAt)))
+
+    return rows.find((asset) => metadataMatchesCanvasResult(asset.metadataJson, nodeId, resultId)) || null
   }
 }

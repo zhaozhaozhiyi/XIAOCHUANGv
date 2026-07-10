@@ -43,6 +43,7 @@ describe('CanvasSaveService', () => {
         values: vi.fn().mockReturnThis(),
         delete: vi.fn().mockReturnThis(),
         returning: vi.fn(),
+        execute: vi.fn().mockResolvedValue(undefined),
       }
       tx.update.mockReturnValue(tx)
       tx.set.mockReturnValue(tx)
@@ -155,6 +156,7 @@ describe('CanvasSaveService', () => {
         }),
         delete: vi.fn().mockReturnThis(),
         returning: vi.fn(),
+        execute: vi.fn().mockResolvedValue(undefined),
       }
       tx.update.mockReturnValue(tx)
       tx.set.mockReturnValue(tx)

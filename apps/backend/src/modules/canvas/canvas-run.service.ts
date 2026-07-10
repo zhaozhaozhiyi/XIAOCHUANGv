@@ -18,6 +18,16 @@ import { CanvasRunOrchestratorService } from './execution/canvas-run-orchestrato
 function now() { return new Date() }
 function uid(p: string) { return `${p}_${randomUUID().slice(0, 8)}` }
 
+// 识别 canvas_runs 部分唯一索引（idx_canvas_runs_active_unique）抛出的唯一约束冲突，
+// 用于把 DB 层兜底竞态转成友好的 'a run is already in progress'。
+function isCanvasRunActiveViolation(error: unknown): boolean {
+  const e = error as { code?: string; constraint?: string; constraint_name?: string } | null
+  return !!e && e.code === '23505' && (
+    String(e.constraint || '').includes('canvas_runs_active_unique') ||
+    String(e.constraint_name || '').includes('canvas_runs_active_unique')
+  )
+}
+
 const EXECUTE_NODE_TYPES = ['text-to-image', 'image-to-video', 'text-to-speech', 'concat', 'export']
 
 @Injectable()
@@ -35,63 +45,82 @@ export class CanvasRunService {
   // 前端期望: { code:0, data: { run_id, version_id, total } }
 
   async triggerRun(canvasId: string, userId: number, versionLabel?: string) {
-    const [activeRun] = await this.db.db
-      .select()
-      .from(canvasRuns)
-      .where(and(eq(canvasRuns.canvasId, canvasId), inArray(canvasRuns.status, ['pending', 'running'])))
-
-    if (activeRun) throw new BadRequestException('a run is already in progress')
-
-    const allNodes = await this.db.db
-      .select()
-      .from(canvasNodes)
-      .where(and(eq(canvasNodes.canvasId, canvasId), eq(canvasNodes.isHidden, false)))
-
-    const executableNodes = allNodes.filter((n) => EXECUTE_NODE_TYPES.includes(n.nodeDefId))
-    if (executableNodes.length === 0) throw new BadRequestException('no executable nodes on this canvas')
-
     const versionId = uid('ver')
     const runId = uid('run')
+    let totalNodes = 0
 
-    await this.db.db.insert(canvasVersions).values({
-      id: versionId,
-      canvasId,
-      type: 'run',
-      label: versionLabel ?? `Run ${now().toISOString()}`,
-      runId,
-      nodeCount: executableNodes.length,
-      createdAt: now(),
-    })
+    try {
+      await this.db.db.transaction(async (tx) => {
+        // SELECT FOR UPDATE 锁 canvas 行，串行化同画布的并发 triggerRun/business-action，
+        // 让"活跃 run 检查 + 节点快照 + 插入"在同一锁下原子完成（根治 TOCTOU）。
+        const [canvas] = await tx
+          .select()
+          .from(canvases)
+          .where(eq(canvases.id, canvasId))
+          .for('update')
+        if (!canvas) throw new NotFoundException('canvas_not_found')
 
-    await this.db.db.insert(canvasRuns).values({
-      id: runId,
-      canvasId,
-      versionId,
-      status: 'pending',
-      totalNodes: executableNodes.length,
-      createdAt: now(),
-    })
+        const [activeRun] = await tx
+          .select()
+          .from(canvasRuns)
+          .where(and(eq(canvasRuns.canvasId, canvasId), inArray(canvasRuns.status, ['pending', 'running'])))
+        if (activeRun) throw new BadRequestException('a run is already in progress')
 
-    for (const node of executableNodes) {
-      await this.db.db.insert(canvasTasks).values({
-        id: uid('task'),
-        runId,
-        canvasId,
-        nodeId: node.id,
-        nodeDefId: node.nodeDefId,
-        status: 'pending',
-        paramsJson: node.dataJson,
-        createdAt: now(),
+        const allNodes = await tx
+          .select()
+          .from(canvasNodes)
+          .where(and(eq(canvasNodes.canvasId, canvasId), eq(canvasNodes.isHidden, false)))
+        const executableNodes = allNodes.filter((n) => EXECUTE_NODE_TYPES.includes(n.nodeDefId))
+        if (executableNodes.length === 0) throw new BadRequestException('no executable nodes on this canvas')
+        totalNodes = executableNodes.length
+
+        await tx.insert(canvasVersions).values({
+          id: versionId,
+          canvasId,
+          type: 'run',
+          label: versionLabel ?? `Run ${now().toISOString()}`,
+          runId,
+          nodeCount: executableNodes.length,
+          createdAt: now(),
+        })
+
+        await tx.insert(canvasRuns).values({
+          id: runId,
+          canvasId,
+          versionId,
+          status: 'pending',
+          totalNodes: executableNodes.length,
+          createdAt: now(),
+        })
+
+        for (const node of executableNodes) {
+          await tx.insert(canvasTasks).values({
+            id: uid('task'),
+            runId,
+            canvasId,
+            nodeId: node.id,
+            nodeDefId: node.nodeDefId,
+            status: 'pending',
+            paramsJson: node.dataJson,
+            createdAt: now(),
+          })
+        }
+
+        await tx.update(canvases).set({ currentVersionId: versionId }).where(eq(canvases.id, canvasId))
       })
+    } catch (error) {
+      // 并发触发同一画布的 run 时，部分唯一索引兜底抛 23505；转成友好错误并保持事务回滚（无孤儿 version/task）。
+      if (isCanvasRunActiveViolation(error)) {
+        throw new BadRequestException('a run is already in progress')
+      }
+      throw error
     }
-
-    await this.db.db.update(canvases).set({ currentVersionId: versionId }).where(eq(canvases.id, canvasId))
 
     void this.orchestrator.startRun(runId, userId).catch((err) => {
       this.logger.error(`canvas run orchestration failed: ${runId}`, err)
     })
 
-    return { run_id: runId, version_id: versionId, total: executableNodes.length }
+    return { run_id: runId, version_id: versionId, total: totalNodes }
   }
 
   // ═══════════════════════════════════════════════════════════

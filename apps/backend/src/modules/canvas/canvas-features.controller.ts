@@ -8,6 +8,7 @@ import type { CurrentUser as CurrentUserType } from '../auth/auth.types'
 import { CanvasAssetService } from './canvas-asset.service'
 import { CanvasChatAgentService } from './canvas-chat-agent.service'
 import { CanvasNodeResultService } from './canvas-node-result.service'
+import { CanvasService } from './canvas.service'
 import { CanvasSkillOperation, CanvasSkillService } from './canvas-skill.service'
 import { CanvasUploadService } from './canvas-upload.service'
 
@@ -21,6 +22,7 @@ export class CanvasFeaturesController {
     @Inject(CanvasNodeResultService) private readonly nodeResultService: CanvasNodeResultService,
     @Inject(CanvasChatAgentService) private readonly chatAgentService: CanvasChatAgentService,
     @Inject(CanvasSkillService) private readonly skillService: CanvasSkillService,
+    @Inject(CanvasService) private readonly canvasService: CanvasService,
   ) {}
 
   @Post(':id/uploads')
@@ -44,7 +46,12 @@ export class CanvasFeaturesController {
   }
 
   @Get(':id/nodes/:nodeId/results')
-  async listResults(@Param('id') id: string, @Param('nodeId') nodeId: string) {
+  async listResults(
+    @Param('id') id: string,
+    @Param('nodeId') nodeId: string,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    await this.canvasService.requireOwnedCanvas(id, user.id)
     const data = await this.nodeResultService.listResults(id, nodeId)
     return { code: 0, message: 'ok', data }
   }
@@ -54,7 +61,9 @@ export class CanvasFeaturesController {
     @Param('id') id: string,
     @Param('nodeId') nodeId: string,
     @Param('resultId') resultId: string,
+    @CurrentUser() user: CurrentUserType,
   ) {
+    await this.canvasService.requireOwnedCanvas(id, user.id)
     const data = await this.nodeResultService.selectResult(id, nodeId, resultId)
     return { code: 0, message: 'ok', data }
   }

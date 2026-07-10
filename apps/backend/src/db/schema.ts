@@ -1110,6 +1110,11 @@ export const canvasRuns = pgTable(
   (table) => [
     index('idx_canvas_runs_canvas_id').on(table.canvasId),
     index('idx_canvas_runs_status').on(table.status),
+    // 部分唯一索引：同一画布同一时刻至多一个活跃 run（pending/running），
+    // 配合 canvas-run.service.triggerRun 的事务化兜底并发触发竞态。
+    uniqueIndex('idx_canvas_runs_active_unique')
+      .on(table.canvasId)
+      .where(sql`${table.status} IN ('pending', 'running')`),
   ],
 )
 

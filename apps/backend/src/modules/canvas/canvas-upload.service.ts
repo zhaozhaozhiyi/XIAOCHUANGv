@@ -8,11 +8,40 @@ import { DatabaseService } from '../../db/database.service'
 import { canvasNodes } from '../../db/schema'
 import { StorageService } from '../storage/storage.service'
 import { CanvasAssetService } from './canvas-asset.service'
-import { CanvasNodeResult, CanvasNodeResultKind } from './canvas-node-result.service'
+import { CanvasNodeResult, CanvasNodeResultKind, CanvasNodeResultService } from './canvas-node-result.service'
+import { CANVAS_ASSET_SOURCE_TYPES } from './canvas-source-types'
 import { CanvasService } from './canvas.service'
 
 const MULTIPART_OVERHEAD_BYTES = 512 * 1024
 const MAX_CANVAS_UPLOAD_BYTES = 200 * 1024 * 1024
+const MB = 1024 * 1024
+
+export const CANVAS_UPLOAD_POLICIES = {
+  image: {
+    resultKind: 'image' as const,
+    nodeType: 'image',
+    assetKind: 'image' as const,
+    maxBytes: 30 * MB,
+    mimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+    extensions: ['.png', '.jpg', '.jpeg', '.webp', '.gif'],
+  },
+  video: {
+    resultKind: 'video' as const,
+    nodeType: 'video-asset',
+    assetKind: 'video' as const,
+    maxBytes: 200 * MB,
+    mimeTypes: ['video/mp4', 'video/webm', 'video/quicktime'],
+    extensions: ['.mp4', '.webm', '.mov'],
+  },
+  audio: {
+    resultKind: 'audio' as const,
+    nodeType: 'audio',
+    assetKind: 'audio' as const,
+    maxBytes: 100 * MB,
+    mimeTypes: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/mp4', 'audio/x-m4a', 'audio/webm'],
+    extensions: ['.mp3', '.wav', '.m4a', '.aac', '.webm'],
+  },
+} as const
 
 type ParsedMultipartPart =
   | { kind: 'field'; fieldName: string; value: string }
@@ -38,11 +67,21 @@ function uid(prefix: string) {
   return `${prefix}_${randomUUID().slice(0, 10)}`
 }
 
-function mediaKindFromMime(mimeType: string): { resultKind: CanvasNodeResultKind; nodeType: string; assetKind: 'image' | 'video' | 'audio' } {
-  if (mimeType.startsWith('image/')) return { resultKind: 'image', nodeType: 'image', assetKind: 'image' }
-  if (mimeType.startsWith('video/')) return { resultKind: 'video', nodeType: 'video-asset', assetKind: 'video' }
-  if (mimeType.startsWith('audio/')) return { resultKind: 'audio', nodeType: 'audio', assetKind: 'audio' }
-  throw new BadRequestException('仅支持图片、视频、音频上传')
+export function resolveCanvasUploadPolicy(mimeType: string, fileName: string): typeof CANVAS_UPLOAD_POLICIES[keyof typeof CANVAS_UPLOAD_POLICIES] {
+  const normalizedMime = String(mimeType || '').split(';')[0].trim().toLowerCase()
+  const extension = path.extname(fileName || '').toLowerCase()
+  const policy = Object.values(CANVAS_UPLOAD_POLICIES).find((item) => (
+    item.mimeTypes.includes(normalizedMime as never) || item.extensions.includes(extension as never)
+  ))
+  if (!policy) throw new BadRequestException('canvas_upload_type_unsupported')
+  return policy
+}
+
+export function assertCanvasUploadSize(
+  policy: typeof CANVAS_UPLOAD_POLICIES[keyof typeof CANVAS_UPLOAD_POLICIES],
+  size: number,
+) {
+  if (size > policy.maxBytes) throw new PayloadTooLargeException('canvas_upload_too_large')
 }
 
 function toNumber(value: string | undefined, fallback: number) {
@@ -57,12 +96,14 @@ export class CanvasUploadService {
     @Inject(StorageService) private readonly storageService: StorageService,
     @Inject(CanvasService) private readonly canvasService: CanvasService,
     @Inject(CanvasAssetService) private readonly canvasAssetService: CanvasAssetService,
+    @Inject(CanvasNodeResultService) private readonly nodeResultService: CanvasNodeResultService,
   ) {}
 
   async uploadToCanvas(canvasId: string, userId: number, request: FastifyRequest) {
-    await this.canvasService.requireOwnedCanvas(canvasId, userId)
+    const canvas = await this.canvasService.requireOwnedCanvas(canvasId, userId)
     const { file, fields } = this.parseMultipartRequest(request)
-    const media = mediaKindFromMime(file.mimeType)
+    const media = resolveCanvasUploadPolicy(file.mimeType, file.fileName)
+    assertCanvasUploadSize(media, file.buffer.byteLength)
     const saved = await this.storageService.saveBuffer({
       buffer: file.buffer,
       subDir: 'canvas_uploads',
@@ -81,9 +122,49 @@ export class CanvasUploadService {
       thumbnail_url: media.resultKind === 'image' ? saved.url : null,
       mime_type: file.mimeType,
       title,
-      source_type: 'canvas_upload',
+      source_type: CANVAS_ASSET_SOURCE_TYPES.UPLOAD,
       created_at: new Date().toISOString(),
       metadata: { storage_key: saved.key, size: saved.size },
+    }
+
+    const upload = {
+      url: saved.url,
+      mime_type: file.mimeType,
+      kind: media.resultKind,
+      title,
+    }
+
+    if (fields.node_id) {
+      const appended = await this.nodeResultService.appendResult(canvasId, fields.node_id, {
+        kind: media.resultKind,
+        url: saved.url,
+        thumbnail_url: media.resultKind === 'image' ? saved.url : null,
+        mime_type: file.mimeType,
+        title,
+        source_type: CANVAS_ASSET_SOURCE_TYPES.UPLOAD,
+        metadata: { storage_key: saved.key, size: saved.size },
+      })
+      let node = appended.node
+      let appendedResult: CanvasNodeResult = appended.result
+      let asset: { id: number } | null = null
+      if (fields.save_to_assets === 'true' || fields.save_to_assets === '1') {
+        asset = await this.canvasAssetService.createAssetFromUpload({
+          canvasId,
+          userId,
+          kind: media.assetKind,
+          title,
+          url: saved.url,
+          thumbnailUrl: media.resultKind === 'image' ? saved.url : null,
+          mimeType: file.mimeType,
+          nodeId: fields.node_id,
+          resultId: appended.result.id,
+          canvasTitle: canvas.title,
+          nodeDefId: appended.node.type,
+        })
+        appendedResult = { ...appended.result, asset_id: asset.id }
+        node = await this.nodeResultService.markAssetId(canvasId, fields.node_id, appended.result.id, asset.id)
+      }
+      return { node, result: appendedResult, upload, asset }
     }
 
     const data = this.buildNodeData(media.nodeType, title, result)
@@ -100,7 +181,7 @@ export class CanvasUploadService {
       updatedAt: new Date(),
     })
 
-    let asset: unknown = null
+    let asset: { id: number } | null = null
     if (fields.save_to_assets === 'true' || fields.save_to_assets === '1') {
       asset = await this.canvasAssetService.createAssetFromUpload({
         canvasId,
@@ -112,7 +193,11 @@ export class CanvasUploadService {
         mimeType: file.mimeType,
         nodeId,
         resultId,
+        canvasTitle: canvas.title,
+        nodeDefId: media.nodeType,
       })
+      result.asset_id = asset.id
+      data.results = [result]
     }
 
     return {
@@ -123,6 +208,7 @@ export class CanvasUploadService {
         data,
       },
       result,
+      upload,
       asset,
     }
   }
@@ -139,7 +225,7 @@ export class CanvasUploadService {
         url: result.url,
         at: result.created_at,
         result_id: result.id,
-        source_type: 'canvas_upload',
+        source_type: CANVAS_ASSET_SOURCE_TYPES.UPLOAD,
       },
     }
     if (nodeType === 'image') base.images = [result.url]
@@ -156,17 +242,17 @@ export class CanvasUploadService {
 
   private parseMultipartRequest(request: FastifyRequest) {
     const body = request.body
-    if (!Buffer.isBuffer(body)) throw new BadRequestException('仅支持 multipart/form-data 上传')
+    if (!Buffer.isBuffer(body)) throw new BadRequestException('canvas_upload_multipart_required')
     if (body.byteLength > MAX_CANVAS_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES) {
-      throw new PayloadTooLargeException('上传文件不能超过 200MB')
+      throw new PayloadTooLargeException('canvas_upload_too_large')
     }
 
     const boundary = extractBoundary(String(request.headers['content-type'] || ''))
-    if (!boundary) throw new BadRequestException('上传数据缺少 boundary')
+    if (!boundary) throw new BadRequestException('canvas_upload_boundary_missing')
     const parts = this.parseMultipartBody(body, boundary)
     const file = parts.find((item): item is Extract<ParsedMultipartPart, { kind: 'file' }> => item.kind === 'file' && item.fieldName === 'file')
-    if (!file) throw new BadRequestException('file is required')
-    if (file.buffer.byteLength > MAX_CANVAS_UPLOAD_BYTES) throw new PayloadTooLargeException('上传文件不能超过 200MB')
+    if (!file) throw new BadRequestException('canvas_upload_file_required')
+    if (file.buffer.byteLength > MAX_CANVAS_UPLOAD_BYTES) throw new PayloadTooLargeException('canvas_upload_too_large')
 
     const fields: Record<string, string> = {}
     for (const part of parts) {

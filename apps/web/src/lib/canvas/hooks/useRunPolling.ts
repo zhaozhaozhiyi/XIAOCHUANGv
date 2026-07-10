@@ -45,20 +45,38 @@ export function useRunPolling() {
     watchingRef.current = null
   }, [])
 
-  /** 拉一次完整 detail → 全量替换 nodes/edges，让回填生效 */
+  /** 拉一次完整 detail → 字段级 merge nodes（保留本地编辑）+ 全量替换 edges，让回填生效 */
   const reloadCanvas = useCallback(async () => {
     const canvasId = useCanvasStore.getState().canvasId
     if (!canvasId) return
     try {
       const detail = await canvasApi.get(canvasId)
-      const flowNodes: FlowNode[] = detail.nodes.map((n) => ({
-        id: n.id,
-        type: n.type,
-        position: n.position,
-        width: n.width,
-        data: n.data,
-        hidden: n.hidden,
-      }))
+      // 生成期间用户可能拖动节点/编辑 prompt，reload 时按 id 字段级 merge：
+      // 保留本地 position/selected/data.prompt，合入后端回填的 results/images/videoUrl 等。
+      const existingById = new Map(useNodesStore.getState().nodes.map((n) => [n.id, n]))
+      const flowNodes: FlowNode[] = detail.nodes.map((n) => {
+        const backend: FlowNode = {
+          id: n.id,
+          type: n.type,
+          position: n.position,
+          width: n.width,
+          data: n.data,
+          hidden: n.hidden,
+        }
+        const local = existingById.get(n.id)
+        if (!local) return backend
+        const localData = (local.data ?? {}) as Record<string, unknown>
+        const backendData = (backend.data ?? {}) as Record<string, unknown>
+        return {
+          ...backend,
+          position: local.position,
+          selected: local.selected,
+          data: {
+            ...backendData,
+            prompt: localData.prompt ?? backendData.prompt,
+          },
+        }
+      })
       const flowEdges: FlowEdge[] = detail.edges.map((e) => ({
         id: e.id,
         source: e.source,

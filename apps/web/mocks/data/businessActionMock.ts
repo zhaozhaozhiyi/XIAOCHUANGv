@@ -29,15 +29,21 @@ const HIDDEN_PREFIX = 'hidden_'
 
 interface TriggerInput {
   actionLabel: string
-  sourceNodeId: string
-  sourceNodeDefId: 'text-to-image' | 'text-to-speech' | 'image-to-video' | string
+  sourceNodeId?: string
+  sourceNodeDefId?: 'text-to-image' | 'text-to-speech' | 'image-to-video' | string
   userInput: string
   style?: string
+  output_mode?: 'current_node' | 'insert_new_node'
+  position_x?: number
+  position_y?: number
+  target_node_type?: CanvasNode['type']
 }
 
 interface TriggerResult {
   hidden_node_id: string
   run_id: string
+  task_id?: string
+  node?: CanvasNode | null
 }
 
 /** 按 sourceNodeDefId 决定回填到 sourceNode 的哪个字段 + 生成 mock URL */
@@ -87,41 +93,97 @@ export function triggerBusinessAction(
   const canvas = getCanvas(canvasId)
   if (!canvas) return null
 
-  const sourceNode = canvas.nodes.find((n) => n.id === input.sourceNodeId)
-  if (!sourceNode) return null
+  const sourceNode = input.sourceNodeId
+    ? canvas.nodes.find((n) => n.id === input.sourceNodeId)
+    : null
+  if (input.sourceNodeId && !sourceNode) return null
+
+  const insertNewNode = input.output_mode === 'insert_new_node' || !sourceNode
+  const executeNodeDefId = input.sourceNodeDefId || 'text-to-image'
 
   // 1. 创建 hidden 执行节点（位置在 sourceNode 旁边一点，便于调试时也能找）
   const hiddenNodeId = `${HIDDEN_PREFIX}${cryptoRandomId()}`
   const runId = `run_${cryptoRandomId()}`
+  const taskId = `task_${cryptoRandomId()}`
+  const basePosition = {
+    x: Number.isFinite(input.position_x) ? Number(input.position_x) : ((sourceNode?.position.x ?? 120) + 320),
+    y: Number.isFinite(input.position_y) ? Number(input.position_y) : (sourceNode?.position.y ?? 120),
+  }
   const hiddenNode: CanvasNode = {
     id: hiddenNodeId,
-    type: input.sourceNodeDefId as CanvasNodeType,
-    position: { x: sourceNode.position.x + 320, y: sourceNode.position.y },
+    type: executeNodeDefId as CanvasNodeType,
+    position: { x: basePosition.x + 300, y: basePosition.y },
     width: 220,
     data: {
       prompt: input.userInput,
       style: input.style,
-      sourceNodeId: input.sourceNodeId,
+      sourceNodeId: input.sourceNodeId ?? null,
       actionLabel: input.actionLabel,
     },
     hidden: true,
+  }
+
+  if (insertNewNode) {
+    const now = new Date().toISOString()
+    const seed = cryptoRandomId().slice(0, 8)
+    const url = `https://picsum.photos/seed/quick-${seed}/512/288`
+    const title = input.userInput?.trim() || '快速生成结果'
+    const result = {
+      id: `res_${cryptoRandomId()}`,
+      kind: 'image' as const,
+      url,
+      thumbnail_url: url,
+      title,
+      prompt: input.userInput,
+      provider: 'mock',
+      source_type: 'canvas_generation',
+      created_at: now,
+      metadata: { mock: true, task_id: taskId },
+    }
+    const generatedNode: CanvasNode = {
+      id: `node_${cryptoRandomId()}`,
+      type: input.target_node_type || 'image',
+      position: basePosition,
+      width: 208,
+      data: {
+        label: title,
+        title,
+        prompt: input.userInput,
+        images: [url],
+        previewUrl: url,
+        outputUrl: url,
+        current_result_id: result.id,
+        results: [result],
+        references: sourceNode ? [{ node_id: sourceNode.id, node_type: sourceNode.type }] : [],
+        __lastRunResult: {
+          url,
+          at: now,
+          result_id: result.id,
+          source_type: 'canvas_generation',
+        },
+      },
+    }
+
+    updateCanvas(canvasId, { nodes: [...canvas.nodes, hiddenNode, generatedNode] })
+    setNodeStatus(canvasId, hiddenNodeId, { status: 'completed', progress: 100 })
+    return { hidden_node_id: hiddenNodeId, run_id: runId, task_id: taskId, node: generatedNode }
   }
 
   // 2. 同步写入画布 store（节点 + 一条 dataflow 边）
   const nextNodes = [...canvas.nodes, hiddenNode]
   // v0.2.0 不强 schema 校验端口；保留 source_port='out:<type>' 让前端 dataflow edge 着色一致
   const portType =
-    input.sourceNodeDefId === 'text-to-image'
+    executeNodeDefId === 'text-to-image'
       ? 'image'
-      : input.sourceNodeDefId === 'text-to-speech'
+      : executeNodeDefId === 'text-to-speech'
         ? 'audio'
-        : input.sourceNodeDefId === 'image-to-video'
+        : executeNodeDefId === 'image-to-video'
           ? 'video'
           : 'image'
   const edge = {
     id: `edge_hidden_${cryptoRandomId()}`,
     source: hiddenNodeId,
-    target: input.sourceNodeId,
+    target: sourceNode!.id,
     edge_kind: 'dataflow' as const,
     source_port: `out:${portType}`,
     target_port: `in:${portType}`,
@@ -147,22 +209,49 @@ export function triggerBusinessAction(
   tid(() => {
     push({ status: 'completed', progress: 100 })
 
-    const result = buildResult(input.sourceNodeDefId, hiddenNodeId)
+    const result = buildResult(executeNodeDefId, hiddenNodeId)
     if (!result) return
     const latest = getCanvas(canvasId)
     if (!latest) return
-    const target = latest.nodes.find((n) => n.id === input.sourceNodeId)
+    const target = latest.nodes.find((n) => n.id === sourceNode!.id)
     if (!target) return
 
     const oldData = (target.data ?? {}) as StoryboardData
     let merged: StoryboardData = { ...oldData, ...result }
 
     // text-to-image 回填时把旧图推进历史 + 写 prompt
-    if (input.sourceNodeDefId === 'text-to-image') {
+    if (executeNodeDefId === 'text-to-image') {
+      const url = result.images?.[0]
+      const historyResult = url ? {
+        id: `res_${cryptoRandomId()}`,
+        kind: 'image' as const,
+        url,
+        thumbnail_url: url,
+        title: input.userInput || '构想画面',
+        prompt: input.userInput,
+        provider: 'mock',
+        source_type: 'canvas_generation',
+        created_at: new Date().toISOString(),
+        metadata: { mock: true, execute_node_id: hiddenNodeId },
+      } : null
+      const oldResultData = oldData as StoryboardData & { results?: unknown[] }
+      const existingResults = Array.isArray(oldResultData.results) ? oldResultData.results : []
       merged = {
         ...merged,
         historyImages: archiveOldImages(oldData, input.userInput, input.style),
         prompt: input.userInput,
+        ...(historyResult ? {
+          results: [historyResult, ...existingResults].slice(0, 20),
+          current_result_id: historyResult.id,
+          previewUrl: url,
+          outputUrl: url,
+          __lastRunResult: {
+            url,
+            at: historyResult.created_at,
+            result_id: historyResult.id,
+            source_type: 'canvas_generation',
+          },
+        } : {}),
       }
     }
 
@@ -172,5 +261,5 @@ export function triggerBusinessAction(
     updateCanvas(canvasId, { nodes: nextNodes2 })
   }, (delay += 300))
 
-  return { hidden_node_id: hiddenNodeId, run_id: runId }
+  return { hidden_node_id: hiddenNodeId, run_id: runId, task_id: taskId, node: null }
 }

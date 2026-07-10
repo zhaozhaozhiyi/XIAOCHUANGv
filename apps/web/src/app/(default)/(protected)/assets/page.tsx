@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import {
   Headphones,
@@ -9,7 +9,6 @@ import {
   ExternalLink,
   ImageIcon,
   Layers,
-  Loader2,
   MapPin,
   RefreshCw,
   Search,
@@ -18,7 +17,13 @@ import {
 } from 'lucide-react'
 
 import { assetAPI, dramaAPI } from '@/lib/api'
-import { cn, formatDate, staticUrl } from '@/lib/utils'
+import {
+  ContentPageHeader,
+  ContentStateBlock,
+  ContentSurface,
+  ContentSummary,
+} from '@/components/shared/content-kit'
+import { formatDate, staticUrl } from '@/lib/utils'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ImageViewer } from '@/components/shared/image-viewer'
 import { Badge } from '@/components/ui/badge'
@@ -29,12 +34,121 @@ import type { AssetRecord, Character, Drama, Scene } from '@/types/api'
 
 type LibraryTab = 'characters' | 'scenes' | 'media'
 type MediaTab = 'all' | 'video' | 'image' | 'audio'
+type MediaSourceTab = 'all' | 'canvas' | 'quick' | 'drama' | 'writing' | 'legacy'
+
+const CANVAS_SOURCE_TYPES = new Set(['canvas_upload', 'canvas_generation', 'canvas_history', 'canvas_export'])
 
 function getAssetPreviewUrl(asset: AssetRecord) {
   return staticUrl(asset.url || '')
 }
 
+function getAssetKindLabel(kind: AssetRecord['kind']) {
+  if (kind === 'video') return '视频'
+  if (kind === 'audio') return '声音'
+  return '图片'
+}
+
+function parseAssetMetadata(asset: AssetRecord): Record<string, unknown> {
+  if (!asset.metadata_json) return {}
+  try {
+    const parsed = JSON.parse(asset.metadata_json) as unknown
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function isCanvasAsset(asset: AssetRecord) {
+  return CANVAS_SOURCE_TYPES.has(asset.source_type)
+}
+
+function getStringMetadata(asset: AssetRecord, key: string) {
+  const value = parseAssetMetadata(asset)[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+}
+
+interface SafeImageProps {
+  alt: string
+  className?: string
+  fallback: ReactNode
+  src: string
+}
+
+function SafeImage({ alt, className, fallback, src }: SafeImageProps) {
+  const [failedSrc, setFailedSrc] = useState('')
+  const hasError = failedSrc === src
+
+  if (!src || hasError) return <>{fallback}</>
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      onError={() => setFailedSrc(src)}
+    />
+  )
+}
+
+function AssetImageFallback() {
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--color-accent)_5%,transparent),color-mix(in_srgb,var(--color-bg-2)_80%,var(--color-bg-0)))] px-6 text-center">
+      <div className="flex size-14 items-center justify-center rounded-full bg-bg-surface-glass text-text-2 backdrop-blur-md">
+        <ImageIcon className="size-7" aria-hidden />
+      </div>
+      <p className="font-display text-lg font-semibold tracking-tight text-text-0">图片</p>
+      <p className="text-xs text-text-3">图片暂不可用</p>
+    </div>
+  )
+}
+
+interface MediaImagePreviewProps {
+  alt: string
+  isBroken?: boolean
+  onBroken: (src: string) => void
+  onOpen: () => void
+  src: string
+}
+
+function MediaImagePreview({ alt, isBroken = false, onBroken, onOpen, src }: MediaImagePreviewProps) {
+  const [failedSrc, setFailedSrc] = useState('')
+  const hasError = failedSrc === src
+
+  if (!src || isBroken || hasError) return <AssetImageFallback />
+
+  return (
+    <button
+      type="button"
+      className="h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-inset"
+      onClick={onOpen}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt}
+        className="h-full w-full object-cover transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.025]"
+        onError={() => {
+          setFailedSrc(src)
+          onBroken(src)
+        }}
+      />
+    </button>
+  )
+}
+
 function getAssetSourceHref(asset: AssetRecord): string | null {
+  if (isCanvasAsset(asset)) {
+    const canvasId = getStringMetadata(asset, 'canvas_id') || asset.source_ref || ''
+    const basePath = asset.source_path || (canvasId ? `/canvas/${canvasId}` : '')
+    if (!basePath) return null
+    const query = new URLSearchParams()
+    const nodeId = getStringMetadata(asset, 'node_id')
+    const resultId = getStringMetadata(asset, 'result_id')
+    if (nodeId) query.set('node', nodeId)
+    if (resultId) query.set('result', resultId)
+    return query.size ? `${basePath}?${query.toString()}` : basePath
+  }
   if (asset.drama_id) return `/drama/${asset.drama_id}`
   if (asset.source_type === 'writing' && asset.source_path) return asset.source_path
   if (asset.source_type === 'quick_video' || asset.source_type === 'quick_image') return '/create/video'
@@ -44,6 +158,10 @@ function getAssetSourceHref(asset: AssetRecord): string | null {
 }
 
 function getAssetSourceLabel(asset: AssetRecord) {
+  if (asset.source_type === 'canvas_upload') return '画布上传'
+  if (asset.source_type === 'canvas_generation') return '画布生成'
+  if (asset.source_type === 'canvas_history') return '画布历史'
+  if (asset.source_type === 'canvas_export') return '画布导出'
   if (asset.source_type === 'quick_video' || asset.source_type === 'quick_image') return '快速成片'
   if (asset.source_type === 'writing') return '小说剧本'
   if (asset.source_type === 'drama_video') return '短剧任务'
@@ -53,6 +171,12 @@ function getAssetSourceLabel(asset: AssetRecord) {
 
 function getAssetSourceDescription(asset: AssetRecord, dramaTitle?: string) {
   if (dramaTitle) return `来源项目：${dramaTitle}`
+  const canvasTitle = getStringMetadata(asset, 'canvas_title')
+  if (canvasTitle) return `来源画布：${canvasTitle}`
+  if (asset.source_type === 'canvas_upload') return '来源：画布上传素材'
+  if (asset.source_type === 'canvas_generation') return '来源：画布生成结果'
+  if (asset.source_type === 'canvas_history') return '来源：画布历史结果'
+  if (asset.source_type === 'canvas_export') return '来源：画布合成导出'
   if (asset.source_type === 'writing') return '来源：小说剧本导出或改编链路'
   if (asset.source_type === 'quick_video' || asset.source_type === 'quick_image' || asset.source_type === 'quick_audio') return '来源：快速成片'
   if (asset.source_type === 'legacy_asset') return '来源：历史回填资产'
@@ -60,10 +184,20 @@ function getAssetSourceDescription(asset: AssetRecord, dramaTitle?: string) {
 }
 
 function getAssetSourceActionLabel(asset: AssetRecord) {
+  if (isCanvasAsset(asset)) return '打开画布'
   if (asset.drama_id) return '打开项目'
   if (asset.source_type === 'writing') return '打开文稿'
   if (asset.source_type === 'quick_video' || asset.source_type === 'quick_image' || asset.source_type === 'quick_audio') return '打开快速成片'
   return '打开来源'
+}
+
+function getSourceTabLabel(tab: MediaSourceTab) {
+  if (tab === 'canvas') return '画布资产'
+  if (tab === 'quick') return '快速成片'
+  if (tab === 'drama') return '短剧任务'
+  if (tab === 'writing') return '小说剧本'
+  if (tab === 'legacy') return '历史资产'
+  return ''
 }
 
 interface CharacterCardProps {
@@ -76,25 +210,25 @@ function CharacterCard({ character, dramaTitle, onOpen }: CharacterCardProps) {
   const imageUrl = staticUrl(character.image_url || character.reference_images || '')
 
   return (
-    <article
-      className="group flex flex-col overflow-hidden rounded-[var(--radius-md)] border border-border bg-bg-0 shadow-shadow-xs transition-[border-color,box-shadow] hover:border-border-strong hover:shadow-shadow-sm"
-    >
+    <article className="content-card group">
       <button
         type="button"
         onClick={onOpen}
-        className="relative aspect-square w-full overflow-hidden bg-bg-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-inset"
+        className="relative aspect-square w-full overflow-hidden bg-[color-mix(in_srgb,var(--color-bg-2)_72%,var(--color-bg-0))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-inset"
       >
-        {imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={imageUrl} alt={character.name} className="size-full object-cover" />
-        ) : (
-          <div className="flex size-full items-center justify-center">
-            <User size={40} className="text-text-3" />
-          </div>
-        )}
+        <SafeImage
+          src={imageUrl}
+          alt={character.name}
+          className="size-full object-cover"
+          fallback={(
+            <div className="flex size-full items-center justify-center">
+              <User size={40} className="text-text-3" />
+            </div>
+          )}
+        />
       </button>
 
-      <div className="flex flex-1 flex-col gap-2 border-t border-border p-4">
+      <div className="flex flex-1 flex-col gap-2 px-4 pb-4 pt-3">
         <div>
           <h3 className="font-display text-base font-semibold text-text-0 line-clamp-1">
             {character.name}
@@ -137,25 +271,25 @@ function SceneCard({ scene, dramaTitle, onOpen }: SceneCardProps) {
   const imageUrl = staticUrl(scene.image_url || '')
 
   return (
-    <article
-      className="group flex flex-col overflow-hidden rounded-[var(--radius-md)] border border-border bg-bg-0 shadow-shadow-xs transition-[border-color,box-shadow] hover:border-border-strong hover:shadow-shadow-sm"
-    >
+    <article className="content-card group">
       <button
         type="button"
         onClick={onOpen}
-        className="relative aspect-[16/9] w-full overflow-hidden bg-bg-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-inset"
+        className="relative aspect-[16/9] w-full overflow-hidden bg-[color-mix(in_srgb,var(--color-bg-2)_72%,var(--color-bg-0))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-inset"
       >
-        {imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={imageUrl} alt={scene.location || '场景'} className="size-full object-cover" />
-        ) : (
-          <div className="flex size-full items-center justify-center">
-            <MapPin size={32} className="text-text-3" />
-          </div>
-        )}
+        <SafeImage
+          src={imageUrl}
+          alt={scene.location || '场景'}
+          className="size-full object-cover"
+          fallback={(
+            <div className="flex size-full items-center justify-center">
+              <MapPin size={32} className="text-text-3" />
+            </div>
+          )}
+        />
       </button>
 
-      <div className="flex flex-1 flex-col gap-2 border-t border-border p-4">
+      <div className="flex flex-1 flex-col gap-2 px-4 pb-4 pt-3">
         <div>
           <h3 className="font-display text-base font-semibold text-text-0 line-clamp-1">
             {scene.location || '未命名场景'}
@@ -191,6 +325,7 @@ function SceneCard({ scene, dramaTitle, onOpen }: SceneCardProps) {
 function AssetsPageContent() {
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('media')
   const [mediaTab, setMediaTab] = useState<MediaTab>('all')
+  const [sourceTab, setSourceTab] = useState<MediaSourceTab>('all')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [detailsLoading, setDetailsLoading] = useState(false)
@@ -199,13 +334,14 @@ function AssetsPageContent() {
   const [characters, setCharacters] = useState<Character[]>([])
   const [scenes, setScenes] = useState<Scene[]>([])
   const [dramaMap, setDramaMap] = useState<Record<number, string>>({})
+  const [brokenImageUrls, setBrokenImageUrls] = useState<Record<string, true>>({})
   const [viewerUrl, setViewerUrl] = useState('')
 
   const load = useMemo(() => async () => {
     try {
       setLoading(true)
       const [assetPayload, dramas] = await Promise.all([
-        assetAPI.list(),
+        assetAPI.list(undefined, { bypassCache: true }),
         dramaAPI.list({ include_details: false }),
       ]) as [
         { items: AssetRecord[]; total: number },
@@ -213,6 +349,7 @@ function AssetsPageContent() {
       ]
 
       setAssets(assetPayload.items)
+      setBrokenImageUrls({})
       setDramaMap(
         Object.fromEntries(
           (dramas.items || []).map((drama) => [drama.id, drama.title]),
@@ -296,16 +433,23 @@ function AssetsPageContent() {
   const filteredAssets = useMemo(() => {
     return assets.filter((item) => {
       if (mediaTab !== 'all' && item.kind !== mediaTab) return false
+      if (sourceTab === 'canvas' && !isCanvasAsset(item)) return false
+      if (sourceTab === 'quick' && !['quick_video', 'quick_image', 'quick_audio'].includes(item.source_type)) return false
+      if (sourceTab === 'drama' && !(item.source_type === 'drama_video' || item.drama_id)) return false
+      if (sourceTab === 'writing' && item.source_type !== 'writing') return false
+      if (sourceTab === 'legacy' && item.source_type !== 'legacy_asset') return false
       if (!query.trim()) return true
       const q = query.trim().toLowerCase()
+      const metadata = parseAssetMetadata(item)
       return (
         item.title.toLowerCase().includes(q) ||
         String(item.provider || '').toLowerCase().includes(q) ||
         String(item.source_type || '').toLowerCase().includes(q) ||
+        String(metadata.canvas_title || '').toLowerCase().includes(q) ||
         (item.drama_id ? dramaMap[item.drama_id]?.toLowerCase().includes(q) : false)
       )
     })
-  }, [assets, dramaMap, query, mediaTab])
+  }, [assets, dramaMap, query, mediaTab, sourceTab])
 
   const inventory = useMemo(() => {
     const image = assets.filter((a) => a.kind === 'image').length
@@ -318,22 +462,26 @@ function AssetsPageContent() {
     if (libraryTab === 'characters') {
       if (loading || detailsLoading) {
         return (
-          <div className="flex flex-1 items-center justify-center rounded-[var(--radius-md)] border border-dashed border-border-strong bg-bg-0 text-text-3">
-            <Loader2 className="animate-spin" />
-          </div>
+          <ContentStateBlock
+            title="正在加载角色库"
+            description="角色名称、身份和描述会在这里集中展示。"
+            busy
+            className="flex-1"
+          />
         )
       }
       if (filteredCharacters.length === 0) {
         return (
           <EmptyState
             icon={User}
+            title={query.trim() ? '没有找到匹配的角色' : '还没有收录角色'}
             description={query.trim() ? '没有符合搜索条件的角色' : '还没有收录角色，请从短剧详情中收录'}
-            className="flex-1"
+            className="flex-1 border-0 bg-transparent"
           />
         )
       }
       return (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
           {filteredCharacters.map((character) => (
             <CharacterCard
               key={character.id}
@@ -348,22 +496,26 @@ function AssetsPageContent() {
     if (libraryTab === 'scenes') {
       if (loading || detailsLoading) {
         return (
-          <div className="flex flex-1 items-center justify-center rounded-[var(--radius-md)] border border-dashed border-border-strong bg-bg-0 text-text-3">
-            <Loader2 className="animate-spin" />
-          </div>
+          <ContentStateBlock
+            title="正在加载场景库"
+            description="场景地点、氛围和分镜信息会在这里统一聚合。"
+            busy
+            className="flex-1"
+          />
         )
       }
       if (filteredScenes.length === 0) {
         return (
           <EmptyState
             icon={MapPin}
+            title={query.trim() ? '没有找到匹配的场景' : '还没有收录场景'}
             description={query.trim() ? '没有符合搜索条件的场景' : '还没有收录场景，请从短剧详情中收录'}
-            className="flex-1"
+            className="flex-1 border-0 bg-transparent"
           />
         )
       }
       return (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
           {filteredScenes.map((scene) => (
             <SceneCard
               key={scene.id}
@@ -377,70 +529,80 @@ function AssetsPageContent() {
 
     if (loading) {
       return (
-        <div className="flex flex-1 items-center justify-center rounded-[var(--radius-md)] border border-dashed border-border-strong bg-bg-0 text-text-3">
-          <Loader2 className="animate-spin" />
-        </div>
+        <ContentStateBlock
+          title="正在加载媒体资产"
+          description="图片、视频和声音会按来源与类型整理在这里。"
+          busy
+          className="flex-1"
+        />
       )
     }
     if (filteredAssets.length === 0) {
       return (
         <EmptyState
           icon={Layers}
+          title="当前没有可展示的资产"
           description="当前筛选条件下还没有可展示的资产。可先快速成片，再把结果沉淀到资产。"
           actionLabel="前往快速成片"
           onAction={() => {
             window.location.href = '/create/video'
           }}
-          className="flex-1"
+          className="flex-1 border-0 bg-transparent"
         />
       )
     }
     return (
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
         {filteredAssets.map((asset) => {
           const dramaTitle = asset.drama_id ? dramaMap[asset.drama_id] : ''
           const previewUrl = getAssetPreviewUrl(asset)
           const sourceHref = getAssetSourceHref(asset)
+          const imageIsBroken = Boolean(asset.kind === 'image' && previewUrl && brokenImageUrls[previewUrl])
+          const previewAvailable = Boolean(previewUrl && !imageIsBroken)
 
           return (
-            <article
-              key={asset.id}
-              className="flex flex-col overflow-hidden rounded-[var(--radius-md)] border border-border bg-bg-0 shadow-shadow-xs transition-[border-color,box-shadow] hover:border-border-strong hover:shadow-shadow-sm"
-            >
-              <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-bg-2">
-                {asset.kind === 'image' && previewUrl ? (
-                  <button
-                    type="button"
-                    className="h-full w-full"
-                    onClick={() => setViewerUrl(previewUrl)}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={previewUrl} alt={asset.title} className="h-full w-full object-cover" />
-                  </button>
+            <article key={asset.id} className="content-card group">
+              <div className="content-media-shell">
+                {asset.kind === 'image' ? (
+                  <MediaImagePreview
+                    src={previewUrl}
+                    alt={asset.title}
+                    isBroken={imageIsBroken}
+                    onOpen={() => setViewerUrl(previewUrl)}
+                    onBroken={(url) => {
+                      setBrokenImageUrls((current) => (
+                        current[url] ? current : { ...current, [url]: true }
+                      ))
+                    }}
+                  />
                 ) : asset.kind === 'audio' ? (
-                  <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[radial-gradient(circle_at_top,rgba(238,120,72,0.18),transparent_52%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0.04))] px-6 text-center">
-                    <div className="flex size-14 items-center justify-center rounded-full bg-accent-bg text-accent">
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--color-accent)_7%,transparent),color-mix(in_srgb,var(--color-bg-2)_78%,var(--color-bg-0)))] px-6 text-center">
+                    <div className="flex size-14 items-center justify-center rounded-full bg-bg-surface-glass text-accent backdrop-blur-md">
                       <Headphones className="size-7" aria-hidden />
                     </div>
-                    <div className="space-y-1">
-                      <p className="line-clamp-2 text-sm font-medium text-text-0">{asset.title}</p>
-                      <p className="text-xs text-text-3">音频资产</p>
+                    <p className="font-display text-lg font-semibold tracking-tight text-text-0">声音</p>
+                    <p className="text-xs text-text-3">可播放声音资产</p>
+                  </div>
+                ) : asset.kind === 'video' ? (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--color-accent)_7%,transparent),color-mix(in_srgb,var(--color-bg-2)_78%,var(--color-bg-0)))] px-6 text-center">
+                    <div className="flex size-14 items-center justify-center rounded-full bg-bg-surface-glass text-accent backdrop-blur-md">
+                      <Video className="size-7" aria-hidden />
                     </div>
+                    <p className="font-display text-lg font-semibold tracking-tight text-text-0">视频</p>
+                    <p className="text-xs text-text-3">视频资产</p>
                   </div>
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-accent-bg to-bg-2">
-                    <Video className="size-10 text-accent" aria-hidden />
-                  </div>
+                  <AssetImageFallback />
                 )}
                 <div className="absolute left-3 top-3 flex flex-wrap gap-2">
-                  <Badge variant="secondary">
-                    {asset.kind === 'video' ? '视频' : asset.kind === 'audio' ? '音频' : '图片'}
+                  <Badge variant="secondary" className="content-glass-badge text-[11px]">
+                    {getAssetKindLabel(asset.kind)}
                   </Badge>
-                  <Badge variant="outline">{getAssetSourceLabel(asset)}</Badge>
+                  <Badge variant="outline" className="content-glass-badge text-[11px]">{getAssetSourceLabel(asset)}</Badge>
                 </div>
               </div>
 
-              <div className="flex flex-1 flex-col gap-3 border-t border-border p-4">
+              <div className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-3">
                 <div className="min-h-0">
                   <h2 className="line-clamp-2 text-sm font-semibold text-text-0">
                     {asset.title}
@@ -454,13 +616,13 @@ function AssetsPageContent() {
                 </div>
 
                 {asset.kind === 'audio' && previewUrl ? (
-                  <div className="rounded-[var(--radius-sm)] border border-border bg-bg-1 px-3 py-2">
+                  <div className="rounded-[10px] bg-bg-0/70 px-3 py-2">
                     <audio src={previewUrl} controls className="w-full" preload="metadata" />
                   </div>
                 ) : null}
 
                 <div className="mt-auto flex flex-wrap gap-2">
-                  {previewUrl ? (
+                  {previewAvailable ? (
                     <Button asChild variant="outline" size="sm">
                       <a href={previewUrl} target="_blank" rel="noreferrer">
                         <Download />
@@ -486,7 +648,7 @@ function AssetsPageContent() {
                       来源不可用
                     </Button>
                   )}
-                  {asset.kind === 'image' && previewUrl ? (
+                  {asset.kind === 'image' && previewAvailable ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -515,78 +677,96 @@ function AssetsPageContent() {
   return (
     <div className="page-shell animate-fade-up">
       <div className="mx-auto w-full">
-        <div className="mb-7 flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <h1 className="page-title">资产库</h1>
-            <p className="page-subtitle">
-              统一查看角色、场景、图片、视频、音频资产，并追踪来源
-            </p>
-          </div>
-        </div>
+        <ContentPageHeader
+          title="资产库"
+          description="统一查看角色、场景、图片、视频、声音资产，并追踪来源。"
+        />
 
         <Tabs value={libraryTab} onValueChange={handleLibraryTabChange}>
-          <TabsList className="mb-6 flex h-auto w-max max-w-full flex-nowrap items-center gap-0.5 overflow-x-auto overscroll-x-contain rounded-[var(--radius-pill)] border border-border bg-bg-2 p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <TabsList className="content-segmented-list mb-6">
             <TabsTrigger
               value="characters"
-              className="flex-none !h-9 rounded-[var(--radius-pill)] px-4 text-[13px] font-medium leading-none data-[state=inactive]:text-text-3"
+              className="content-segmented-trigger"
             >
               <User size={14} className="mr-1.5 inline" />
               角色库
-              <Badge variant="secondary" className="ml-2 text-[10px]">
+              <Badge variant="secondary" className="ml-2 border-0 bg-bg-2 px-1.5 text-[10px] shadow-none">
                 {characters.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger
               value="scenes"
-              className="flex-none !h-9 rounded-[var(--radius-pill)] px-4 text-[13px] font-medium leading-none data-[state=inactive]:text-text-3"
+              className="content-segmented-trigger"
             >
               <MapPin size={14} className="mr-1.5 inline" />
               场景库
-              <Badge variant="secondary" className="ml-2 text-[10px]">
+              <Badge variant="secondary" className="ml-2 border-0 bg-bg-2 px-1.5 text-[10px] shadow-none">
                 {scenes.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger
               value="media"
-              className="flex-none !h-9 rounded-[var(--radius-pill)] px-4 text-[13px] font-medium leading-none data-[state=inactive]:text-text-3"
+              className="content-segmented-trigger"
             >
               <Layers size={14} className="mr-1.5 inline" />
               媒体库
-              <Badge variant="secondary" className="ml-2 text-[10px]">
+              <Badge variant="secondary" className="ml-2 border-0 bg-bg-2 px-1.5 text-[10px] shadow-none">
                 {inventory.total}
               </Badge>
             </TabsTrigger>
           </TabsList>
 
-          <section className="section-card flex min-h-[680px] flex-col gap-5">
+          <ContentSurface className="min-h-[680px]">
             <div className="flex flex-col gap-4">
               {libraryTab === 'media' && (
-                <div className="min-w-0 w-full">
+                <div className="flex min-w-0 w-full flex-col gap-3">
                   <Tabs value={mediaTab} onValueChange={(v) => setMediaTab(v as MediaTab)}>
-                    <TabsList className="flex h-auto w-max max-w-full flex-nowrap items-center gap-0.5 overflow-x-auto overscroll-x-contain rounded-[var(--radius-pill)] border border-border bg-bg-2 p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <TabsList className="content-segmented-list">
                       <TabsTrigger
                         value="all"
-                        className="flex-none !h-9 rounded-[var(--radius-pill)] px-3.5 text-[13px] font-medium leading-none data-[state=inactive]:text-text-3 sm:px-4"
+                        className="content-segmented-trigger"
                       >
                         全部
                       </TabsTrigger>
                       <TabsTrigger
                         value="video"
-                        className="flex-none !h-9 rounded-[var(--radius-pill)] px-3.5 text-[13px] font-medium leading-none data-[state=inactive]:text-text-3 sm:px-4"
+                        className="content-segmented-trigger"
                       >
                         视频
                       </TabsTrigger>
                       <TabsTrigger
                         value="image"
-                        className="flex-none !h-9 rounded-[var(--radius-pill)] px-3.5 text-[13px] font-medium leading-none data-[state=inactive]:text-text-3 sm:px-4"
+                        className="content-segmented-trigger"
                       >
                         图片
                       </TabsTrigger>
                       <TabsTrigger
                         value="audio"
-                        className="flex-none !h-9 rounded-[var(--radius-pill)] px-3.5 text-[13px] font-medium leading-none data-[state=inactive]:text-text-3 sm:px-4"
+                        className="content-segmented-trigger"
                       >
-                        音频
+                        声音
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  <Tabs value={sourceTab} onValueChange={(v) => setSourceTab(v as MediaSourceTab)}>
+                    <TabsList className="content-segmented-list">
+                      <TabsTrigger value="all" className="content-segmented-trigger">
+                        全部来源
+                      </TabsTrigger>
+                      <TabsTrigger value="canvas" className="content-segmented-trigger">
+                        画布资产
+                      </TabsTrigger>
+                      <TabsTrigger value="quick" className="content-segmented-trigger">
+                        快速成片
+                      </TabsTrigger>
+                      <TabsTrigger value="drama" className="content-segmented-trigger">
+                        短剧任务
+                      </TabsTrigger>
+                      <TabsTrigger value="writing" className="content-segmented-trigger">
+                        小说剧本
+                      </TabsTrigger>
+                      <TabsTrigger value="legacy" className="content-segmented-trigger">
+                        历史资产
                       </TabsTrigger>
                     </TabsList>
                   </Tabs>
@@ -606,12 +786,12 @@ function AssetsPageContent() {
                           ? '搜索场景、地点或氛围'
                           : '搜索标题、Provider、来源类型或项目名'
                     }
-                    className="h-11 pl-10 text-sm"
+                    className="h-11 rounded-[11px] border-border/60 pl-10 text-sm shadow-none"
                   />
                 </label>
                 <Button
                   variant="outline"
-                  className="h-11 shrink-0"
+                  className="h-11 shrink-0 border-border/60 shadow-none"
                   onClick={() => void handleRefresh()}
                 >
                   <RefreshCw />
@@ -620,7 +800,7 @@ function AssetsPageContent() {
               </div>
 
               {!loading ? (
-                <p className="text-xs text-text-3">
+                <ContentSummary>
                   {libraryTab === 'characters'
                     ? `共 ${characters.length} 个角色，当前列表展示 ${filteredCharacters.length} 个`
                     : libraryTab === 'scenes'
@@ -632,17 +812,17 @@ function AssetsPageContent() {
                                   ? '视频'
                                   : mediaTab === 'image'
                                     ? '图片'
-                                    : '音频'
+                                    : '声音'
                               }）`
                             : ''
-                        }`}
+                        }${sourceTab !== 'all' ? `（来源：${getSourceTabLabel(sourceTab)}）` : ''}`}
                   {query.trim() ? '（已应用搜索）' : ''}
-                </p>
+                </ContentSummary>
               ) : null}
             </div>
 
             {renderTabContent()}
-          </section>
+          </ContentSurface>
         </Tabs>
 
         <ImageViewer open={!!viewerUrl} src={viewerUrl} onClose={() => setViewerUrl('')} />
