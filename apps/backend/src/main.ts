@@ -7,10 +7,11 @@ async function bootstrap() {
   const { app, env } = await createBackendApp()
   setupOpenApiDocs(app)
 
-  await app.listen(env.PORT, '127.0.0.1')
+  const host = process.env.HOST || '127.0.0.1'
+  await app.listen(env.PORT, host)
 
   const logger = new Logger('Bootstrap')
-  logger.log(`Backend listening on http://localhost:${env.PORT}/api/v1`)
+  logger.log(`Backend listening on http://${host}:${env.PORT}/api/v1`)
 }
 
 void bootstrap()

@@ -13,7 +13,9 @@
  */
 
 import Link from 'next/link'
-import { Copy, MoreHorizontal, Trash2 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Copy, LayoutGrid, MoreHorizontal, Star, Trash2 } from 'lucide-react'
+import { useState, type MouseEvent } from 'react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,28 +37,40 @@ interface Props {
 }
 
 export function CanvasCard({ canvas, onDuplicate, onDelete }: Props) {
+  const router = useRouter()
   const isInspiration = canvas.source === 'global-inspiration'
   const updated = formatRelative(canvas.updated_at)
+  const href = `/canvas/${canvas.id}`
+  const [failedThumbnail, setFailedThumbnail] = useState<string | null>(null)
+  const thumbnailSrc = canvas.thumbnail && failedThumbnail !== canvas.thumbnail ? canvas.thumbnail : null
+
+  const handleCardClick = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null
+    if (target?.closest('a, button')) return
+    router.push(href)
+  }
 
   return (
     <div
+      data-testid={`canvas-card-${canvas.id}`}
+      onClick={handleCardClick}
       className={cn(
-        'group relative flex flex-col overflow-hidden rounded-[var(--radius-md)] border border-border bg-bg-0 transition hover:border-accent/40 hover:shadow-shadow-sm',
-        isInspiration && 'ring-1 ring-accent/40',
+        'group relative flex cursor-pointer flex-col overflow-hidden bg-bg-0/80 shadow-[0_1px_0_rgba(15,23,42,0.03)] transition-[background,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-bg-0 hover:shadow-[0_18px_44px_rgba(40,28,18,0.08)]',
       )}
     >
-      <Link href={`/canvas/${canvas.id}`} className="block">
-        <div className="relative aspect-[5/3] w-full overflow-hidden bg-gradient-to-br from-accent-bg via-bg-2 to-bg-1">
-          {canvas.thumbnail ? (
+      <Link href={href} className="block" aria-label={`打开画布：${canvas.title}`}>
+        <div className="relative aspect-[5/3] w-full overflow-hidden bg-bg-3">
+          {thumbnailSrc ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={canvas.thumbnail}
+              src={thumbnailSrc}
               alt={canvas.title}
               className="size-full object-cover transition duration-300 group-hover:scale-[1.02]"
+              onError={() => setFailedThumbnail(thumbnailSrc)}
             />
           ) : (
-            <div className="flex size-full items-center justify-center text-2xl text-text-3">
-              {isInspiration ? '🌟' : '🎨'}
+            <div className="flex size-full items-center justify-center bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.62),transparent_46%)] text-text-3/80">
+              {isInspiration ? <Star size={30} /> : <LayoutGrid size={30} />}
             </div>
           )}
           {/* PR4：来源徽章（左上） + 运行状态徽章（右上） */}
@@ -72,7 +86,7 @@ export function CanvasCard({ canvas, onDuplicate, onDelete }: Props) {
       <div className="flex items-start justify-between gap-2 px-4 pb-4 pt-3">
         <div className="min-w-0 flex-1">
           <Link
-            href={`/canvas/${canvas.id}`}
+            href={href}
             className="block truncate text-sm font-medium text-text-0 hover:text-accent"
             title={canvas.title}
           >
@@ -88,8 +102,9 @@ export function CanvasCard({ canvas, onDuplicate, onDelete }: Props) {
               type="button"
               variant="ghost"
               size="sm"
-              className="size-7 shrink-0 rounded-md p-0 text-text-3 opacity-0 transition group-hover:opacity-100 hover:bg-bg-2 hover:text-text-0"
+              className="size-7 shrink-0 rounded-full bg-bg-2/80 p-0 text-text-3 opacity-0 transition group-hover:opacity-100 hover:bg-bg-hover hover:text-text-0"
               aria-label="更多操作"
+              onClick={(event) => event.stopPropagation()}
             >
               <MoreHorizontal size={16} />
             </Button>

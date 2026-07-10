@@ -1,6 +1,18 @@
-import { Body, Controller, Delete, Get, Inject, Param, Post, Query, UseGuards } from '@nestjs/common'
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common'
 import { ApiTags } from '@nestjs/swagger'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, asc, count, desc, eq, ilike, inArray, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 
 import { toPublicMediaUrl } from '../../common/media-url'
@@ -71,9 +83,16 @@ function serializeTask(task: typeof tasks.$inferSelect) {
 function parseTaskId(value: string) {
   const id = Number(value)
   if (!Number.isInteger(id) || id <= 0) {
-    throw new Error('invalid task id')
+    throw new BadRequestException('invalid_task_id')
   }
   return id
+}
+
+function parseCsvFilter(value: string | undefined) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 @ApiTags('tasks')
@@ -89,58 +108,39 @@ export class TasksController {
   @Get()
   async listTasks(@Query() query: Record<string, unknown>, @CurrentUser() currentUser: CurrentUserType) {
     const parsed = taskListQuerySchema.parse(query)
-    let rows = await this.databaseService.db
+    const conditions = [eq(tasks.userId, currentUser.id), isNull(tasks.deletedAt)]
+    const typeFilter = parseCsvFilter(parsed.type)
+    const sourceTypeFilter = parseCsvFilter(parsed.source_type)
+    const statusFilter = parseCsvFilter(parsed.status)
+
+    if (typeFilter.length) conditions.push(inArray(tasks.type, typeFilter))
+    if (sourceTypeFilter.length) conditions.push(inArray(tasks.sourceType, sourceTypeFilter))
+    if (statusFilter.length) conditions.push(inArray(tasks.status, statusFilter))
+    if (parsed.drama_id) conditions.push(eq(tasks.dramaId, parsed.drama_id))
+    if (parsed.episode_id) conditions.push(eq(tasks.episodeId, parsed.episode_id))
+    if (parsed.q) conditions.push(ilike(tasks.title, `%${parsed.q}%`))
+
+    const where = and(...conditions)
+    const sortColumn = parsed.sort === 'created_at' ? tasks.createdAt : tasks.updatedAt
+    const orderBy = parsed.order === 'asc' ? asc(sortColumn) : desc(sortColumn)
+    const offset = (parsed.page - 1) * parsed.page_size
+
+    const [summary] = await this.databaseService.db
+      .select({ total: count() })
+      .from(tasks)
+      .where(where)
+
+    const rows = await this.databaseService.db
       .select()
       .from(tasks)
-      .where(and(eq(tasks.userId, currentUser.id), isNull(tasks.deletedAt)))
-
-    const typeFilter = new Set(
-      String(parsed.type || '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
-    )
-    const sourceTypeFilter = new Set(
-      String(parsed.source_type || '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
-    )
-    const statusFilter = new Set(
-      String(parsed.status || '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
-    )
-
-    if (typeFilter.size) rows = rows.filter((row) => typeFilter.has(row.type))
-    if (sourceTypeFilter.size) rows = rows.filter((row) => sourceTypeFilter.has(row.sourceType))
-    if (statusFilter.size) rows = rows.filter((row) => statusFilter.has(row.status))
-    if (parsed.drama_id) rows = rows.filter((row) => row.dramaId === parsed.drama_id)
-    if (parsed.episode_id) rows = rows.filter((row) => row.episodeId === parsed.episode_id)
-
-    if (parsed.q) {
-      const keyword = parsed.q.toLowerCase()
-      rows = rows.filter((row) => String(row.title || '').toLowerCase().includes(keyword))
-    }
-
-    const sortKey = parsed.sort === 'created_at' ? 'createdAt' : 'updatedAt'
-    rows.sort((left, right) => {
-      const leftValue = String(left[sortKey] || '')
-      const rightValue = String(right[sortKey] || '')
-      return parsed.order === 'asc'
-        ? leftValue.localeCompare(rightValue)
-        : rightValue.localeCompare(leftValue)
-    })
-
-    const total = rows.length
-    const items = rows
-      .slice((parsed.page - 1) * parsed.page_size, parsed.page * parsed.page_size)
-      .map(serializeTask)
+      .where(where)
+      .orderBy(orderBy)
+      .limit(parsed.page_size)
+      .offset(offset)
 
     return {
-      items,
-      total,
+      items: rows.map(serializeTask),
+      total: Number(summary?.total ?? 0),
       page: parsed.page,
       page_size: parsed.page_size,
     }
@@ -155,7 +155,7 @@ export class TasksController {
       .where(and(eq(tasks.id, taskId), eq(tasks.userId, currentUser.id), isNull(tasks.deletedAt)))
 
     if (!task) {
-      return { error: 'task_not_found' }
+      throw new NotFoundException('task_not_found')
     }
 
     return serializeTask(task)
@@ -181,7 +181,7 @@ export class TasksController {
       .where(and(eq(tasks.id, taskId), eq(tasks.userId, currentUser.id), isNull(tasks.deletedAt)))
 
     if (!task) {
-      return { error: 'task_not_found' }
+      throw new NotFoundException('task_not_found')
     }
 
     await this.databaseService.db

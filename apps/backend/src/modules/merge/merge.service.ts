@@ -3,7 +3,7 @@ import path from 'path'
 
 import ffmpeg from 'fluent-ffmpeg'
 import { Inject, Injectable } from '@nestjs/common'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { v4 as uuid } from 'uuid'
 
 import { toSnakeCaseWithPublicMedia } from '../../common/transform'
@@ -283,9 +283,39 @@ export class MergeService {
         ...values,
         userId: values.userId ?? episode?.userId ?? null,
       })
+      .onConflictDoNothing({
+        target: [tasks.domainTable, tasks.domainId],
+        where: sql`${tasks.deletedAt} IS NULL`,
+      })
       .returning({ id: tasks.id })
 
-    return created?.id ?? null
+    if (created?.id) return created.id
+
+    const [conflicted] = await this.databaseService.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.domainTable, 'video_merges'), eq(tasks.domainId, merge.id), isNull(tasks.deletedAt)))
+    if (!conflicted) return null
+
+    await this.databaseService.db
+      .update(tasks)
+      .set({
+        ...values,
+        userId: values.userId ?? episode?.userId ?? conflicted.userId ?? null,
+        aiConfigId: conflicted.aiConfigId ?? null,
+        providerTaskId: merge.taskId ?? conflicted.providerTaskId ?? null,
+        attemptCount: conflicted.attemptCount ?? 0,
+        payloadJson: args.payload ? sanitizePayload(args.payload) : conflicted.payloadJson ?? null,
+        progress: taskStatus === 'completed' ? 100 : taskStatus === 'queued' ? 0 : conflicted.progress ?? null,
+        createdAt: conflicted.createdAt ?? createdAt,
+        startedAt: taskStatus === 'queued' ? conflicted.startedAt ?? null : conflicted.startedAt ?? updatedAt,
+        lockedBy: isTerminal ? null : conflicted.lockedBy ?? null,
+        lockedAt: isTerminal ? null : conflicted.lockedAt ?? null,
+        lockExpiresAt: isTerminal ? null : conflicted.lockExpiresAt ?? null,
+      })
+      .where(eq(tasks.id, conflicted.id))
+
+    return conflicted.id
   }
 
   async enqueueEpisodeMerge(episodeId: number, dramaId: number, userId?: number | null) {

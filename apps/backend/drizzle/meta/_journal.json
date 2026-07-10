@@ -1,27 +1,90 @@
 {
-    "version":  "7",
-    "dialect":  "postgresql",
-    "entries":  [
-                    {
-                        "idx":  0,
-                        "version":  "7",
-                        "when":  1780116249899,
-                        "tag":  "0000_brief_sue_storm",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  1,
-                        "version":  "7",
-                        "when":  1780556500000,
-                        "tag":  "0001_writing_brief_json",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  2,
-                        "version":  "7",
-                        "when":  "1780568616555",
-                        "tag":  "0002_ai_runs",
-                        "breakpoints":  true
-                    }
-                ]
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1780116249899,
+      "tag": "0000_brief_sue_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780556500000,
+      "tag": "0001_writing_brief_json",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780568616555,
+      "tag": "0002_ai_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780568616556,
+      "tag": "0003_canvas",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780568616557,
+      "tag": "0004_ai_service_config_description",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780568616558,
+      "tag": "0005_quick_video_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780568616559,
+      "tag": "0006_writing_workspace_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780737540000,
+      "tag": "0007_canvas_0230",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783237200000,
+      "tag": "0008_tasks_domain_active_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783302180000,
+      "tag": "0010_drama_ai_first_episode_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783303020000,
+      "tag": "0011_drama_ai_first_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783314120000,
+      "tag": "0012_episode_script_run_trace",
+      "breakpoints": true
+    }
+  ]
 }

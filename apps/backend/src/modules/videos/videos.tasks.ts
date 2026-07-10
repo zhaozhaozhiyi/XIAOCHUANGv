@@ -1,9 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
 import { AssetsService } from '../assets/assets.service'
-import { tasks, videoGenerations } from '../../db/schema'
+import { storyboards, tasks, videoGenerations } from '../../db/schema'
 import { sanitizePayload, toPublicMediaUrl, trimText } from '../images/images.utils'
 
 @Injectable()
@@ -83,6 +83,32 @@ export class VideosTasksService {
     }
   }
 
+  private payloadNumber(payload: Record<string, unknown> | null | undefined, key: string) {
+    const value = payload?.[key]
+    if (value == null || value === '') return null
+    const parsed = typeof value === 'number' ? value : Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  private async resolveEpisodeId(
+    record: typeof videoGenerations.$inferSelect,
+    existing: typeof tasks.$inferSelect | undefined,
+    payload: Record<string, unknown> | null | undefined,
+  ) {
+    const payloadEpisodeId = this.payloadNumber(payload, 'episode_id')
+    if (payloadEpisodeId != null) return payloadEpisodeId
+
+    if (record.storyboardId != null) {
+      const [storyboard] = await this.databaseService.db
+        .select({ episodeId: storyboards.episodeId })
+        .from(storyboards)
+        .where(eq(storyboards.id, record.storyboardId))
+      if (storyboard?.episodeId != null) return storyboard.episodeId
+    }
+
+    return existing?.episodeId ?? null
+  }
+
   private async syncCompletedAsset(taskId: number | null, status: string) {
     if (!taskId || status !== 'completed') return
     try {
@@ -112,25 +138,27 @@ export class VideosTasksService {
           ? 'canceled'
           : null
     const updatedAt = record.updatedAt || this.now()
-    const createdAt = record.createdAt || updatedAt
+    const baseCreatedAt = record.createdAt || updatedAt
     const isTerminal = taskStatus === 'completed' || taskStatus === 'failed' || taskStatus === 'canceled'
     const summary = this.buildTaskResultSummary(record)
+    const payload = options.payload ?? null
+    const episodeId = await this.resolveEpisodeId(record, existing, payload)
 
-    const values = {
-      userId: record.userId ?? existing?.userId ?? null,
+    const buildValues = (task: typeof tasks.$inferSelect | undefined) => ({
+      userId: record.userId ?? task?.userId ?? null,
       type: this.inferTaskType(record),
       status: taskStatus,
       title: trimText(record.prompt, 40) || `video_generation_${record.id}`,
       progress: taskStatus === 'completed' ? 100 : taskStatus === 'queued' ? 0 : null,
       sourceType: this.inferTaskSourceType(record),
       dramaId: record.dramaId ?? null,
-      episodeId: null,
+      episodeId,
       storyboardId: record.storyboardId ?? null,
-      aiConfigId: options.aiConfigId ?? existing?.aiConfigId ?? null,
+      aiConfigId: options.aiConfigId ?? task?.aiConfigId ?? null,
       domainTable: 'video_generations',
       domainId: record.id,
       providerTaskId: record.taskId ?? null,
-      payloadJson: options.payload ? sanitizePayload(options.payload) : existing?.payloadJson ?? null,
+      payloadJson: payload ? sanitizePayload(payload) : task?.payloadJson ?? null,
       resultSummaryJson: summary ? JSON.stringify(summary) : null,
       errorKind,
       errorMessage:
@@ -145,11 +173,12 @@ export class VideosTasksService {
           raw_error: record.errorMsg || null,
         })
         : null,
-      createdAt,
+      createdAt: task?.createdAt ?? baseCreatedAt,
       updatedAt,
-      startedAt: taskStatus === 'queued' ? existing?.startedAt ?? null : existing?.startedAt ?? updatedAt,
+      startedAt: taskStatus === 'queued' ? task?.startedAt ?? null : task?.startedAt ?? updatedAt,
       completedAt: isTerminal ? record.completedAt || updatedAt : null,
-    }
+    })
+    const values = buildValues(existing)
 
     if (existing) {
       await this.databaseService.db
@@ -163,8 +192,27 @@ export class VideosTasksService {
     const [created] = await this.databaseService.db
       .insert(tasks)
       .values(values)
+      .onConflictDoNothing({
+        target: [tasks.domainTable, tasks.domainId],
+        where: sql`${tasks.deletedAt} IS NULL`,
+      })
       .returning({ id: tasks.id })
-    await this.syncCompletedAsset(created?.id ?? null, taskStatus)
-    return created?.id ?? null
+    if (created?.id) {
+      await this.syncCompletedAsset(created.id, taskStatus)
+      return created.id
+    }
+
+    const [conflicted] = await this.databaseService.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.domainTable, 'video_generations'), eq(tasks.domainId, record.id), isNull(tasks.deletedAt)))
+    if (!conflicted) return null
+
+    await this.databaseService.db
+      .update(tasks)
+      .set(buildValues(conflicted))
+      .where(eq(tasks.id, conflicted.id))
+    await this.syncCompletedAsset(conflicted.id, taskStatus)
+    return conflicted.id
   }
 }

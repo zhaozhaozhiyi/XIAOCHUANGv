@@ -9,6 +9,7 @@ import { toSnakeCase, toSnakeCaseArrayWithPublicMedia, toSnakeCaseWithPublicMedi
 import { DatabaseService } from '../../db/database.service'
 import { characters, dramas, episodes, props, scenes, writingDocuments, writings } from '../../db/schema'
 import { parseDramaMetadata, resolveProjectConfigId } from './drama-metadata'
+import { DramaAiFirstService } from './drama-ai-first.service'
 import { AuthService } from '../auth/auth.service'
 import { CurrentUser } from '../auth/current-user.decorator'
 import { SessionAuthGuard } from '../auth/session-auth.guard'
@@ -39,6 +40,7 @@ const dramaUpdateSchema = z.object({
   thumbnail: z.string().trim().nullable().optional(),
   tags: z.unknown().optional(),
   metadata: z.unknown().optional(),
+  total_episodes: z.coerce.number().int().nonnegative().optional(),
 })
 
 const createDramaFromWritingSchema = z.object({
@@ -46,6 +48,31 @@ const createDramaFromWritingSchema = z.object({
   document_id: z.coerce.number().int().positive().nullable().optional(),
   title: z.string().trim().optional(),
 })
+
+const dramaSourceSchema = z.object({
+  title: z.string().trim().nullable().optional(),
+  content: z.string().min(1),
+  source_type: z.enum(['paste', 'upload', 'writing_project']).optional(),
+})
+
+const dramaSourceHealthCheckSchema = z.object({
+  content: z.string().nullable().optional(),
+}).optional()
+
+const dramaAdaptationBriefGenerateSchema = z.object({
+  count: z.coerce.number().int().min(2).max(3).optional(),
+  target_episode_count: z.coerce.number().int().min(1).max(120).nullable().optional(),
+  episode_duration: z.string().trim().nullable().optional(),
+  style_direction: z.string().trim().nullable().optional(),
+}).optional()
+
+const dramaEpisodeBlueprintGenerateSchema = z.object({
+  replace_without_script: z.boolean().optional(),
+}).optional()
+
+const dramaPilotScriptsGenerateSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(3).optional(),
+}).optional()
 
 type EpisodeDraft = {
   title: string
@@ -84,10 +111,45 @@ function toOptionalNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function toRecord(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function emptyBodyToObject(value: unknown) {
+  return value == null || value === '' ? {} : value
+}
+
+function extractAiFirstFields(metadataValue: string | null | undefined) {
+  const metadata = parseDramaMetadata(metadataValue)
+  const aiFirst = toRecord(metadata.ai_first)
+  return {
+    source_health: aiFirst.source_health ?? metadata.source_health ?? null,
+    source_analysis: aiFirst.source_analysis ?? metadata.source_analysis ?? null,
+    adaptation_briefs: Array.isArray(aiFirst.adaptation_briefs)
+      ? aiFirst.adaptation_briefs
+      : Array.isArray(metadata.adaptation_briefs)
+        ? metadata.adaptation_briefs
+        : [],
+    selected_brief_id: typeof aiFirst.selected_brief_id === 'string'
+      ? aiFirst.selected_brief_id
+      : typeof metadata.selected_brief_id === 'string'
+        ? metadata.selected_brief_id
+        : '',
+    ai_first_stage: typeof aiFirst.ai_first_stage === 'string'
+      ? aiFirst.ai_first_stage
+      : typeof metadata.ai_first_stage === 'string'
+        ? metadata.ai_first_stage
+        : null,
+  }
+}
+
 function dramaPayloadBase(drama: typeof dramas.$inferSelect) {
   return {
     ...toSnakeCaseWithPublicMedia(drama as unknown as Record<string, unknown>, dramaMediaFields),
     tags: parseJsonValue(drama.tags),
+    ...extractAiFirstFields(drama.metadata),
   }
 }
 
@@ -127,6 +189,7 @@ export class DramasController {
   constructor(
     @Inject(DatabaseService) private readonly databaseService: DatabaseService,
     @Inject(AuthService) private readonly authService: AuthService,
+    @Inject(DramaAiFirstService) private readonly dramaAiFirstService: DramaAiFirstService,
   ) {}
 
   @Get('stats')
@@ -543,6 +606,129 @@ export class DramasController {
     }
   }
 
+  @Get(':id/ai-first')
+  @UseGuards(SessionAuthGuard)
+  async getDramaAiFirst(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const dramaId = parseDramaId(id)
+    return this.dramaAiFirstService.getAiFirst(dramaId, currentUser.id)
+  }
+
+  @Post(':id/source/health-check')
+  @UseGuards(SessionAuthGuard)
+  async checkDramaSourceHealth(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const dramaId = parseDramaId(id)
+    const payload = dramaSourceHealthCheckSchema.parse(body ?? {})
+    return this.dramaAiFirstService.healthCheck({
+      dramaId,
+      userId: currentUser.id,
+      content: payload?.content,
+    })
+  }
+
+  @Post(':id/source')
+  @UseGuards(SessionAuthGuard)
+  async saveDramaSource(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const dramaId = parseDramaId(id)
+    const payload = dramaSourceSchema.parse(body)
+    return this.dramaAiFirstService.saveSource({
+      dramaId,
+      userId: currentUser.id,
+      title: payload.title,
+      content: payload.content,
+      sourceType: payload.source_type,
+    })
+  }
+
+  @Post(':id/source/analyze')
+  @UseGuards(SessionAuthGuard)
+  async analyzeDramaSource(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const dramaId = parseDramaId(id)
+    return this.dramaAiFirstService.analyzeSource({
+      dramaId,
+      userId: currentUser.id,
+    })
+  }
+
+  @Post(':id/adaptation-briefs')
+  @UseGuards(SessionAuthGuard)
+  async generateAdaptationBriefs(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const dramaId = parseDramaId(id)
+    const payload = dramaAdaptationBriefGenerateSchema.parse(emptyBodyToObject(body))
+    return this.dramaAiFirstService.generateAdaptationBriefs({
+      dramaId,
+      userId: currentUser.id,
+      count: payload?.count,
+      targetEpisodeCount: payload?.target_episode_count,
+      episodeDuration: payload?.episode_duration,
+      styleDirection: payload?.style_direction,
+    })
+  }
+
+  @Post(':id/adaptation-briefs/:briefId/select')
+  @UseGuards(SessionAuthGuard)
+  async selectAdaptationBrief(
+    @Param('id') id: string,
+    @Param('briefId') briefId: string,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const dramaId = parseDramaId(id)
+    return this.dramaAiFirstService.selectAdaptationBrief({
+      dramaId,
+      userId: currentUser.id,
+      briefId,
+    })
+  }
+
+  @Post(':id/episode-blueprints')
+  @UseGuards(SessionAuthGuard)
+  async generateEpisodeBlueprints(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const dramaId = parseDramaId(id)
+    const payload = dramaEpisodeBlueprintGenerateSchema.parse(emptyBodyToObject(body))
+    return this.dramaAiFirstService.generateEpisodeBlueprints({
+      dramaId,
+      userId: currentUser.id,
+      replaceWithoutScript: payload?.replace_without_script,
+    })
+  }
+
+  @Post(':id/pilot-scripts')
+  @UseGuards(SessionAuthGuard)
+  async generatePilotScripts(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const dramaId = parseDramaId(id)
+    const payload = dramaPilotScriptsGenerateSchema.parse(emptyBodyToObject(body))
+    return this.dramaAiFirstService.generatePilotScripts({
+      dramaId,
+      userId: currentUser.id,
+      limit: payload?.limit,
+    })
+  }
+
   @Get(':id')
   async getDrama(@Req() request: FastifyRequest, @Param('id') id: string) {
     const dramaId = parseDramaId(id)
@@ -638,6 +824,7 @@ export class DramasController {
     if (payload.thumbnail !== undefined) updates.thumbnail = toPublicMediaUrl(payload.thumbnail)
     if (payload.tags !== undefined) updates.tags = JSON.stringify(payload.tags)
     if (payload.metadata !== undefined) updates.metadata = serializeMetadata(payload.metadata)
+    if (payload.total_episodes !== undefined) updates.totalEpisodes = payload.total_episodes
 
     await this.databaseService.db
       .update(dramas)

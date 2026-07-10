@@ -15,6 +15,7 @@ import { ExportPanel } from '@/components/episode/export/export-panel'
 import { GridToolDialog } from '@/components/episode/production/grid-tool-dialog'
 import { cn } from '@/lib/cn'
 import { getStoryboardTtsDialogue } from '@/lib/dialogue'
+import { normalizeEpisodeBlueprintPayload } from '@/lib/drama-metadata'
 import type { Storyboard } from '@/types/api'
 import './episode-shell.css'
 import './episode-panels.css'
@@ -113,6 +114,12 @@ export default function WorkbenchPage() {
   }, [wb.panel, wb.scriptStep, wb.prodTab])
   const subStepLabel = STEP_LABELS[activeStep] || ''
   const visualCharacters = useMemo(() => wb.characters.filter(isVisualCharacter), [wb.characters])
+  const episodeBlueprint = useMemo(
+    () => normalizeEpisodeBlueprintPayload(wb.episode?.blueprint_payload),
+    [wb.episode?.blueprint_payload],
+  )
+  const hasScriptContent = Boolean(wb.episode?.script_content?.trim())
+  const blueprintTraceCount = episodeBlueprint?.source_trace?.length || 0
   const sidebarJumpSteps = useMemo(() => {
     const section = SIDEBAR_SECTIONS.find((item) => item.items.some((step) => step.key === activeStep))
     return section?.items || []
@@ -308,6 +315,44 @@ export default function WorkbenchPage() {
               ))}
             </div>
           )}
+          {episodeBlueprint ? (
+            <section className="blueprint-banner" aria-label="分集蓝图输入">
+              <div className="blueprint-banner-main">
+                <div className="blueprint-banner-title">
+                  分集蓝图：{episodeBlueprint.title || wb.episode?.title || `第 ${episodeNumber} 集`}
+                </div>
+                <p className="blueprint-banner-desc">
+                  {hasScriptContent
+                    ? '当前工作台已读取试播正文；蓝图继续作为原文追溯、角色和场景边界的参考。'
+                    : '当前集只有蓝图，尚未生成试播正文。建议先回项目页生成试播正文，再继续分镜和制作。'}
+                </p>
+                <div className="blueprint-scope-row" aria-label="资产作用域边界">
+                  <span className="blueprint-scope-pill">
+                    <span className="blueprint-scope-label">公共主档</span>
+                    <span className="blueprint-scope-copy">角色、场景、音色由项目继承</span>
+                  </span>
+                  <span className="blueprint-scope-pill">
+                    <span className="blueprint-scope-label">单集引用</span>
+                    <span className="blueprint-scope-copy">本集可按蓝图覆写使用边界</span>
+                  </span>
+                  <span className="blueprint-scope-pill">
+                    <span className="blueprint-scope-label">镜头私有</span>
+                    <span className="blueprint-scope-copy">分镜图、视频和配音落在镜头内</span>
+                  </span>
+                </div>
+              </div>
+              <div className="blueprint-banner-meta">
+                <span className="blueprint-tag">{hasScriptContent ? '正文已就绪' : '待生成正文'}</span>
+                <span className="blueprint-tag">{blueprintTraceCount || 0} 条追溯</span>
+                <span className="blueprint-tag">{episodeBlueprint.characters?.length || 0} 角色</span>
+                {!hasScriptContent ? (
+                  <Link className="blueprint-banner-action" href={`/drama/${dramaId}`}>
+                    返回项目
+                  </Link>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
           {/* Panel Content */}
           <div className="content-wrap">
             <div className={cn(

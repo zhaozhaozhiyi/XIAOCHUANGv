@@ -150,9 +150,11 @@ export class ImagesService {
     let configId = typeof body.config_id === 'number' ? body.config_id : typeof body.config_id === 'string' ? Number(body.config_id) : undefined
     let dramaId = typeof body.drama_id === 'number' ? body.drama_id : typeof body.drama_id === 'string' ? Number(body.drama_id) : undefined
     let referenceImages = parseStringArray(body.reference_images)
+    let episodeId = typeof body.episode_id === 'number' ? body.episode_id : typeof body.episode_id === 'string' ? Number(body.episode_id) : undefined
 
     if (body.episode_id) {
       const episode = await requireOwnedEpisode(this.databaseService, Number(body.episode_id), userId)
+      episodeId = episode.id
       if (dramaId == null) dramaId = episode.dramaId
       if (episode.imageConfigId != null && configId == null) {
         configId = episode.imageConfigId
@@ -171,6 +173,7 @@ export class ImagesService {
         .select()
         .from(episodes)
         .where(eq(episodes.id, storyboard.episodeId))
+      if (episode?.id != null) episodeId = episode.id
       if (episode?.imageConfigId != null) {
         configId = episode.imageConfigId
       } else if (episode?.dramaId != null) {
@@ -224,6 +227,7 @@ export class ImagesService {
       frameType: typeof body.frame_type === 'string' ? body.frame_type : undefined,
       configId,
       taskPayload: {
+        episode_id: episodeId,
         storyboard_id: body.storyboard_id ? Number(body.storyboard_id) : undefined,
         drama_id: dramaId,
         scene_id: body.scene_id ? Number(body.scene_id) : undefined,

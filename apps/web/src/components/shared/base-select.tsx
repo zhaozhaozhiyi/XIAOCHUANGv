@@ -240,7 +240,7 @@ export function BaseSelect({
               ref={dropdownRef}
               data-dialog-allow-outside-interaction=""
               className={cn(
-                'fixed z-[60] overflow-hidden rounded-[14px] border border-border bg-bg-0 shadow-shadow-lg',
+                'fixed z-[60] overflow-hidden rounded-[14px] border border-border/45 bg-bg-surface-glass shadow-[var(--shadow-popover-soft)] backdrop-blur-[10px]',
                 'animate-[baseSelectIn_0.15s_cubic-bezier(0.16,1,0.3,1)]',
               )}
               style={{
@@ -252,7 +252,7 @@ export function BaseSelect({
             >
               {/* Search */}
               {searchable && (
-                <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-text-2">
+                <div className="flex items-center gap-2 border-b border-border/45 px-3 py-2 text-text-2">
                   <Search size={12} />
                   <input
                     ref={searchRef}

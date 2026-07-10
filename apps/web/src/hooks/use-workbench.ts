@@ -68,7 +68,10 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const SAVE_STORYBOARDS_TOOL_NAMES = new Set(['save_storyboards', 'saveStoryboards'])
 const STORYBOARD_POLL_INTERVAL_MS = 3000
 const STORYBOARD_POLL_ATTEMPTS = 30
+const EPISODE_TASK_POLL_INTERVAL_MS = 4000
 const ACTIVE_TASK_STATUSES = new Set(['queued', 'running'])
+const RESTORABLE_TASK_STATUSES = 'queued,running,failed,canceled'
+let recoveredEntityPollSerial = 0
 
 function formatWorkbenchError(error: unknown) {
   return getAiErrorCopy(error, '操作失败')
@@ -93,6 +96,163 @@ function resolveWorkbenchAiTaskType(task: TaskRecord) {
 function formatRecoveredAiTaskNote(task: TaskRecord) {
   const statusText = task.status === 'queued' ? '排队中' : '处理中'
   return `${task.title || '短剧 AI 任务'}${statusText ? ` · ${statusText}` : ''}`
+}
+
+export function isActiveWorkbenchTask(task: TaskRecord | null | undefined) {
+  return !!task && ACTIVE_TASK_STATUSES.has(String(task.status || ''))
+}
+
+function taskPayloadNumber(task: TaskRecord, key: string) {
+  const value = task.payload?.[key]
+  if (value == null || value === '') return null
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function dateValue(value: unknown) {
+  if (!value) return 0
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function shouldShowEntityTask(task: TaskRecord, entityUpdatedAt: unknown, hasCurrentResult: boolean) {
+  if (isActiveWorkbenchTask(task)) return true
+  if (!['failed', 'canceled'].includes(String(task.status || ''))) return false
+  if (!hasCurrentResult) return true
+  return dateValue(task.updated_at) >= dateValue(entityUpdatedAt)
+}
+
+function chooseEntityTask(current: TaskRecord | undefined, next: TaskRecord) {
+  if (!current) return next
+  const currentActive = isActiveWorkbenchTask(current)
+  const nextActive = isActiveWorkbenchTask(next)
+  if (currentActive !== nextActive) return nextActive ? next : current
+  return dateValue(next.updated_at) >= dateValue(current.updated_at) ? next : current
+}
+
+function addEntityTask(target: Record<string, TaskRecord>, key: string | null, task: TaskRecord) {
+  if (!key) return
+  target[key] = chooseEntityTask(target[key], task)
+}
+
+function buildWorkbenchEntityTasks(args: {
+  tasks: TaskRecord[]
+  characters: Character[]
+  scenes: Scene[]
+  storyboards: Storyboard[]
+  episode: Episode
+}) {
+  const entityTasks: Record<string, TaskRecord> = {}
+  const charactersById = new Map(args.characters.map((item) => [item.id, item]))
+  const scenesById = new Map(args.scenes.map((item) => [item.id, item]))
+  const storyboardsById = new Map(args.storyboards.map((item) => [item.id, item]))
+
+  for (const task of args.tasks) {
+    const status = String(task.status || '')
+    if (!['queued', 'running', 'failed', 'canceled'].includes(status)) continue
+
+    if (task.domain_table === 'image_generations') {
+      const characterId = taskPayloadNumber(task, 'character_id')
+      if (characterId != null) {
+        const character = charactersById.get(characterId)
+        if (character && shouldShowEntityTask(task, character.updated_at, !!character.image_url)) {
+          addEntityTask(entityTasks, `character-image:${characterId}`, task)
+        }
+        continue
+      }
+
+      const sceneId = taskPayloadNumber(task, 'scene_id')
+      if (sceneId != null) {
+        const scene = scenesById.get(sceneId)
+        if (scene && shouldShowEntityTask(task, scene.updated_at, !!scene.image_url)) {
+          addEntityTask(entityTasks, `scene-image:${sceneId}`, task)
+        }
+        continue
+      }
+
+      const storyboardId = task.storyboard_id ?? taskPayloadNumber(task, 'storyboard_id')
+      const frameType = String(task.payload?.frame_type || '').trim()
+      if (storyboardId != null && (frameType === 'first_frame' || frameType === 'last_frame')) {
+        const storyboard = storyboardsById.get(storyboardId)
+        const hasFrame = frameType === 'last_frame'
+          ? !!(storyboard?.last_frame_image || storyboard?.composed_image)
+          : !!(storyboard?.first_frame_image || storyboard?.composed_image)
+        if (storyboard && shouldShowEntityTask(task, storyboard.updated_at, hasFrame)) {
+          addEntityTask(entityTasks, `shot-frame:${storyboardId}:${frameType}`, task)
+        }
+      }
+      continue
+    }
+
+    if (task.domain_table === 'video_generations') {
+      const storyboardId = task.storyboard_id ?? taskPayloadNumber(task, 'storyboard_id')
+      if (storyboardId == null) continue
+      const storyboard = storyboardsById.get(storyboardId)
+      const hasCurrentVideo = !!storyboard?.video_url
+        && storyboard.status !== 'video_failed'
+        && storyboard.status !== 'video_canceled'
+      if (storyboard && shouldShowEntityTask(task, storyboard.updated_at, hasCurrentVideo)) {
+        addEntityTask(entityTasks, `shot-video:${storyboardId}`, task)
+      }
+      continue
+    }
+
+    if (task.domain_table === 'storyboard_tts') {
+      const storyboardId = task.storyboard_id ?? task.domain_id
+      const storyboard = storyboardsById.get(storyboardId)
+      if (storyboard && shouldShowEntityTask(task, storyboard.updated_at, !!storyboard.tts_audio_url)) {
+        addEntityTask(entityTasks, `shot-tts:${storyboardId}`, task)
+      }
+      continue
+    }
+
+    if (task.domain_table === 'storyboard_compose') {
+      const storyboardId = task.storyboard_id ?? task.domain_id
+      const storyboard = storyboardsById.get(storyboardId)
+      const hasCurrentCompose = !!storyboard?.composed_video_url
+        && storyboard.status !== 'compose_failed'
+        && storyboard.status !== 'compose_canceled'
+      if (storyboard && shouldShowEntityTask(task, storyboard.updated_at, hasCurrentCompose)) {
+        addEntityTask(entityTasks, `shot-compose:${storyboardId}`, task)
+      }
+      continue
+    }
+
+    if (task.domain_table === 'video_merges' && task.episode_id === args.episode.id) {
+      addEntityTask(entityTasks, `episode-merge:${args.episode.id}`, task)
+    }
+  }
+
+  return entityTasks
+}
+
+function activeEntityTaskIds(entityTasks: Record<string, TaskRecord>) {
+  return Array.from(new Set(
+    Object.values(entityTasks)
+      .filter(isActiveWorkbenchTask)
+      .map((task) => task.id),
+  ))
+}
+
+function pendingShotFramesFromTasks(entityTasks: Record<string, TaskRecord>) {
+  const pending = new Map<number, string>()
+  for (const [key, task] of Object.entries(entityTasks)) {
+    if (!isActiveWorkbenchTask(task) || !key.startsWith('shot-frame:')) continue
+    const [, id, frameType] = key.split(':')
+    const storyboardId = Number(id)
+    if (Number.isFinite(storyboardId) && frameType) pending.set(storyboardId, frameType)
+  }
+  return pending
+}
+
+function pendingIdsFromTasks(entityTasks: Record<string, TaskRecord>, prefix: string) {
+  const pending = new Set<number>()
+  for (const [key, task] of Object.entries(entityTasks)) {
+    if (!isActiveWorkbenchTask(task) || !key.startsWith(prefix)) continue
+    const id = Number(key.slice(prefix.length))
+    if (Number.isFinite(id)) pending.add(id)
+  }
+  return pending
 }
 
 export function isNarratorCharacter(char: Pick<Character, 'name' | 'role'> | null | undefined) {
@@ -341,8 +501,10 @@ interface WorkbenchState {
   pendingVoiceSamples: Set<number>
   pendingSceneImages: Set<number>
   pendingShotFrames: Map<number, string>
+  pendingShotTts: Set<number>
   pendingVideos: Set<number>
   pendingComposes: Set<number>
+  entityTasks: Record<string, TaskRecord>
   // Merge status
   mergeStatus: unknown
   mergeUrl: string | null
@@ -391,6 +553,7 @@ interface WorkbenchState {
   batchCompose: () => Promise<void>
   mergeEpisode: () => Promise<void>
   pollMergeStatus: () => Promise<void>
+  retryEntityTask: (taskId: number) => Promise<void>
   updateField: (sb: Storyboard, field: string, value: unknown) => Promise<void>
   toggleStoryboardCharacter: (sb: Storyboard, charId: number) => Promise<void>
   pendingDeleteStoryboard: Storyboard | null
@@ -403,6 +566,215 @@ interface WorkbenchState {
   pipelineProgress: () => number
   charsVoiced: () => number
   totalDuration: () => number
+}
+
+type WorkbenchSet = (
+  partial: Partial<WorkbenchState> | WorkbenchState | ((state: WorkbenchState) => Partial<WorkbenchState> | WorkbenchState),
+  replace?: false,
+) => void
+
+type EpisodePollResource = 'characters' | 'scenes' | 'storyboards' | 'composeStatus' | 'mergeStatus'
+
+type EpisodePollSnapshot = {
+  characters?: Character[]
+  scenes?: Scene[]
+  storyboards?: Storyboard[]
+  composeStatus?: EpisodeComposeStatusResponse | null
+  mergeStatus?: EpisodeMergeStatusResponse | null
+}
+
+type EpisodePollResult<T> =
+  | { status: 'completed'; value: T }
+  | { status: 'failed'; message?: string | null }
+  | { status: 'timeout' }
+  | { status: 'stale' }
+
+type EpisodePollWaiter = {
+  id: number
+  episodeId: number
+  resources: EpisodePollResource[]
+  expiresAt: number
+  onSnapshot?: (snapshot: EpisodePollSnapshot, state: WorkbenchState) => void
+  resolveWhen: (snapshot: EpisodePollSnapshot, state: WorkbenchState) => EpisodePollResult<unknown> | null | undefined
+  resolve: (result: EpisodePollResult<unknown>) => void
+}
+
+let episodePollWaiterSeq = 0
+let episodePollWaiters: EpisodePollWaiter[] = []
+let episodePollTimer: ReturnType<typeof setTimeout> | null = null
+let episodePollInFlight = false
+
+function resolveEpisodePollWaiter(waiter: EpisodePollWaiter, result: EpisodePollResult<unknown>) {
+  waiter.resolve(result)
+}
+
+function cancelEpisodePollWaiters() {
+  if (episodePollTimer) {
+    clearTimeout(episodePollTimer)
+    episodePollTimer = null
+  }
+  const waiters = episodePollWaiters
+  episodePollWaiters = []
+  waiters.forEach((waiter) => resolveEpisodePollWaiter(waiter, { status: 'stale' }))
+}
+
+function applyEpisodePollSnapshot(
+  setState: WorkbenchSet,
+  getState: () => WorkbenchState,
+  episodeId: number,
+  snapshot: EpisodePollSnapshot,
+) {
+  if (getState().episode?.id !== episodeId) return
+
+  const patch: Partial<WorkbenchState> = {}
+  if (snapshot.characters) patch.characters = snapshot.characters
+  if (snapshot.scenes) patch.scenes = snapshot.scenes
+  if (snapshot.storyboards) {
+    patch.storyboards = snapshot.storyboards
+    const selectedStoryboard = getState().selectedStoryboard
+    if (selectedStoryboard) {
+      const updatedSelected = snapshot.storyboards.find((item) => item.id === selectedStoryboard.id)
+      if (updatedSelected) patch.selectedStoryboard = updatedSelected
+    }
+  }
+  if (snapshot.mergeStatus !== undefined) {
+    patch.mergeStatus = snapshot.mergeStatus
+    patch.mergeUrl = snapshot.mergeStatus?.merged_url || getState().episode?.video_url || null
+  }
+
+  if (Object.keys(patch).length > 0) setState(patch)
+}
+
+async function fetchEpisodePollSnapshot(
+  episodeId: number,
+  resources: Set<EpisodePollResource>,
+): Promise<EpisodePollSnapshot> {
+  const snapshot: EpisodePollSnapshot = {}
+  await Promise.all([
+    resources.has('characters')
+      ? episodeAPI.characters(episodeId)
+        .then((items) => { snapshot.characters = items || [] })
+        .catch((error: unknown) => console.warn('[Workbench] episode poller failed to refresh characters', error))
+      : Promise.resolve(),
+    resources.has('scenes')
+      ? episodeAPI.scenes(episodeId)
+        .then((items) => { snapshot.scenes = items || [] })
+        .catch((error: unknown) => console.warn('[Workbench] episode poller failed to refresh scenes', error))
+      : Promise.resolve(),
+    resources.has('storyboards')
+      ? episodeAPI.storyboards(episodeId)
+        .then((items) => { snapshot.storyboards = items || [] })
+        .catch((error: unknown) => console.warn('[Workbench] episode poller failed to refresh storyboards', error))
+      : Promise.resolve(),
+    resources.has('composeStatus')
+      ? composeAPI.status(episodeId)
+        .then((status) => { snapshot.composeStatus = status || null })
+        .catch((error: unknown) => console.warn('[Workbench] episode poller failed to refresh compose status', error))
+      : Promise.resolve(),
+    resources.has('mergeStatus')
+      ? mergeAPI.status(episodeId)
+        .then((status) => { snapshot.mergeStatus = status || null })
+        .catch((error: unknown) => console.warn('[Workbench] episode poller failed to refresh merge status', error))
+      : Promise.resolve(),
+  ])
+  return snapshot
+}
+
+function scheduleEpisodePoll(setState: WorkbenchSet, getState: () => WorkbenchState) {
+  if (episodePollTimer || episodePollInFlight || episodePollWaiters.length === 0) return
+  episodePollTimer = setTimeout(() => {
+    episodePollTimer = null
+    void runEpisodePoll(setState, getState)
+  }, EPISODE_TASK_POLL_INTERVAL_MS)
+}
+
+async function runEpisodePoll(setState: WorkbenchSet, getState: () => WorkbenchState) {
+  if (episodePollInFlight) return
+  episodePollInFlight = true
+  try {
+    const currentEpisodeId = getState().episode?.id
+    const now = Date.now()
+    const activeWaiters: EpisodePollWaiter[] = []
+
+    for (const waiter of episodePollWaiters) {
+      if (!currentEpisodeId || waiter.episodeId !== currentEpisodeId) {
+        resolveEpisodePollWaiter(waiter, { status: 'stale' })
+        continue
+      }
+      if (now >= waiter.expiresAt) {
+        resolveEpisodePollWaiter(waiter, { status: 'timeout' })
+        continue
+      }
+      activeWaiters.push(waiter)
+    }
+    episodePollWaiters = activeWaiters
+
+    if (!currentEpisodeId || activeWaiters.length === 0) return
+
+    const resources = new Set<EpisodePollResource>()
+    activeWaiters.forEach((waiter) => waiter.resources.forEach((resource) => resources.add(resource)))
+    const snapshot = await fetchEpisodePollSnapshot(currentEpisodeId, resources)
+
+    if (getState().episode?.id !== currentEpisodeId) {
+      const activeIds = new Set(activeWaiters.map((waiter) => waiter.id))
+      episodePollWaiters = episodePollWaiters.filter((waiter) => {
+        if (!activeIds.has(waiter.id)) return true
+        resolveEpisodePollWaiter(waiter, { status: 'stale' })
+        return false
+      })
+      return
+    }
+
+    applyEpisodePollSnapshot(setState, getState, currentEpisodeId, snapshot)
+
+    const activeIds = new Set(activeWaiters.map((waiter) => waiter.id))
+    const remaining: EpisodePollWaiter[] = []
+    for (const waiter of episodePollWaiters) {
+      if (!activeIds.has(waiter.id)) {
+        remaining.push(waiter)
+        continue
+      }
+
+      try {
+        waiter.onSnapshot?.(snapshot, getState())
+        const result = waiter.resolveWhen(snapshot, getState())
+        if (result) {
+          resolveEpisodePollWaiter(waiter, result)
+        } else {
+          remaining.push(waiter)
+        }
+      } catch (error) {
+        resolveEpisodePollWaiter(waiter, { status: 'failed', message: formatWorkbenchError(error) })
+      }
+    }
+    episodePollWaiters = remaining
+  } finally {
+    episodePollInFlight = false
+    scheduleEpisodePoll(setState, getState)
+  }
+}
+
+function waitForEpisodePoll<T>(args: {
+  episodeId: number
+  resources: EpisodePollResource[]
+  timeoutMs: number
+  setState: WorkbenchSet
+  getState: () => WorkbenchState
+  onSnapshot?: (snapshot: EpisodePollSnapshot, state: WorkbenchState) => void
+  resolveWhen: (snapshot: EpisodePollSnapshot, state: WorkbenchState) => EpisodePollResult<T> | null | undefined
+}) {
+  return new Promise<EpisodePollResult<T>>((resolve) => {
+    episodePollWaiters.push({
+      id: ++episodePollWaiterSeq,
+      episodeId: args.episodeId,
+      resources: args.resources,
+      expiresAt: Date.now() + args.timeoutMs,
+      onSnapshot: args.onSnapshot,
+      resolveWhen: (snapshot, state) => args.resolveWhen(snapshot, state) as EpisodePollResult<unknown> | null | undefined,
+      resolve: (result) => resolve(result as EpisodePollResult<T>),
+    })
+    scheduleEpisodePoll(args.setState, args.getState)
+  })
 }
 
 const initialState = {
@@ -419,8 +791,10 @@ const initialState = {
   pendingVoiceSamples: new Set<number>(),
   pendingSceneImages: new Set<number>(),
   pendingShotFrames: new Map<number, string>(),
+  pendingShotTts: new Set<number>(),
   pendingVideos: new Set<number>(),
   pendingComposes: new Set<number>(),
+  entityTasks: {},
   mergeStatus: null,
   mergeUrl: null,
   selectedStoryboard: null,
@@ -438,10 +812,23 @@ const initialState = {
   pendingDeleteStoryboard: null,
 }
 
+async function refreshCurrentEpisodeSilently(getState: () => WorkbenchState) {
+  const { drama, episode, loadAll } = getState()
+  if (!drama || !episode) return
+  try {
+    await loadAll(drama.id, episode.episode_number)
+  } catch (error) {
+    console.warn('[Workbench] failed to refresh current episode state', error)
+  }
+}
+
 export const useWorkbench = create<WorkbenchState>((set, get) => ({
   ...initialState,
 
-  reset: () => set({ ...initialState }),
+  reset: () => {
+    cancelEpisodePollWaiters()
+    set({ ...initialState })
+  },
 
   loadAll: async (dramaId: number, episodeNumber: number) => {
     try {
@@ -459,8 +846,9 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       let epScenes: Scene[] = []
       let mergeInfo: EpisodeMergeStatusResponse | null = null
       let activeAiTask: TaskRecord | null = null
+      let entityTasks: Record<string, TaskRecord> = {}
       if (ep.id) {
-        const [storyboards, characters, scenes, aiTasks] = await Promise.all([
+        const [storyboards, characters, scenes, aiTasks, recentTasks] = await Promise.all([
           episodeAPI.storyboards(ep.id),
           episodeAPI.characters(ep.id),
           episodeAPI.scenes(ep.id),
@@ -475,6 +863,15 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
             console.warn('[Workbench] AI task status unavailable during loadAll', error)
             return null
           }),
+          taskAPI.list({
+            page_size: 100,
+            drama_id: dramaId,
+            status: RESTORABLE_TASK_STATUSES,
+            sort: 'updated_at',
+          }).catch((error: unknown) => {
+            console.warn('[Workbench] entity task status unavailable during loadAll', error)
+            return null
+          }),
         ])
         const mergeStatus = await mergeAPI.status(ep.id).catch((error: unknown) => {
           console.warn('[Workbench] merge status unavailable during loadAll', error)
@@ -485,6 +882,13 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         epScenes = scenes || []
         mergeInfo = mergeStatus || null
         activeAiTask = aiTasks?.items?.find((task) => ACTIVE_TASK_STATUSES.has(String(task.status || ''))) || null
+        entityTasks = buildWorkbenchEntityTasks({
+          tasks: recentTasks?.items || [],
+          characters: epChars,
+          scenes: epScenes,
+          storyboards: sbs,
+          episode: ep,
+        })
       }
 
       const mergeUrl = mergeInfo?.merged_url || ep.video_url || null
@@ -534,10 +938,40 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         lockedImageConfigLabel: formatConfigLabel(effectiveImageConfigId, aiConfigs, 'image', '图片', imageSourceLabel),
         lockedVideoConfigLabel: formatConfigLabel(effectiveVideoConfigId, aiConfigs, 'video', '视频', videoSourceLabel),
         lockedAudioConfigLabel: formatConfigLabel(effectiveAudioConfigId, aiConfigs, 'audio', '配音', audioSourceLabel),
+        pendingCharImages: pendingIdsFromTasks(entityTasks, 'character-image:'),
+        pendingSceneImages: pendingIdsFromTasks(entityTasks, 'scene-image:'),
+        pendingShotFrames: pendingShotFramesFromTasks(entityTasks),
+        pendingShotTts: pendingIdsFromTasks(entityTasks, 'shot-tts:'),
+        pendingVideos: pendingIdsFromTasks(entityTasks, 'shot-video:'),
+        pendingComposes: pendingIdsFromTasks(entityTasks, 'shot-compose:'),
+        entityTasks,
         running: !!activeAiTask,
         runningType: activeAiTask ? resolveWorkbenchAiTaskType(activeAiTask) : null,
         runningNote: activeAiTask ? formatRecoveredAiTaskNote(activeAiTask) : '',
       })
+
+      const recoveredEntityTaskIds = activeEntityTaskIds(entityTasks)
+      if (recoveredEntityTaskIds.length) {
+        const pollSerial = ++recoveredEntityPollSerial
+        const recoveredEpisodeId = ep.id
+        void (async () => {
+          for (let attempt = 0; attempt < 60; attempt += 1) {
+            await sleep(4000)
+            if (pollSerial !== recoveredEntityPollSerial) break
+            if (get().episode?.id !== recoveredEpisodeId) break
+
+            const latestTasks = await Promise.all(
+              recoveredEntityTaskIds.map((taskId) => taskAPI.get(taskId).catch(() => null)),
+            )
+            const knownTasks = latestTasks.filter((task): task is TaskRecord => !!task)
+            if (!knownTasks.length) continue
+            if (knownTasks.every((task) => !ACTIVE_TASK_STATUSES.has(String(task.status || '')))) {
+              await get().loadAll(dramaId, episodeNumber)
+              break
+            }
+          }
+        })()
+      }
 
       if (activeAiTask) {
         const taskId = activeAiTask.id
@@ -590,6 +1024,19 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       set({ panel: 'production', prodTab: tabMap[key] || 'chars' })
     } else if (key === 'export-merge') {
       set({ panel: 'export' })
+    }
+  },
+
+  retryEntityTask: async (taskId: number) => {
+    try {
+      await taskAPI.retry(taskId)
+      toast.info('已重新提交生成')
+      const { drama, episode } = get()
+      if (drama && episode) {
+        await get().loadAll(drama.id, episode.episode_number)
+      }
+    } catch (e: unknown) {
+      toast.error('重新提交失败', { description: getAiErrorCopy(e) })
     }
   },
 
@@ -902,24 +1349,30 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
     set(s => { const n = new Set(s.pendingCharImages); n.add(id); return { pendingCharImages: n } })
     try {
       await characterAPI.generateImage(id, episode.id)
-      toast.success('生成中...')
-      // Real polling: up to 60 attempts, 3s interval
-      for (let i = 0; i < 60; i++) {
-        await sleep(3000)
-        const epChars = await episodeAPI.characters(episode.id)
-        const char = epChars?.find(c => c.id === id)
-        if (char?.image_url) {
-          set(s => {
-            const n = new Set(s.pendingCharImages); n.delete(id)
-            return { characters: epChars || [], pendingCharImages: n }
-          })
-          return
-        }
+      toast.info('角色图片生成已提交')
+      const result = await waitForEpisodePoll<Character>({
+        episodeId: episode.id,
+        resources: ['characters'],
+        timeoutMs: 180000,
+        setState: set,
+        getState: get,
+        resolveWhen: (snapshot) => {
+          const char = snapshot.characters?.find((item) => item.id === id)
+          return char?.image_url ? { status: 'completed', value: char } : null
+        },
+      })
+      if (result.status === 'completed') {
+        toast.success('角色图片生成完成')
+        return
+      }
+      if (result.status === 'timeout') {
+        await refreshCurrentEpisodeSilently(get)
       }
     } catch (e: unknown) {
       toast.error('角色图片生成失败', { description: getAiErrorCopy(e) })
+    } finally {
+      set(s => { const n = new Set(s.pendingCharImages); n.delete(id); return { pendingCharImages: n } })
     }
-    set(s => { const n = new Set(s.pendingCharImages); n.delete(id); return { pendingCharImages: n } })
   },
 
   batchCharImages: async () => {
@@ -939,32 +1392,42 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
     })
     try {
       await characterAPI.batchImages(ids, episode.id)
-      for (let i = 0; i < 80; i++) {
-        await sleep(3000)
-        try {
-          const epChars = await episodeAPI.characters(episode.id)
+      const result = await waitForEpisodePoll<void>({
+        episodeId: episode.id,
+        resources: ['characters'],
+        timeoutMs: 240000,
+        setState: set,
+        getState: get,
+        onSnapshot: (snapshot) => {
+          const epChars = snapshot.characters
+          if (!epChars) return
           const doneIds = epChars.filter((char) => !!char.image_url).map((char) => char.id)
           const remain = ids.filter((id) => !doneIds.includes(id))
           const mergedPending = new Set(get().pendingCharImages)
-          Array.from(mergedPending).forEach((pendingId) => {
+          ids.forEach((pendingId) => {
             if (!remain.includes(pendingId)) mergedPending.delete(pendingId)
           })
-
           set({
-            characters: epChars || [],
             pendingCharImages: mergedPending,
             runningNote: remain.length ? `批量生成角色图片中...（剩余 ${remain.length} 个）` : '批量生成角色图片完成',
           })
-
-          if (remain.length === 0) {
-            toast.success('角色图片批量生成完成')
-            return
-          }
-        } catch {
-          // keep polling
-        }
+        },
+        resolveWhen: (snapshot) => {
+          const epChars = snapshot.characters
+          if (!epChars) return null
+          const doneIds = epChars.filter((char) => !!char.image_url).map((char) => char.id)
+          const remain = ids.filter((id) => !doneIds.includes(id))
+          return remain.length === 0 ? { status: 'completed', value: undefined } : null
+        },
+      })
+      if (result.status === 'completed') {
+        toast.success('角色图片批量生成完成')
+        return
       }
-      toast.error('角色图片批量生成仍未完成', { description: '任务可能还在后台排队或处理。请稍后刷新，或在任务中心查看失败原因并重试。' })
+      if (result.status === 'timeout') {
+        toast.error('角色图片批量生成仍未完成', { description: '任务可能还在后台排队或处理。当前卡片会保留状态，可稍后查看失败原因并重试。' })
+        await refreshCurrentEpisodeSilently(get)
+      }
     } catch (e: unknown) {
       toast.error('角色图片批量生成失败', { description: getAiErrorCopy(e) })
     } finally {
@@ -980,23 +1443,30 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
     set(s => { const n = new Set(s.pendingSceneImages); n.add(id); return { pendingSceneImages: n } })
     try {
       await sceneAPI.generateImage(id, episode.id)
-      toast.success('生成中...')
-      for (let i = 0; i < 60; i++) {
-        await sleep(3000)
-        const epScenes = await episodeAPI.scenes(episode.id)
-        const scene = epScenes?.find(s => s.id === id)
-        if (scene?.image_url) {
-          set(s => {
-            const n = new Set(s.pendingSceneImages); n.delete(id)
-            return { scenes: epScenes || [], pendingSceneImages: n }
-          })
-          return
-        }
+      toast.info('场景图片生成已提交')
+      const result = await waitForEpisodePoll<Scene>({
+        episodeId: episode.id,
+        resources: ['scenes'],
+        timeoutMs: 180000,
+        setState: set,
+        getState: get,
+        resolveWhen: (snapshot) => {
+          const scene = snapshot.scenes?.find((item) => item.id === id)
+          return scene?.image_url ? { status: 'completed', value: scene } : null
+        },
+      })
+      if (result.status === 'completed') {
+        toast.success('场景图片生成完成')
+        return
+      }
+      if (result.status === 'timeout') {
+        await refreshCurrentEpisodeSilently(get)
       }
     } catch (e: unknown) {
       toast.error('场景图片生成失败', { description: getAiErrorCopy(e) })
+    } finally {
+      set(s => { const n = new Set(s.pendingSceneImages); n.delete(id); return { pendingSceneImages: n } })
     }
-    set(s => { const n = new Set(s.pendingSceneImages); n.delete(id); return { pendingSceneImages: n } })
   },
 
   batchSceneImages: async () => {
@@ -1016,33 +1486,42 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
     })
     try {
       await Promise.allSettled(ids.map((id) => sceneAPI.generateImage(id, episode.id)))
-
-      for (let i = 0; i < 80; i++) {
-        await sleep(3000)
-        try {
-          const epScenes = await episodeAPI.scenes(episode.id)
+      const result = await waitForEpisodePoll<void>({
+        episodeId: episode.id,
+        resources: ['scenes'],
+        timeoutMs: 240000,
+        setState: set,
+        getState: get,
+        onSnapshot: (snapshot) => {
+          const epScenes = snapshot.scenes
+          if (!epScenes) return
           const doneIds = epScenes.filter((scene) => !!scene.image_url).map((scene) => scene.id)
           const remain = ids.filter((id) => !doneIds.includes(id))
           const mergedPending = new Set(get().pendingSceneImages)
-          Array.from(mergedPending).forEach((pendingId) => {
+          ids.forEach((pendingId) => {
             if (!remain.includes(pendingId)) mergedPending.delete(pendingId)
           })
-
           set({
-            scenes: epScenes || [],
             pendingSceneImages: mergedPending,
             runningNote: remain.length ? `批量生成场景图片中...（剩余 ${remain.length} 个）` : '批量生成场景图片完成',
           })
-
-          if (remain.length === 0) {
-            toast.success('场景图片批量生成完成')
-            return
-          }
-        } catch {
-          // keep polling
-        }
+        },
+        resolveWhen: (snapshot) => {
+          const epScenes = snapshot.scenes
+          if (!epScenes) return null
+          const doneIds = epScenes.filter((scene) => !!scene.image_url).map((scene) => scene.id)
+          const remain = ids.filter((id) => !doneIds.includes(id))
+          return remain.length === 0 ? { status: 'completed', value: undefined } : null
+        },
+      })
+      if (result.status === 'completed') {
+        toast.success('场景图片批量生成完成')
+        return
       }
-      toast.error('场景图片批量生成仍未完成', { description: '任务可能还在后台排队或处理。请稍后刷新，或在任务中心查看失败原因并重试。' })
+      if (result.status === 'timeout') {
+        toast.error('场景图片批量生成仍未完成', { description: '任务可能还在后台排队或处理。当前卡片会保留状态，可稍后查看失败原因并重试。' })
+        await refreshCurrentEpisodeSilently(get)
+      }
     } catch (e: unknown) {
       toast.error('场景图片批量生成失败', { description: getAiErrorCopy(e) })
     } finally {
@@ -1053,20 +1532,30 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
   },
 
   genShotTTS: async (sb: Storyboard) => {
+    set(s => { const n = new Set(s.pendingShotTts); n.add(sb.id); return { pendingShotTts: n } })
     try {
       await storyboardAPI.generateTTS(sb.id)
-      toast.success('配音生成中...')
-      // Poll for tts_audio_url
-      for (let i = 0; i < 40; i++) {
-        await sleep(3000)
-        const sbs = await episodeAPI.storyboards(sb.episode_id)
-        const updated = sbs.find(s => s.id === sb.id)
-        if (updated?.tts_audio_url) {
-          set(s => ({ storyboards: s.storyboards.map(x => x.id === sb.id ? updated : x) }))
-          return
-        }
+      toast.info('配音生成已提交')
+      const result = await waitForEpisodePoll<Storyboard>({
+        episodeId: sb.episode_id,
+        resources: ['storyboards'],
+        timeoutMs: 120000,
+        setState: set,
+        getState: get,
+        resolveWhen: (snapshot) => {
+          const updated = snapshot.storyboards?.find((item) => item.id === sb.id)
+          return updated?.tts_audio_url ? { status: 'completed', value: updated } : null
+        },
+      })
+      if (result.status === 'completed') {
+        toast.success('配音生成完成')
+        return
+      }
+      if (result.status === 'timeout') {
+        await refreshCurrentEpisodeSilently(get)
       }
     } catch (e: unknown) { toast.error('配音生成失败', { description: getAiErrorCopy(e) }) }
+    finally { set(s => { const n = new Set(s.pendingShotTts); n.delete(sb.id); return { pendingShotTts: n } }) }
   },
 
   batchShotTTS: async () => {
@@ -1078,7 +1567,13 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
       return
     }
 
-    set({ running: true, runningType: 'batch_tts', runningNote: `批量生成配音中...（${pending.length}条）` })
+    const pendingIds = pending.map((sb) => sb.id)
+    set({
+      running: true,
+      runningType: 'batch_tts',
+      runningNote: `批量生成配音中...（${pending.length}条）`,
+      pendingShotTts: new Set([...get().pendingShotTts, ...pendingIds]),
+    })
     try {
       const results = await Promise.allSettled(pending.map((sb) => storyboardAPI.generateTTS(sb.id)))
       const failed = results.filter((item) => item.status === 'rejected').length
@@ -1086,28 +1581,52 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         toast.warning(`已提交批量配音，${failed} 条提交失败`)
       }
 
-      for (let i = 0; i < 60; i++) {
-        await sleep(3000)
-        try {
-          const sbs = await episodeAPI.storyboards(episode.id)
-          const remain = sbs.filter((sb) => !!getStoryboardTtsDialogue(sb) && !sb.tts_audio_url).length
-          set({
-            storyboards: sbs || [],
-            runningNote: remain ? `批量生成配音中...（剩余 ${remain} 条）` : '批量配音完成',
+      const result = await waitForEpisodePoll<void>({
+        episodeId: episode.id,
+        resources: ['storyboards'],
+        timeoutMs: 180000,
+        setState: set,
+        getState: get,
+        onSnapshot: (snapshot) => {
+          const sbs = snapshot.storyboards
+          if (!sbs) return
+          const remainIds = pendingIds.filter((id) => {
+            const storyboard = sbs.find((item) => item.id === id)
+            return !!storyboard && !!getStoryboardTtsDialogue(storyboard) && !storyboard.tts_audio_url
           })
-          if (remain === 0) {
-            toast.success('批量配音完成')
-            return
-          }
-        } catch {
-          // keep polling
-        }
+          const nextPending = new Set(get().pendingShotTts)
+          pendingIds.forEach((id) => {
+            if (!remainIds.includes(id)) nextPending.delete(id)
+          })
+          set({
+            pendingShotTts: nextPending,
+            runningNote: remainIds.length ? `批量生成配音中...（剩余 ${remainIds.length} 条）` : '批量配音完成',
+          })
+        },
+        resolveWhen: (snapshot) => {
+          const sbs = snapshot.storyboards
+          if (!sbs) return null
+          const remain = pendingIds.filter((id) => {
+            const storyboard = sbs.find((item) => item.id === id)
+            return !!storyboard && !!getStoryboardTtsDialogue(storyboard) && !storyboard.tts_audio_url
+          }).length
+          return remain === 0 ? { status: 'completed', value: undefined } : null
+        },
+      })
+      if (result.status === 'completed') {
+        toast.success('批量配音完成')
+        return
       }
-      toast.error('批量配音仍未完成', { description: '任务可能还在后台排队或处理。请稍后刷新，或在任务中心查看失败原因并重试。' })
+      if (result.status === 'timeout') {
+        toast.error('批量配音仍未完成', { description: '任务可能还在后台排队或处理。当前卡片会保留状态，可稍后查看失败原因并重试。' })
+        await refreshCurrentEpisodeSilently(get)
+      }
     } catch (e: unknown) {
       toast.error('批量配音失败', { description: getAiErrorCopy(e) })
     } finally {
-      set({ running: false, runningType: null, runningNote: '' })
+      const nextPending = new Set(get().pendingShotTts)
+      pendingIds.forEach((id) => nextPending.delete(id))
+      set({ running: false, runningType: null, runningNote: '', pendingShotTts: nextPending })
     }
   },
 
@@ -1127,24 +1646,31 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         reference_images: referenceImages.length ? referenceImages : undefined,
         config_id: configId ?? undefined,
       })
-      toast.success('生成中...')
+      toast.info('镜头图片生成已提交')
       const field = frameType === 'first_frame' ? 'first_frame_image' : 'last_frame_image'
-      for (let i = 0; i < 60; i++) {
-        await sleep(3000)
-        const sbs = await episodeAPI.storyboards(sb.episode_id)
-        const updated = sbs.find(s => s.id === sb.id)
-        if (updated?.[field]) {
-          set(s => {
-            const n = new Map(s.pendingShotFrames); n.delete(sb.id)
-            return { storyboards: s.storyboards.map(x => x.id === sb.id ? updated : x), pendingShotFrames: n }
-          })
-          return
-        }
+      const result = await waitForEpisodePoll<Storyboard>({
+        episodeId: sb.episode_id,
+        resources: ['storyboards'],
+        timeoutMs: 180000,
+        setState: set,
+        getState: get,
+        resolveWhen: (snapshot) => {
+          const updated = snapshot.storyboards?.find((item) => item.id === sb.id)
+          return updated?.[field] ? { status: 'completed', value: updated } : null
+        },
+      })
+      if (result.status === 'completed') {
+        toast.success('镜头图片生成完成')
+        return
+      }
+      if (result.status === 'timeout') {
+        await refreshCurrentEpisodeSilently(get)
       }
     } catch (e: unknown) {
       toast.error('镜头图片生成失败', { description: getAiErrorCopy(e) })
+    } finally {
+      set(s => { const n = new Map(s.pendingShotFrames); n.delete(sb.id); return { pendingShotFrames: n } })
     }
-    set(s => { const n = new Map(s.pendingShotFrames); n.delete(sb.id); return { pendingShotFrames: n } })
   },
 
   genShotVideo: async (sb: Storyboard) => {
@@ -1160,23 +1686,39 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         prompt: buildNoDialogueShotVideoPrompt(sb),
         duration: sb.duration || 10,
       })
-      toast.success('视频生成中...')
-      for (let i = 0; i < 120; i++) {
-        await sleep(5000)
-        const sbs = await episodeAPI.storyboards(sb.episode_id)
-        const updated = sbs.find(s => s.id === sb.id)
-        if (updated?.video_url) {
-          set(s => {
-            const n = new Set(s.pendingVideos); n.delete(sb.id)
-            return { storyboards: s.storyboards.map(x => x.id === sb.id ? updated : x), pendingVideos: n }
-          })
-          return
-        }
+      toast.info('镜头视频生成已提交')
+      const result = await waitForEpisodePoll<Storyboard>({
+        episodeId: sb.episode_id,
+        resources: ['storyboards'],
+        timeoutMs: 600000,
+        setState: set,
+        getState: get,
+        resolveWhen: (snapshot) => {
+          const updated = snapshot.storyboards?.find((item) => item.id === sb.id)
+          if (updated?.video_url) return { status: 'completed', value: updated }
+          if (updated?.status === 'video_failed' || updated?.status === 'video_canceled') {
+            return { status: 'failed', message: updated.status === 'video_canceled' ? '镜头视频已取消' : '镜头视频生成失败' }
+          }
+          return null
+        },
+      })
+      if (result.status === 'completed') {
+        toast.success('镜头视频生成完成')
+        return
+      }
+      if (result.status === 'failed') {
+        await refreshCurrentEpisodeSilently(get)
+        toast.error(result.message || '镜头视频生成失败')
+        return
+      }
+      if (result.status === 'timeout') {
+        await refreshCurrentEpisodeSilently(get)
       }
     } catch (e: unknown) {
       toast.error('镜头视频生成失败', { description: getAiErrorCopy(e) })
+    } finally {
+      set(s => { const n = new Set(s.pendingVideos); n.delete(sb.id); return { pendingVideos: n } })
     }
-    set(s => { const n = new Set(s.pendingVideos); n.delete(sb.id); return { pendingVideos: n } })
   },
 
   batchShotVideos: async () => {
@@ -1223,29 +1765,59 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
         return { pendingVideos: nextPending }
       })
 
-      for (let i = 0; i < 120; i++) {
-        await sleep(5000)
-        try {
-          const sbs = await episodeAPI.storyboards(episode.id)
-          const remain = submittedIds.filter((id) => !sbs.find((storyboard) => storyboard.id === id)?.video_url)
+      const result = await waitForEpisodePoll<{ failedIds: number[] }>({
+        episodeId: episode.id,
+        resources: ['storyboards'],
+        timeoutMs: 600000,
+        setState: set,
+        getState: get,
+        onSnapshot: (snapshot) => {
+          const sbs = snapshot.storyboards
+          if (!sbs) return
+          const failedIds = submittedIds.filter((id) => {
+            const storyboard = sbs.find((item) => item.id === id)
+            return storyboard?.status === 'video_failed' || storyboard?.status === 'video_canceled'
+          })
+          const remain = submittedIds.filter((id) => {
+            const storyboard = sbs.find((item) => item.id === id)
+            return !storyboard?.video_url && !failedIds.includes(id)
+          })
           const nextPending = new Set(get().pendingVideos)
           submittedIds.forEach((id) => {
             if (!remain.includes(id)) nextPending.delete(id)
           })
           set({
-            storyboards: sbs || [],
             pendingVideos: nextPending,
             runningNote: remain.length ? `批量生成视频中...（剩余 ${remain.length} 个）` : '批量视频生成完成',
           })
-          if (remain.length === 0) {
-            toast.success('批量视频生成完成')
-            return
-          }
-        } catch {
-          // keep polling
+        },
+        resolveWhen: (snapshot) => {
+          const sbs = snapshot.storyboards
+          if (!sbs) return null
+          const failedIds = submittedIds.filter((id) => {
+            const storyboard = sbs.find((item) => item.id === id)
+            return storyboard?.status === 'video_failed' || storyboard?.status === 'video_canceled'
+          })
+          const remain = submittedIds.filter((id) => {
+            const storyboard = sbs.find((item) => item.id === id)
+            return !storyboard?.video_url && !failedIds.includes(id)
+          })
+          return remain.length === 0 ? { status: 'completed', value: { failedIds } } : null
+        },
+      })
+      if (result.status === 'completed') {
+        if (result.value.failedIds.length > 0) {
+          toast.error(`批量视频生成完成，但有 ${result.value.failedIds.length} 个镜头失败`)
+          await refreshCurrentEpisodeSilently(get)
+        } else {
+          toast.success('批量视频生成完成')
         }
+        return
       }
-      toast.error('批量视频生成仍未完成', { description: '视频生成耗时较长，任务可能还在后台运行。请稍后刷新，或在任务中心查看失败原因并重试。' })
+      if (result.status === 'timeout') {
+        toast.error('批量视频生成仍未完成', { description: '视频生成耗时较长，任务可能还在后台运行。当前卡片会保留状态，可稍后查看失败原因并重试。' })
+        await refreshCurrentEpisodeSilently(get)
+      }
     } catch (e: unknown) {
       toast.error('批量视频生成失败', { description: getAiErrorCopy(e) })
     } finally {
@@ -1268,43 +1840,54 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
     set(s => { const n = new Set(s.pendingComposes); n.add(sb.id); return { pendingComposes: n } })
     try {
       await composeAPI.shot(sb.id)
-      toast.success('已加入合成任务')
-      for (let i = 0; i < 120; i++) {
-        await sleep(3000)
-        try {
-          const [status, sbs]: [EpisodeComposeStatusResponse, Storyboard[]] = await Promise.all([
-            composeAPI.status(episode.id),
-            episodeAPI.storyboards(episode.id),
-          ])
-          const updated = sbs.find(s => s.id === sb.id)
-          const item = Array.isArray(status?.items) ? status.items.find(x => x.id === sb.id) : null
-          set(s => ({ storyboards: sbs || s.storyboards }))
-          if (updated?.composed_video_url) {
-            toast.success('合成完成')
-            return
+      toast.info('合成任务已提交')
+      const result = await waitForEpisodePoll<void>({
+        episodeId: episode.id,
+        resources: ['storyboards', 'composeStatus'],
+        timeoutMs: 360000,
+        setState: set,
+        getState: get,
+        resolveWhen: (snapshot) => {
+          const updated = snapshot.storyboards?.find((item) => item.id === sb.id)
+          const statusItem = Array.isArray(snapshot.composeStatus?.items)
+            ? snapshot.composeStatus.items.find((item) => item.id === sb.id)
+            : null
+          if (updated?.composed_video_url) return { status: 'completed', value: undefined }
+          if (statusItem?.status === 'compose_failed' || statusItem?.status === 'compose_canceled') {
+            return {
+              status: 'failed',
+              message: statusItem.error_message || (statusItem.status === 'compose_canceled' ? '合成已取消' : '合成失败'),
+            }
           }
-          if (item?.status === 'compose_failed' || item?.status === 'compose_canceled') {
-            toast.error(item.status === 'compose_canceled' ? '合成已取消' : '合成失败', {
-              description: item.error_message ? getAiErrorCopy(new Error(item.error_message)) : undefined,
-            })
-            return
-          }
-        } catch {
-          // keep polling on transient errors
-        }
-      }
-      const sbs = await episodeAPI.storyboards(episode.id)
-      set({ storyboards: sbs || [] })
-      const updated = sbs.find(s => s.id === sb.id)
-      if (updated?.composed_video_url) {
+          return null
+        },
+      })
+      if (result.status === 'completed') {
         toast.success('合成完成')
-      } else {
-        const stillRunning = updated?.status === 'compose_processing' || updated?.status === 'compose_queued'
-        if (stillRunning) {
-          toast.info('合成任务仍在后台运行，可稍后刷新查看')
-          return
+        return
+      }
+      if (result.status === 'failed') {
+        toast.error(result.message === '合成已取消' ? '合成已取消' : '合成失败', {
+          description: result.message && result.message !== '合成已取消' && result.message !== '合成失败'
+            ? getAiErrorCopy(new Error(result.message))
+            : undefined,
+        })
+        return
+      }
+      if (result.status === 'timeout') {
+        const sbs = await episodeAPI.storyboards(episode.id)
+        set({ storyboards: sbs || [] })
+        const updated = sbs.find(s => s.id === sb.id)
+        if (updated?.composed_video_url) {
+          toast.success('合成完成')
+        } else {
+          const stillRunning = updated?.status === 'compose_processing' || updated?.status === 'compose_queued'
+          if (stillRunning) {
+            toast.info('合成任务仍在后台运行，可稍后刷新查看')
+            return
+          }
+          toast.error('合成状态轮询超时', { description: '任务可能仍在后台运行。当前镜头卡片会保留状态，可稍后查看。' })
         }
-        toast.error('合成状态轮询超时', { description: '任务可能仍在后台运行，请稍后刷新或到任务中心查看。' })
       }
     } catch (e: unknown) {
       toast.error('镜头合成失败', { description: getAiErrorCopy(e) })
@@ -1325,33 +1908,41 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
     set({ running: true, runningType: 'compose_all', runningNote: '批量合成中...' })
     try {
       await composeAPI.all(episode.id)
-      toast.success('批量合成已开始')
+      toast.info('批量合成已提交')
 
-      for (let i = 0; i < 120; i++) {
-        await sleep(3000)
-        try {
-          const status: EpisodeComposeStatusResponse = await composeAPI.status(episode.id)
-          const sbs = await episodeAPI.storyboards(episode.id)
-          set({ storyboards: sbs || [] })
-
-          const items = Array.isArray(status?.items) ? status.items : []
+      const result = await waitForEpisodePoll<{ failed: number }>({
+        episodeId: episode.id,
+        resources: ['storyboards', 'composeStatus'],
+        timeoutMs: 360000,
+        setState: set,
+        getState: get,
+        onSnapshot: (snapshot) => {
+          const items = Array.isArray(snapshot.composeStatus?.items) ? snapshot.composeStatus.items : []
           const processing = items.filter((item) => item.status === 'compose_processing' || item.status === 'compose_queued')
-          if (processing.length === 0) {
-            const failed = items.filter((item) => item.status === 'compose_failed')
-            if (failed.length > 0) {
-              toast.error(`批量合成完成，但有 ${failed.length} 个镜头失败`, { description: '请在任务中心查看失败镜头的具体原因。' })
-            } else {
-              toast.success('批量合成完成')
-            }
-            return
+          if (items.length > 0 && processing.length > 0) {
+            set({ runningNote: `批量合成中...（剩余 ${processing.length} 条）` })
           }
-
-          set({ runningNote: `批量合成中...（剩余 ${processing.length} 条）` })
-        } catch {
-          // keep polling on transient errors
+        },
+        resolveWhen: (snapshot) => {
+          const items = Array.isArray(snapshot.composeStatus?.items) ? snapshot.composeStatus.items : []
+          if (!items.length) return null
+          const processing = items.filter((item) => item.status === 'compose_processing' || item.status === 'compose_queued')
+          if (processing.length > 0) return null
+          const failed = items.filter((item) => item.status === 'compose_failed')
+          return { status: 'completed', value: { failed: failed.length } }
+        },
+      })
+      if (result.status === 'completed') {
+        if (result.value.failed > 0) {
+          toast.error(`批量合成完成，但有 ${result.value.failed} 个镜头失败`, { description: '请在对应镜头卡片查看失败原因并重试。' })
+        } else {
+          toast.success('批量合成完成')
         }
+        return
       }
-      toast.error('批量合成状态轮询超时', { description: '任务可能仍在后台运行，请稍后刷新或到任务中心查看。' })
+      if (result.status === 'timeout') {
+        toast.error('批量合成状态轮询超时', { description: '任务可能仍在后台运行。当前镜头卡片会保留状态，可稍后查看。' })
+      }
     } catch (e: unknown) {
       toast.error('批量合成失败', { description: getAiErrorCopy(e) })
     } finally {
@@ -1369,8 +1960,8 @@ export const useWorkbench = create<WorkbenchState>((set, get) => ({
     if (!episode) return
     try {
       await mergeAPI.merge(episode.id)
-      toast.success('合并中...')
-      set({ mergeUrl: null })
+      toast.info('成片合并已提交')
+      set({ mergeStatus: { status: 'pending' } })
       get().pollMergeStatus()
     } catch (e: unknown) { toast.error('合并成片失败', { description: getAiErrorCopy(e) }) }
   },

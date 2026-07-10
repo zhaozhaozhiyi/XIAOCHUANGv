@@ -16,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { audioAPI } from '@/lib/api'
 
 const COMPOSER_CHIP_BTN =
-  'inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-bg-0 px-2.5 py-1.5 text-text-1 transition-colors hover:bg-bg-hover'
+  'inline-flex items-center gap-1.5 rounded-[8px] border border-border/45 bg-bg-0 px-2.5 py-1.5 text-text-1 transition-colors hover:bg-bg-hover'
 
 const IMAGE_ASPECT_RATIO_OPTIONS = [
   { label: '智能', value: 'auto' },
@@ -662,7 +662,7 @@ export function InputComposer({
   return (
     <>
       <section className="mb-6 flex flex-col items-center gap-4">
-        <div className="w-full max-w-[1160px] rounded-[20px] border border-border bg-bg-0 p-3 shadow-[0_6px_18px_rgba(40,28,18,0.045),0_1px_3px_rgba(40,28,18,0.03)] sm:p-3.5">
+        <div className="w-full max-w-[1160px] rounded-[20px] border border-border/45 bg-bg-0 p-3 shadow-[0_4px_14px_rgba(40,28,18,0.028),0_1px_2px_rgba(40,28,18,0.018)] sm:p-3.5">
           <div className="mb-3 min-h-[112px] rounded-[14px] bg-bg-input px-3 py-2.5 sm:min-h-[128px] sm:px-3.5 sm:py-3">
             <div className="relative flex items-start">
               <InputComposerAssetPanel

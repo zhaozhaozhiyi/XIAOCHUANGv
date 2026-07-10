@@ -3,15 +3,16 @@
 import { useMemo } from 'react'
 import {
   Loader2, Users, MapPin, Mic2, ImageIcon, Video,
-  Clapperboard, Plus, Layers, Settings2,
+  Clapperboard, Plus, Layers, Settings2, AlertTriangle, RefreshCw,
 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import { hasCompleteShotFrames, isVisualCharacter, useWorkbench } from '@/hooks/use-workbench'
+import { hasCompleteShotFrames, isActiveWorkbenchTask, isVisualCharacter, useWorkbench } from '@/hooks/use-workbench'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
+import { getAiErrorCopy } from '@/lib/ai-error-copy'
 import { getStoryboardTtsDialogue } from '@/lib/dialogue'
 import { staticUrl } from '@/lib/utils'
-import type { Storyboard } from '@/types/api'
+import type { Storyboard, TaskRecord } from '@/types/api'
 
 interface ProductionPanelProps {
   prodTab: string
@@ -158,6 +159,44 @@ function ConfigBadge({ label, value }: { label: string; value: string }) {
   )
 }
 
+function isFailedWorkbenchTask(task: TaskRecord | null | undefined) {
+  return !!task && ['failed', 'canceled'].includes(String(task.status || ''))
+}
+
+function taskFailureCopy(task: TaskRecord) {
+  if (task.status === 'canceled') return '任务已取消，可以重新提交生成。'
+  return getAiErrorCopy(new Error(task.error_message || '生成失败'))
+}
+
+function EntityTaskNotice({ task, label, onRetry }: { task: TaskRecord | null | undefined; label: string; onRetry: (taskId: number) => void }) {
+  if (!task) return null
+  if (isActiveWorkbenchTask(task)) {
+    return (
+      <div className="entity-task-notice is-running">
+        <Loader2 size={12} className="animate-spin" />
+        <span>{label}正在{task.status === 'queued' ? '排队' : '生成'}，刷新后会自动恢复状态。</span>
+      </div>
+    )
+  }
+  if (!isFailedWorkbenchTask(task)) return null
+  return (
+    <div className="entity-task-notice is-error">
+      <AlertTriangle size={13} />
+      <span className="entity-task-message">{taskFailureCopy(task)}</span>
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        className="panel-btn entity-task-retry"
+        onClick={() => onRetry(task.id)}
+      >
+        <RefreshCw size={10} />
+        重试
+      </Button>
+    </div>
+  )
+}
+
 // ——————————————————————————————————————————————
 // Chars Tab
 // ——————————————————————————————————————————————
@@ -200,11 +239,13 @@ function CharsTab() {
         </div>
       ) : (
         <div className="asset-grid">
-          {visualCharacters.map(c => (
-            <div key={c.id} className="card asset-card">
-              {(() => {
-                const imageSrc = staticUrl(c.image_url)
-                return (
+          {visualCharacters.map(c => {
+            const task = wb.entityTasks[`character-image:${c.id}`]
+            const isPending = wb.pendingCharImages.has(c.id) || isActiveWorkbenchTask(task)
+            const isFailed = isFailedWorkbenchTask(task)
+            const imageSrc = staticUrl(c.image_url)
+            return (
+              <div key={c.id} className="card asset-card">
               <div className="asset-cover relative">
                 {c.image_url ? (
                   <img
@@ -221,18 +262,18 @@ function CharsTab() {
                 <span
                   className={cn(
                     'asset-cover-badge',
-                    c.image_url
+                    isFailed
+                      ? 'is-error'
+                      : c.image_url
                       ? 'is-ready'
-                      : wb.pendingCharImages.has(c.id)
+                      : isPending
                         ? 'is-pending'
                         : '',
                   )}
                 >
-                  {c.image_url ? '已生成' : wb.pendingCharImages.has(c.id) ? '生成中' : '待生成'}
+                  {isFailed ? '生成失败' : c.image_url ? '已生成' : isPending ? '生成中' : '待生成'}
                 </span>
               </div>
-                )
-              })()}
               <div className="asset-body">
                 <div className="asset-name">{c.name}</div>
                 <div className="asset-meta">{c.role || '角色'}</div>
@@ -242,24 +283,27 @@ function CharsTab() {
                   className={cn(
                     'dot',
                     c.image_url && 'ok',
-                    wb.pendingCharImages.has(c.id) && 'pending',
+                    isPending && 'pending',
+                    isFailed && 'error',
                   )}
                 />
                 <span className="asset-foot-status">
-                  {c.image_url ? '已生成' : wb.pendingCharImages.has(c.id) ? '生成中' : '待生成'}
+                  {isFailed ? '生成失败' : c.image_url ? '已生成' : isPending ? '生成中' : '待生成'}
                 </span>
                 <Button
                   size="sm"
                   variant="ghost"
                   className="panel-btn ml-auto"
-                  disabled={wb.pendingCharImages.has(c.id)}
-                  onClick={() => wb.genCharImg(c.id)}
+                  disabled={isPending}
+                  onClick={() => isFailed && task ? wb.retryEntityTask(task.id) : wb.genCharImg(c.id)}
                 >
-                  {wb.pendingCharImages.has(c.id) ? '生成中' : '生成'}
+                  {isPending ? '生成中' : isFailed ? '重试' : c.image_url ? '重新生成' : '生成'}
                 </Button>
               </div>
+              <EntityTaskNotice task={task} label="角色图" onRetry={wb.retryEntityTask} />
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
@@ -300,11 +344,13 @@ function ScenesTab() {
         </div>
       ) : (
         <div className="asset-grid">
-          {wb.scenes.map(s => (
-            <div key={s.id} className="card asset-card">
-              {(() => {
-                const imageSrc = staticUrl(s.image_url)
-                return (
+          {wb.scenes.map(s => {
+            const task = wb.entityTasks[`scene-image:${s.id}`]
+            const isPending = wb.pendingSceneImages.has(s.id) || isActiveWorkbenchTask(task)
+            const isFailed = isFailedWorkbenchTask(task)
+            const imageSrc = staticUrl(s.image_url)
+            return (
+              <div key={s.id} className="card asset-card">
               <div className="asset-cover wide relative">
                 {s.image_url ? (
                   <img
@@ -321,18 +367,18 @@ function ScenesTab() {
                 <span
                   className={cn(
                     'asset-cover-badge',
-                    s.image_url
+                    isFailed
+                      ? 'is-error'
+                      : s.image_url
                       ? 'is-ready'
-                      : wb.pendingSceneImages.has(s.id)
+                      : isPending
                         ? 'is-pending'
                         : '',
                   )}
                 >
-                  {s.image_url ? '已生成' : wb.pendingSceneImages.has(s.id) ? '生成中' : '待生成'}
+                  {isFailed ? '生成失败' : s.image_url ? '已生成' : isPending ? '生成中' : '待生成'}
                 </span>
               </div>
-                )
-              })()}
               <div className="asset-body">
                 <div className="asset-name">{s.location}</div>
                 <div className="asset-meta">{s.time || '—'}</div>
@@ -340,16 +386,18 @@ function ScenesTab() {
                   size="sm"
                   variant="ghost"
                   className="w-full mt-2 panel-btn"
-                  disabled={wb.pendingSceneImages.has(s.id)}
-                  onClick={() => wb.genSceneImg(s.id)}
+                  disabled={isPending}
+                  onClick={() => isFailed && task ? wb.retryEntityTask(task.id) : wb.genSceneImg(s.id)}
                 >
-                  {wb.pendingSceneImages.has(s.id) ? (
+                  {isPending ? (
                     <><Loader2 size={10} className="animate-spin" /> 生成中...</>
-                  ) : '生成场景图'}
+                  ) : isFailed ? '重试场景图' : s.image_url ? '重新生成场景图' : '生成场景图'}
                 </Button>
               </div>
+              <EntityTaskNotice task={task} label="场景图" onRetry={wb.retryEntityTask} />
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
@@ -393,6 +441,9 @@ function DubbingTab() {
         <div className="dub-grid">
           {ttsEligible.map(sb => {
             const dialogue = getStoryboardTtsDialogue(sb)
+            const task = wb.entityTasks[`shot-tts:${sb.id}`]
+            const isPending = wb.pendingShotTts.has(sb.id) || isActiveWorkbenchTask(task)
+            const isFailed = isFailedWorkbenchTask(task)
             return (
               <div key={sb.id} className="card dub-card">
                 <div className="dub-head">
@@ -409,10 +460,10 @@ function DubbingTab() {
                     <span
                       className={cn(
                         'asset-cover-badge',
-                        sb.tts_audio_url ? 'is-ready' : '',
+                        isFailed ? 'is-error' : sb.tts_audio_url ? 'is-ready' : isPending ? 'is-pending' : '',
                       )}
                     >
-                      {sb.tts_audio_url ? '已生成' : '待生成'}
+                      {isFailed ? '生成失败' : sb.tts_audio_url ? '已生成' : isPending ? '生成中' : '待生成'}
                     </span>
                   </div>
                 </div>
@@ -424,17 +475,22 @@ function DubbingTab() {
                       className="dub-audio"
                       preload="none"
                     />
-                  ) : (
+                  ) : null}
+                  {!sb.tts_audio_url || isFailed ? (
                     <Button
                       size="sm"
                       variant="ghost"
                       className="panel-btn"
-                      onClick={() => wb.genShotTTS(sb)}
+                      disabled={isPending}
+                      onClick={() => isFailed && task ? wb.retryEntityTask(task.id) : wb.genShotTTS(sb)}
                     >
-                      生成配音
+                      {isPending ? (
+                        <><Loader2 size={10} className="animate-spin" /> 生成中...</>
+                      ) : isFailed ? '重试配音' : '生成配音'}
                     </Button>
-                  )}
+                  ) : null}
                 </div>
+                <EntityTaskNotice task={task} label="配音" onRetry={wb.retryEntityTask} />
               </div>
             )
           })}
@@ -461,8 +517,15 @@ function ShotsTab({ onOpenGrid }: { onOpenGrid?: (sb: Storyboard) => void }) {
       <div className="prod-grid">
         {wb.storyboards.map((sb, i) => {
           const pendingFrame = wb.pendingShotFrames.get(sb.id)
+          const firstFrameTask = wb.entityTasks[`shot-frame:${sb.id}:first_frame`]
+          const lastFrameTask = wb.entityTasks[`shot-frame:${sb.id}:last_frame`]
+          const firstFramePending = pendingFrame === 'first_frame' || isActiveWorkbenchTask(firstFrameTask)
+          const lastFramePending = pendingFrame === 'last_frame' || isActiveWorkbenchTask(lastFrameTask)
+          const firstFrameFailed = isFailedWorkbenchTask(firstFrameTask)
+          const lastFrameFailed = isFailedWorkbenchTask(lastFrameTask)
           const firstFrame = sb.first_frame_image || sb.composed_image
           const lastFrame = sb.last_frame_image || sb.composed_image
+          const noFrameTaskState = !firstFramePending && !lastFramePending && !firstFrameFailed && !lastFrameFailed
           const firstFrameSrc = staticUrl(firstFrame)
           const lastFrameSrc = staticUrl(lastFrame)
           return (
@@ -479,12 +542,14 @@ function ShotsTab({ onOpenGrid }: { onOpenGrid?: (sb: Storyboard) => void }) {
                     />
                   ) : (
                     <button
-                      className="shot-generate-btn"
-                      onClick={() => wb.genShotFrame(sb, 'first_frame')}
-                      disabled={!!pendingFrame}
+                      className={cn('shot-generate-btn', firstFrameFailed && 'is-error')}
+                      onClick={() => firstFrameFailed && firstFrameTask ? wb.retryEntityTask(firstFrameTask.id) : wb.genShotFrame(sb, 'first_frame')}
+                      disabled={!!pendingFrame || firstFramePending}
                     >
-                      {pendingFrame === 'first_frame' ? (
+                      {firstFramePending ? (
                         <Loader2 size={14} className="animate-spin text-accent" />
+                      ) : firstFrameFailed ? (
+                        <RefreshCw size={14} className="text-error" />
                       ) : (
                         <Plus size={14} className="text-text-3" />
                       )}
@@ -505,12 +570,14 @@ function ShotsTab({ onOpenGrid }: { onOpenGrid?: (sb: Storyboard) => void }) {
                     />
                   ) : (
                     <button
-                      className="shot-generate-btn"
-                      onClick={() => wb.genShotFrame(sb, 'last_frame')}
-                      disabled={!!pendingFrame}
+                      className={cn('shot-generate-btn', lastFrameFailed && 'is-error')}
+                      onClick={() => lastFrameFailed && lastFrameTask ? wb.retryEntityTask(lastFrameTask.id) : wb.genShotFrame(sb, 'last_frame')}
+                      disabled={!!pendingFrame || lastFramePending}
                     >
-                      {pendingFrame === 'last_frame' ? (
+                      {lastFramePending ? (
                         <Loader2 size={14} className="animate-spin text-accent" />
+                      ) : lastFrameFailed ? (
+                        <RefreshCw size={14} className="text-error" />
                       ) : (
                         <Plus size={14} className="text-text-3" />
                       )}
@@ -544,13 +611,27 @@ function ShotsTab({ onOpenGrid }: { onOpenGrid?: (sb: Storyboard) => void }) {
                 {(sb.composed_image || sb.first_frame_image) && (
                   <span className="asset-cover-badge is-ready">首帧 ✓</span>
                 )}
+                {!sb.composed_image && !sb.first_frame_image && firstFramePending && (
+                  <span className="asset-cover-badge is-pending">首帧生成中</span>
+                )}
+                {!sb.composed_image && !sb.first_frame_image && firstFrameFailed && (
+                  <span className="asset-cover-badge is-error">首帧失败</span>
+                )}
                 {(sb.composed_image || sb.last_frame_image) && (
                   <span className="asset-cover-badge is-ready">尾帧 ✓</span>
                 )}
-                {!sb.composed_image && !sb.first_frame_image && !sb.last_frame_image && (
+                {!sb.composed_image && !sb.last_frame_image && lastFramePending && (
+                  <span className="asset-cover-badge is-pending">尾帧生成中</span>
+                )}
+                {!sb.composed_image && !sb.last_frame_image && lastFrameFailed && (
+                  <span className="asset-cover-badge is-error">尾帧失败</span>
+                )}
+                {!sb.composed_image && !sb.first_frame_image && !sb.last_frame_image && noFrameTaskState && (
                   <span className="asset-cover-badge">待生成</span>
                 )}
               </div>
+              <EntityTaskNotice task={firstFrameTask} label="首帧" onRetry={wb.retryEntityTask} />
+              <EntityTaskNotice task={lastFrameTask} label="尾帧" onRetry={wb.retryEntityTask} />
             </div>
           )
         })}
@@ -588,11 +669,12 @@ function VideosTab() {
 
       <div className="prod-grid">
         {wb.storyboards.map((sb, i) => {
+          const task = wb.entityTasks[`shot-video:${sb.id}`]
           const videoSrc = staticUrl(sb.video_url)
           const posterSrc = staticUrl(sb.first_frame_image || sb.composed_image || sb.last_frame_image)
           const isServerPending = sb.status === 'video_queued' || sb.status === 'video_processing'
-          const isFailed = sb.status === 'video_failed'
-          const isPending = wb.pendingVideos.has(sb.id) || isServerPending
+          const isFailed = isFailedWorkbenchTask(task) || sb.status === 'video_failed'
+          const isPending = wb.pendingVideos.has(sb.id) || isServerPending || isActiveWorkbenchTask(task)
           return (
             <div key={sb.id} className="card prod-card">
               <div className="prod-cover flex items-center justify-center">
@@ -612,14 +694,16 @@ function VideosTab() {
                   className={cn(
                     'absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full',
                     'asset-cover-badge',
-                    videoSrc
-                      ? 'is-ready'
-                      : isPending
-                        ? 'is-pending'
-                        : '',
+                    isFailed
+                      ? 'is-error'
+                      : videoSrc
+                        ? 'is-ready'
+                        : isPending
+                          ? 'is-pending'
+                          : '',
                   )}
                 >
-                  {videoSrc ? '已生成' : isPending ? '生成中' : isFailed ? '生成失败' : '待生成'}
+                  {isFailed ? '生成失败' : videoSrc ? '已生成' : isPending ? '生成中' : '待生成'}
                 </span>
               </div>
               <div className="prod-actions">
@@ -629,13 +713,14 @@ function VideosTab() {
                   variant="ghost"
                   className="panel-btn"
                   disabled={isPending}
-                  onClick={() => wb.genShotVideo(sb)}
+                  onClick={() => isFailed && task ? wb.retryEntityTask(task.id) : wb.genShotVideo(sb)}
                 >
                   {isPending ? (
                     <Loader2 size={10} className="animate-spin" />
-                  ) : videoSrc ? '重新生成' : '生成'}
+                  ) : isFailed ? '重试' : videoSrc ? '重新生成' : '生成'}
                 </Button>
               </div>
+              <EntityTaskNotice task={task} label="镜头视频" onRetry={wb.retryEntityTask} />
             </div>
           )
         })}
@@ -678,11 +763,13 @@ function ComposeTab() {
 
       <div className="prod-grid">
         {wb.storyboards.map((sb, i) => {
+          const task = wb.entityTasks[`shot-compose:${sb.id}`]
           const hasComposedVideo = !!sb.composed_video_url
           const isLocalPending = wb.pendingComposes.has(sb.id)
           const isServerPending = !hasComposedVideo
             && (sb.status === 'compose_queued' || sb.status === 'compose_processing')
-          const isPending = isLocalPending || isServerPending
+          const isPending = isLocalPending || isServerPending || isActiveWorkbenchTask(task)
+          const isFailed = isFailedWorkbenchTask(task) || sb.status === 'compose_failed'
           return (
             <div key={sb.id} className="card prod-card">
               <div className="prod-info">
@@ -693,10 +780,10 @@ function ComposeTab() {
                 <span
                   className={cn(
                     'asset-cover-badge',
-                    hasComposedVideo ? 'is-ready' : isPending ? 'is-pending' : '',
+                    isFailed ? 'is-error' : hasComposedVideo ? 'is-ready' : isPending ? 'is-pending' : '',
                   )}
                 >
-                  {hasComposedVideo ? '已合成' : isPending ? '合成中' : '待合成'}
+                  {isFailed ? '合成失败' : hasComposedVideo ? '已合成' : isPending ? '合成中' : '待合成'}
                 </span>
               </div>
               <div className="prod-desc line-clamp-2">{sb.description || '—'}</div>
@@ -715,11 +802,15 @@ function ComposeTab() {
                     size="xs"
                     className="panel-btn prod-card-action"
                     disabled={isPending}
-                    onClick={() => wb.composeShot(sb)}
+                    onClick={() => isFailed && task ? wb.retryEntityTask(task.id) : wb.composeShot(sb)}
                   >
                     {isPending ? (
                       <>
                         <Loader2 size={10} className="animate-spin" /> 合成中
+                      </>
+                    ) : isFailed ? (
+                      <>
+                        <RefreshCw size={10} /> 重试合成
                       </>
                     ) : (
                       <>
@@ -733,11 +824,15 @@ function ComposeTab() {
                   size="xs"
                   className="panel-btn panel-btn-primary prod-card-action"
                   disabled={isPending || !sb.video_url}
-                  onClick={() => wb.composeShot(sb)}
+                  onClick={() => isFailed && task ? wb.retryEntityTask(task.id) : wb.composeShot(sb)}
                 >
                   {isPending ? (
                     <>
                       <Loader2 size={10} className="animate-spin" /> 合成中
+                    </>
+                  ) : isFailed ? (
+                    <>
+                      <RefreshCw size={10} /> 重试合成
                     </>
                   ) : (
                     <>
@@ -746,6 +841,7 @@ function ComposeTab() {
                   )}
                 </Button>
               )}
+              <EntityTaskNotice task={task} label="镜头合成" onRetry={wb.retryEntityTask} />
             </div>
           )
         })}

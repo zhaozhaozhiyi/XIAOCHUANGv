@@ -1,14 +1,18 @@
 ﻿import type {
   AIServiceConfig,
   AIVoice,
+  AdaptationBrief,
   AssetRecord,
   Character,
   Drama,
+  DramaAiFirstStage,
   Episode,
   EpisodeComposeStatusResponse,
   EpisodeMergeStatusResponse,
   ImageGeneration,
   Scene,
+  SourceAnalysis,
+  SourceHealth,
   Storyboard,
   TaskListPayload,
   TaskRecord,
@@ -23,11 +27,13 @@ import { buildLoginPath } from '@/lib/login-redirect'
 const BASE = '/api/v1'
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 const GET_RESPONSE_CACHE_TTL_MS = 30_000
+const DEBUG_API_LOGS = process.env.NODE_ENV !== 'production'
 const inflightGetRequests = new Map<string, Promise<unknown>>()
 const getResponseCache = new Map<string, { expiresAt: number; data: unknown }>()
 
 type ApiRequestOptions = {
   redirectOnUnauthorized?: boolean
+  bypassCache?: boolean
 }
 
 type DramaListParams = {
@@ -38,8 +44,78 @@ type DramaListParams = {
   include_details?: boolean
 }
 
+type DramaAiFirstTaskSummary = {
+  id: number
+  type: string
+  status: string
+  title: string | null
+  progress: number | null
+  result_summary: Record<string, unknown> | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type DramaAiFirstPayload = {
+  drama_id: number
+  ai_first_stage: DramaAiFirstStage | null
+  source_health: SourceHealth | null
+  source_analysis: SourceAnalysis | null
+  adaptation_briefs: AdaptationBrief[]
+  selected_brief_id: string
+  source: {
+    id: number
+    source_type: 'paste' | 'upload' | 'writing_project' | string
+    title: string | null
+    content_hash: string
+    content_preview: string
+    content_truncated: boolean
+    word_count: number
+    estimated_tokens: number
+    chapter_count: number
+    status: string
+    created_at: string
+    updated_at: string
+  } | null
+  source_analysis_task: DramaAiFirstTaskSummary | null
+  brief_task: DramaAiFirstTaskSummary | null
+  blueprint_task: DramaAiFirstTaskSummary | null
+  pilot_script_task: DramaAiFirstTaskSummary | null
+  source_chunks: Array<{
+    id: number
+    chunk_no: number
+    title: string | null
+    content_start: number
+    content_end: number
+    content_hash: string
+    estimated_tokens: number
+    status: string
+    ai_run_id: string | null
+    remote_run_id: string | null
+    failure_reason: string | null
+  }>
+  episodes: Array<{
+    id: number
+    episode_number: number
+    title: string | null
+    status: string | null
+    has_blueprint: boolean
+    has_script: boolean
+    script_ai_run_id: string | null
+    script_remote_run_id: string | null
+    generation_mode: string | null
+    failure_reason: string | null
+  }>
+}
+
 function isApiRequestOptions(value: DramaListParams | ApiRequestOptions | undefined): value is ApiRequestOptions {
-  return typeof value === 'object' && value !== null && 'redirectOnUnauthorized' in value
+  return (
+    typeof value === 'object'
+    && value !== null
+    && ('redirectOnUnauthorized' in value || 'bypassCache' in value)
+  )
 }
 
 function buildQueryString(params: Record<string, string | number | boolean | null | undefined>) {
@@ -53,6 +129,9 @@ function buildQueryString(params: Record<string, string | number | boolean | nul
 
 function parseApiJsonBody(text: string, path: string, status: number): unknown {
   const trimmed = text.trimStart()
+  if (!trimmed) {
+    throw new Error(`接口 ${path} 返回了空响应（HTTP ${status}），请检查服务端日志或确认后端服务已启动`)
+  }
   const looksHtml =
     trimmed.startsWith('<') || trimmed.startsWith('<!DOCTYPE') || trimmed.toLowerCase().includes('<html')
   if (looksHtml) {
@@ -94,7 +173,7 @@ function looksLikeHtmlDocument(text: string) {
 }
 
 async function req<T = unknown>(method: string, path: string, body?: unknown, options?: ApiRequestOptions): Promise<T> {
-  const dedupeKey = method === 'GET'
+  const dedupeKey = method === 'GET' && options?.bypassCache !== true
     ? `${method}:${path}:redirect=${options?.redirectOnUnauthorized !== false}`
     : null
   if (dedupeKey) {
@@ -123,7 +202,9 @@ async function req<T = unknown>(method: string, path: string, body?: unknown, op
     }
 
     const start = performance.now()
-    console.log(`%c[API] %c${method} %c${path}`, 'color:#888', 'color:#4fc3f7;font-weight:bold', 'color:#ccc', body || '')
+    if (DEBUG_API_LOGS) {
+      console.log(`%c[API] %c${method} %c${path}`, 'color:#888', 'color:#4fc3f7;font-weight:bold', 'color:#ccc', body || '')
+    }
 
     try {
       const resp = await fetch(`${BASE}${path}`, opts)
@@ -143,11 +224,15 @@ async function req<T = unknown>(method: string, path: string, body?: unknown, op
       }
 
       if (!resp.ok || (json.code && json.code >= 400)) {
-        console.log(`%c[API] %c${method} ${path} %c${resp.status} %c${ms}ms`, 'color:#888', 'color:#ef5350', 'color:#ef5350;font-weight:bold', 'color:#888', json.message || '')
+        if (DEBUG_API_LOGS) {
+          console.log(`%c[API] %c${method} ${path} %c${resp.status} %c${ms}ms`, 'color:#888', 'color:#ef5350', 'color:#ef5350;font-weight:bold', 'color:#888', json.message || '')
+        }
         throw new Error(json.message || `${resp.status}`)
       }
 
-      console.log(`%c[API] %c${method} ${path} %c${resp.status} %c${ms}ms`, 'color:#888', 'color:#66bb6a', 'color:#66bb6a;font-weight:bold', 'color:#888')
+      if (DEBUG_API_LOGS) {
+        console.log(`%c[API] %c${method} ${path} %c${resp.status} %c${ms}ms`, 'color:#888', 'color:#66bb6a', 'color:#66bb6a;font-weight:bold', 'color:#888')
+      }
       const data = (json.data ?? json) as T
       if (dedupeKey) {
         getResponseCache.set(dedupeKey, {
@@ -160,7 +245,7 @@ async function req<T = unknown>(method: string, path: string, body?: unknown, op
       return data
     } catch (err: unknown) {
       const error = formatRequestError(err, path)
-      if (!error.message?.match(/^\d{3}$/)) {
+      if (DEBUG_API_LOGS && !error.message?.match(/^\d{3}$/)) {
         const ms = Math.round(performance.now() - start)
         console.log(`%c[API] %c${method} ${path} %cERROR %c${ms}ms`, 'color:#888', 'color:#ef5350', 'color:#ef5350;font-weight:bold', 'color:#888', error.message)
       }
@@ -204,6 +289,21 @@ export const dramaAPI = {
   stats: (options?: ApiRequestOptions) =>
     api.get<{ total: number; by_status: Array<{ status: string; count: number }> }>('/dramas/stats', options),
   get: (id: number, options?: ApiRequestOptions) => api.get<Drama>(`/dramas/${id}`, options),
+  getAiFirst: (id: number, options?: ApiRequestOptions) => api.get<DramaAiFirstPayload>(`/dramas/${id}/ai-first`, options),
+  saveSource: (id: number, data: { content: string; title?: string | null; source_type?: 'paste' | 'upload' | 'writing_project' }) =>
+    api.post<DramaAiFirstPayload>(`/dramas/${id}/source`, data),
+  checkSourceHealth: (id: number, data?: { content?: string | null }) =>
+    api.post<{ source_health: SourceHealth }>(`/dramas/${id}/source/health-check`, data || {}),
+  analyzeSource: (id: number) =>
+    api.post<DramaAiFirstPayload>(`/dramas/${id}/source/analyze`),
+  generateAdaptationBriefs: (id: number, data?: { count?: number; target_episode_count?: number | null; episode_duration?: string | null; style_direction?: string | null }) =>
+    api.post<DramaAiFirstPayload>(`/dramas/${id}/adaptation-briefs`, data || {}),
+  selectAdaptationBrief: (id: number, briefId: string) =>
+    api.post<DramaAiFirstPayload>(`/dramas/${id}/adaptation-briefs/${encodeURIComponent(briefId)}/select`),
+  generateEpisodeBlueprints: (id: number, data?: { replace_without_script?: boolean }) =>
+    api.post<DramaAiFirstPayload>(`/dramas/${id}/episode-blueprints`, data || {}),
+  generatePilotScripts: (id: number, data?: { limit?: number }) =>
+    api.post<DramaAiFirstPayload>(`/dramas/${id}/pilot-scripts`, data || {}),
   create: (data: Record<string, unknown>) => api.post('/dramas', data),
   splitEpisodes: (id: number, data: Record<string, unknown>) =>
     api.post<{ count: number; episodes: unknown[] }>(`/dramas/${id}/split-episodes`, data),
@@ -215,6 +315,11 @@ export const episodeAPI = {
   get: (id: number) => api.get<Episode>(`/episodes/${id}`),
   create: (data: Record<string, unknown>) => api.post('/episodes', data),
   update: (id: number, data: Record<string, unknown>) => api.put(`/episodes/${id}`, data),
+  patchBlueprint: (id: number, data: { blueprint_payload: unknown; source_trace?: unknown; generation_mode?: string | null }) =>
+    api.patch<Episode>(`/episodes/${id}/blueprint`, data),
+  regenerateBlueprint: (id: number) => api.post<Episode>(`/episodes/${id}/regenerate-blueprint`),
+  generateScript: (id: number) => api.post<Episode>(`/episodes/${id}/generate-script`),
+  rewriteScript: (id: number) => api.post<Episode>(`/episodes/${id}/rewrite-script`),
   characters: (id: number) => api.get<Character[]>(`/episodes/${id}/characters`),
   scenes: (id: number) => api.get<Scene[]>(`/episodes/${id}/scenes`),
   storyboards: (id: number) => api.get<Storyboard[]>(`/episodes/${id}/storyboards`),

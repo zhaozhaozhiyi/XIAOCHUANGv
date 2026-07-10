@@ -121,7 +121,7 @@ export default function CanvasListPage() {
           type="button"
           onClick={handleCreate}
           disabled={creating}
-          className="shrink-0 gap-1.5 rounded-[var(--radius-md)] px-4"
+          className="h-10 shrink-0 gap-2 px-4"
         >
           <Plus size={16} />
           新建画布
@@ -133,12 +133,13 @@ export default function CanvasListPage() {
       ) : canvases.length === 0 ? (
         <EmptyState
           icon={LayoutGrid}
+          className="min-h-[320px] justify-center border-0 bg-bg-0/70"
           description="还没有画布。新建一个空白画布开始你的第一次创作。"
           actionLabel="新建空白画布"
           onAction={handleCreate}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {canvases.map((canvas) => (
             <CanvasCard
               key={canvas.id}
@@ -155,11 +156,11 @@ export default function CanvasListPage() {
 
 function SkeletonGrid() {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {Array.from({ length: 4 }).map((_, i) => (
         <div
           key={i}
-          className="aspect-[5/3] animate-pulse rounded-[var(--radius-md)] border border-border bg-bg-2"
+          className="aspect-[5/3] animate-shimmer bg-gradient-to-r from-bg-0/80 via-bg-hover to-bg-0/80 bg-[length:200%_100%]"
         />
       ))}
     </div>

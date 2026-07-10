@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/main.js",
+    "start": "node dist/src/main.js",
+    "start:worker": "node dist/src/worker-main.js",
     "openapi:export": "npm run build && node dist/src/openapi-export.js",
     "media:audit": "node --import tsx src/audit-media-storage.ts",
     "media:audit:strict": "node --import tsx src/audit-media-storage.ts --fail-on-legacy",

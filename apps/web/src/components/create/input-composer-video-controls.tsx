@@ -7,7 +7,7 @@ import type { ModelSelectOption } from '@/components/create/input-composer-types
 import { cn } from '@/lib/cn'
 
 const COMPOSER_CHIP_BTN =
-  'inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-bg-0 px-2.5 py-1.5 text-text-1 transition-colors hover:bg-bg-hover'
+  'inline-flex items-center gap-1.5 rounded-[8px] border border-border/45 bg-bg-0 px-2.5 py-1.5 text-text-1 transition-colors hover:bg-bg-hover'
 
 const VIDEO_REFERENCE_OPTIONS = [
   { label: '全能参考', value: 'multiple' },

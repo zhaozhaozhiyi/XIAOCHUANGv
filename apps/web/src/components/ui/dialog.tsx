@@ -8,7 +8,8 @@ import { cn } from "@/lib/cn"
 import { Button } from "@/components/ui/button"
 
 type DialogLayout = "default" | "panel"
-type DialogSize = "default" | "compact" | "standard" | "large"
+type DialogVariant = "default" | "confirm" | "form" | "workspace" | "media"
+type DialogSize = "default" | "compact" | "standard" | "large" | "wide" | "xlarge"
 type DialogDensity = "default" | "compact"
 
 const dialogContentLayoutClassNames: Record<DialogLayout, string> = {
@@ -21,15 +22,40 @@ const dialogContentLayoutClassNames: Record<DialogLayout, string> = {
 const dialogContentSizeClassNames: Record<DialogSize, string> = {
   default: "",
   compact: "max-w-[min(100%-2rem,420px)] sm:max-w-[420px]",
-  standard: "max-w-[min(100%-2rem,480px)] sm:max-w-[480px]",
+  standard: "max-w-[min(100%-2rem,560px)] sm:max-w-[560px]",
   large: "w-[min(720px,calc(100%-2rem))] max-w-[720px] sm:max-w-[720px]",
+  wide: "w-[min(920px,calc(100%-2rem))] max-w-[920px] sm:max-w-[920px]",
+  xlarge: "w-[min(1100px,calc(100%-2rem))] max-w-[1100px] sm:max-w-[1100px]",
+}
+
+const dialogContentVariantClassNames: Record<DialogVariant, string> = {
+  default: "",
+  confirm:
+    "flex max-h-[min(92dvh,calc(100dvh-2rem))] w-full max-w-[min(100%-2rem,420px)] flex-col gap-0 overflow-hidden rounded-[var(--radius-xl)] border border-border bg-bg-surface p-0 shadow-shadow-elevated sm:max-w-[420px]",
+  form:
+    "flex max-h-[min(92dvh,calc(100dvh-2rem))] w-full max-w-[min(100%-2rem,560px)] flex-col gap-0 overflow-hidden rounded-[var(--radius-xl)] border border-border bg-bg-surface p-0 shadow-shadow-elevated sm:max-w-[560px]",
+  workspace:
+    "flex max-h-[min(92dvh,calc(100dvh-2rem))] w-[min(920px,calc(100%-2rem))] max-w-[920px] flex-col gap-0 overflow-hidden rounded-[var(--radius-xl)] border border-border bg-bg-surface p-0 shadow-shadow-elevated sm:max-w-[920px]",
+  media:
+    "flex h-[100dvh] w-[100vw] max-w-none flex-col gap-0 overflow-hidden border-0 bg-transparent p-0 shadow-none",
 }
 
 const dialogHeaderBarDensityClassNames: Record<DialogDensity, string> = {
   default:
-    "shrink-0 border-b border-border bg-bg-0/90 px-8 pb-6 pt-10 sm:px-10 sm:pb-8 sm:pt-11",
+    "shrink-0 bg-bg-0/90 px-8 pb-6 pt-10 sm:px-10 sm:pb-8 sm:pt-11",
   compact:
-    "shrink-0 border-b border-border bg-bg-0/90 px-6 pb-4 pt-6 sm:px-7 sm:pb-5 sm:pt-7",
+    "shrink-0 bg-bg-0/90 px-6 pb-4 pt-6 sm:px-7 sm:pb-5 sm:pt-7",
+}
+
+const dialogHeaderBarVariantClassNames: Record<DialogVariant, string> = {
+  default: "",
+  confirm:
+    "shrink-0 bg-transparent px-6 pb-4 pt-6 sm:px-7 sm:pb-4 sm:pt-7",
+  form:
+    "shrink-0 border-b border-border/70 bg-bg-0/80 px-6 pb-5 pt-6 sm:px-8 sm:pt-7",
+  workspace:
+    "shrink-0 border-b border-border/70 bg-bg-0/90 px-6 py-5 sm:px-8",
+  media: "shrink-0",
 }
 
 const dialogMainDensityClassNames: Record<DialogDensity, string> = {
@@ -37,11 +63,30 @@ const dialogMainDensityClassNames: Record<DialogDensity, string> = {
   compact: "flex flex-col gap-4 px-6 py-5 sm:px-7 sm:py-6",
 }
 
+const dialogMainVariantClassNames: Record<DialogVariant, string> = {
+  default: "",
+  confirm: "flex flex-col gap-3 px-6 py-4 sm:px-7",
+  form: "flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-8 sm:py-7",
+  workspace: "flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-8",
+  media: "flex min-h-0 flex-1 items-center justify-center p-0",
+}
+
 const dialogActionsDensityClassNames: Record<DialogDensity, string> = {
   default:
-    "flex shrink-0 flex-col-reverse flex-wrap gap-3 border-t border-border px-8 pt-6 pb-8 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-10 sm:pb-9",
+    "flex shrink-0 flex-col-reverse flex-wrap gap-3 px-8 pt-6 pb-8 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-10 sm:pb-9",
   compact:
-    "flex shrink-0 flex-col-reverse flex-wrap gap-2.5 border-t border-border px-6 pt-4 pb-5 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-7 sm:pb-6",
+    "flex shrink-0 flex-col-reverse flex-wrap gap-2.5 px-6 pt-4 pb-5 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-7 sm:pb-6",
+}
+
+const dialogActionsVariantClassNames: Record<DialogVariant, string> = {
+  default: "",
+  confirm:
+    "flex shrink-0 flex-col-reverse gap-2.5 px-6 pb-6 pt-3 sm:flex-row sm:items-center sm:justify-end sm:px-7",
+  form:
+    "flex shrink-0 flex-col-reverse gap-3 border-t border-border/70 bg-bg-0/70 px-6 py-5 sm:flex-row sm:items-center sm:justify-end sm:px-8",
+  workspace:
+    "flex shrink-0 flex-col-reverse gap-3 border-t border-border/70 bg-bg-0/70 px-6 py-5 sm:flex-row sm:items-center sm:justify-end sm:px-8",
+  media: "flex shrink-0",
 }
 
 function Dialog({
@@ -89,27 +134,37 @@ function DialogContent({
   children,
   layout = "default",
   size = "default",
-  showCloseButton = true,
+  variant = "default",
+  showCloseButton,
   onInteractOutside,
   "aria-describedby": ariaDescribedBy,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   layout?: DialogLayout
+  variant?: DialogVariant
   size?: DialogSize
   showCloseButton?: boolean
 }) {
   const fallbackDescriptionId = React.useId()
   const describedBy = ariaDescribedBy ?? fallbackDescriptionId
+  const usesVariantPreset = variant !== "default"
+  const resolvedShowCloseButton =
+    showCloseButton ?? (variant !== "confirm" && variant !== "media")
 
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        data-dialog-variant={variant}
         className={cn(
           "fixed top-[50%] left-[50%] z-50 translate-x-[-50%] translate-y-[-50%] duration-200 outline-none backdrop-blur-sm data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:duration-200 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:duration-200",
-          dialogContentLayoutClassNames[layout],
-          dialogContentSizeClassNames[size],
+          usesVariantPreset
+            ? dialogContentVariantClassNames[variant]
+            : dialogContentLayoutClassNames[layout],
+          usesVariantPreset && size === "default"
+            ? null
+            : dialogContentSizeClassNames[size],
           className
         )}
         onInteractOutside={(event) => {
@@ -134,7 +189,7 @@ function DialogContent({
           </DialogPrimitive.Description>
         )}
         {children}
-        {showCloseButton && (
+        {resolvedShowCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
             aria-label="关闭对话框"
@@ -212,18 +267,26 @@ function DialogDescription({
   )
 }
 
-/** 弹窗顶栏：与 `DialogContent layout="panel"` 配合，统一全站留白与密度档位 */
+/** 弹窗顶栏：与 `DialogContent` 的四类预设或旧版 panel 布局配合 */
 function DialogHeaderBar({
   className,
+  variant = "default",
   density = "default",
   ...props
 }: React.ComponentProps<"div"> & {
+  variant?: DialogVariant
   density?: DialogDensity
 }) {
   return (
     <div
       data-slot="dialog-header-bar"
-      className={cn(dialogHeaderBarDensityClassNames[density], className)}
+      data-dialog-variant={variant}
+      className={cn(
+        variant === "default"
+          ? dialogHeaderBarDensityClassNames[density]
+          : dialogHeaderBarVariantClassNames[variant],
+        className
+      )}
       {...props}
     />
   )
@@ -232,15 +295,23 @@ function DialogHeaderBar({
 /** 弹窗主体（表单、说明等） */
 function DialogMain({
   className,
+  variant = "default",
   density = "default",
   ...props
 }: React.ComponentProps<"div"> & {
+  variant?: DialogVariant
   density?: DialogDensity
 }) {
   return (
     <div
       data-slot="dialog-main"
-      className={cn(dialogMainDensityClassNames[density], className)}
+      data-dialog-variant={variant}
+      className={cn(
+        variant === "default"
+          ? dialogMainDensityClassNames[density]
+          : dialogMainVariantClassNames[variant],
+        className
+      )}
       {...props}
     />
   )
@@ -249,15 +320,23 @@ function DialogMain({
 /** 弹窗底栏（主/次操作），默认右对齐 */
 function DialogActions({
   className,
+  variant = "default",
   density = "default",
   ...props
 }: React.ComponentProps<"div"> & {
+  variant?: DialogVariant
   density?: DialogDensity
 }) {
   return (
     <div
       data-slot="dialog-actions"
-      className={cn(dialogActionsDensityClassNames[density], className)}
+      data-dialog-variant={variant}
+      className={cn(
+        variant === "default"
+          ? dialogActionsDensityClassNames[density]
+          : dialogActionsVariantClassNames[variant],
+        className
+      )}
       {...props}
     />
   )

@@ -191,13 +191,31 @@ export async function requireCurrentUser(): Promise<CurrentUser> {
   return user
 }
 
-export const requirePageSession = cache(async (): Promise<CurrentUser> => {
-  const user = await getCurrentUserOptional()
-  if (!user) {
-    const headerStore = await headers()
-    const pathname = headerStore.get('x-pathname') || headerStore.get('x-invoke-path') || ''
-    const loginUrl = pathname ? `/login?next=${encodeURIComponent(pathname)}` : '/login'
-    redirect(loginUrl)
+async function redirectToLogin(): Promise<never> {
+  const headerStore = await headers()
+  const pathname = headerStore.get('x-pathname') || headerStore.get('x-invoke-path') || ''
+  const loginUrl = pathname ? `/login?next=${encodeURIComponent(pathname)}` : '/login'
+  redirect(loginUrl)
+}
+
+export const requirePageAuthSession = cache(async (): Promise<AuthSession> => {
+  const bypass = getDevBypassUser()
+  if (bypass) {
+    return {
+      id: 0,
+      user_id: bypass.id,
+      user: bypass,
+    }
   }
-  return user
+
+  const session = await getCurrentAuthSession()
+  if (!session) {
+    return redirectToLogin()
+  }
+  return session
+})
+
+export const requirePageSession = cache(async (): Promise<CurrentUser> => {
+  const session = await requirePageAuthSession()
+  return session.user
 })

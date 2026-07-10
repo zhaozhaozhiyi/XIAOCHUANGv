@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import {
   boolean,
   index,
@@ -246,6 +247,72 @@ export const dramas = pgTable('dramas', {
   deletedAt: timestamp('deleted_at'),
 })
 
+export const dramaSources = pgTable(
+  'drama_sources',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    dramaId: integer('drama_id')
+      .notNull()
+      .references(() => dramas.id),
+    sourceType: varchar('source_type', { length: 50 }).notNull().default('paste'),
+    title: varchar('title', { length: 500 }),
+    contentHash: varchar('content_hash', { length: 128 }).notNull(),
+    content: text('content').notNull(),
+    wordCount: integer('word_count').notNull().default(0),
+    estimatedTokens: integer('estimated_tokens').notNull().default(0),
+    chapterCount: integer('chapter_count').notNull().default(0),
+    status: varchar('status', { length: 50 }).notNull().default('ready'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at'),
+  },
+  (table) => [
+    index('idx_drama_sources_drama_id').on(table.dramaId),
+    index('idx_drama_sources_user_id').on(table.userId),
+    index('idx_drama_sources_content_hash').on(table.contentHash),
+  ],
+)
+
+export const dramaSourceChunks = pgTable(
+  'drama_source_chunks',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    dramaId: integer('drama_id')
+      .notNull()
+      .references(() => dramas.id),
+    sourceId: integer('source_id')
+      .notNull()
+      .references(() => dramaSources.id),
+    chunkNo: integer('chunk_no').notNull(),
+    chapterNo: integer('chapter_no'),
+    title: varchar('title', { length: 500 }),
+    contentStart: integer('content_start').notNull().default(0),
+    contentEnd: integer('content_end').notNull().default(0),
+    contentHash: varchar('content_hash', { length: 128 }).notNull(),
+    estimatedTokens: integer('estimated_tokens').notNull().default(0),
+    summaryPayload: text('summary_payload'),
+    extractionPayload: text('extraction_payload'),
+    sourceTrace: text('source_trace'),
+    status: varchar('status', { length: 50 }).notNull().default('pending'),
+    aiRunId: varchar('ai_run_id', { length: 128 }),
+    remoteRunId: varchar('remote_run_id', { length: 128 }),
+    failureReason: text('failure_reason'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_drama_source_chunks_source_id').on(table.sourceId),
+    index('idx_drama_source_chunks_drama_id').on(table.dramaId),
+    index('idx_drama_source_chunks_status').on(table.status),
+  ],
+)
+
 export const episodes = pgTable('episodes', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id),
@@ -264,6 +331,12 @@ export const episodes = pgTable('episodes', {
   imageConfigId: integer('image_config_id').references(() => aiServiceConfigs.id),
   videoConfigId: integer('video_config_id').references(() => aiServiceConfigs.id),
   audioConfigId: integer('audio_config_id').references(() => aiServiceConfigs.id),
+  blueprintPayload: text('blueprint_payload'),
+  sourceTrace: text('source_trace'),
+  generationMode: varchar('generation_mode', { length: 50 }),
+  scriptAiRunId: varchar('script_ai_run_id', { length: 128 }),
+  scriptRemoteRunId: varchar('script_remote_run_id', { length: 128 }),
+  failureReason: text('failure_reason'),
   reviewStatus: varchar('review_status', { length: 50 }).default('pending'),
   reviewedBy: integer('reviewed_by'),
   reviewedAt: timestamp('reviewed_at'),
@@ -528,6 +601,9 @@ export const tasks = pgTable(
     index('idx_tasks_status_updated_at').on(table.status, table.updatedAt),
     index('idx_tasks_source_type').on(table.sourceType, table.type),
     index('idx_tasks_user_id_updated_at').on(table.userId, table.updatedAt),
+    uniqueIndex('idx_tasks_domain_active_unique')
+      .on(table.domainTable, table.domainId)
+      .where(sql`${table.deletedAt} IS NULL`),
   ],
 )
 

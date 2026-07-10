@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Inject, NotFoundException, Param, Post, Put, UseGuards } from '@nestjs/common'
+import { BadRequestException, Body, Controller, Get, Inject, NotFoundException, Param, Patch, Post, Put, UseGuards } from '@nestjs/common'
 import { and, eq, isNull, or } from 'drizzle-orm'
 import { ApiTags } from '@nestjs/swagger'
 
@@ -6,6 +6,7 @@ import { toPublicMediaUrl } from '../../common/media-url'
 import { toSnakeCaseArrayWithPublicMedia, toSnakeCaseWithPublicMedia } from '../../common/transform'
 import { DatabaseService } from '../../db/database.service'
 import { characters, dramas, episodeCharacters, episodes, scenes, storyboards, videoMerges } from '../../db/schema'
+import { DramaAiFirstService, markEpisodeGenerationModeStale } from '../dramas/drama-ai-first.service'
 import { resolveProjectConfigId } from '../dramas/drama-metadata'
 import { CurrentUser } from '../auth/current-user.decorator'
 import type { CurrentUser as CurrentUserType } from '../auth/auth.types'
@@ -44,6 +45,33 @@ function toOptionalString(value: unknown) {
   return typeof value === 'string' ? value : null
 }
 
+function toOptionalJsonText(value: unknown) {
+  if (value == null) return null
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    throw new BadRequestException('invalid json payload')
+  }
+}
+
+function toJsonRecord(value: unknown) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      throw new BadRequestException('invalid json payload')
+    }
+  }
+  return {}
+}
+
 function stepStatus(done: boolean, partial?: boolean) {
   if (done) return 'done'
   if (partial) return 'partial'
@@ -54,7 +82,10 @@ function stepStatus(done: boolean, partial?: boolean) {
 @Controller('episodes')
 @UseGuards(SessionAuthGuard)
 export class EpisodesController {
-  constructor(@Inject(DatabaseService) private readonly databaseService: DatabaseService) {}
+  constructor(
+    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    private readonly dramaAiFirstService: DramaAiFirstService,
+  ) {}
 
   private async requireOwnedEpisode(episodeId: number, userId: number) {
     const [episode] = await this.databaseService.db
@@ -206,6 +237,8 @@ export class EpisodesController {
     const imageConfigId = toOptionalNumber(body.image_config_id)
     const videoConfigId = toOptionalNumber(body.video_config_id)
     const audioConfigId = toOptionalNumber(body.audio_config_id)
+    const blueprintPayload = toOptionalJsonText(body.blueprint_payload)
+    const sourceTrace = toOptionalJsonText(body.source_trace)
     const ts = now()
 
     const [drama] = await this.databaseService.db
@@ -237,6 +270,11 @@ export class EpisodesController {
         imageConfigId: imageConfigId ?? resolveProjectConfigId(drama.metadata, 'image'),
         videoConfigId: videoConfigId ?? resolveProjectConfigId(drama.metadata, 'video'),
         audioConfigId: audioConfigId ?? resolveProjectConfigId(drama.metadata, 'audio'),
+        blueprintPayload,
+        sourceTrace,
+        generationMode: toOptionalString(body.generation_mode),
+        failureReason: toOptionalString(body.failure_reason),
+        status: toOptionalString(body.status) || (blueprintPayload ? 'blueprint' : 'draft'),
         createdAt: ts,
         updatedAt: ts,
       })
@@ -250,7 +288,105 @@ export class EpisodesController {
       image_config_id: episode.imageConfigId,
       video_config_id: episode.videoConfigId,
       audio_config_id: episode.audioConfigId,
+      blueprint_payload: episode.blueprintPayload,
+      source_trace: episode.sourceTrace,
+      generation_mode: episode.generationMode,
+      script_ai_run_id: episode.scriptAiRunId,
+      script_remote_run_id: episode.scriptRemoteRunId,
+      failure_reason: episode.failureReason,
+      status: episode.status,
     }
+  }
+
+  @Post(':id/regenerate-blueprint')
+  async regenerateBlueprint(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const episodeId = parseId(id)
+    const episode = await this.dramaAiFirstService.regenerateEpisodeBlueprint({
+      userId: currentUser.id,
+      episodeId,
+    })
+    return toSnakeCaseWithPublicMedia(episode as unknown as Record<string, unknown>, episodeMediaFields)
+  }
+
+  @Post(':id/generate-script')
+  async generateScript(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const episodeId = parseId(id)
+    const episode = await this.dramaAiFirstService.generateEpisodeScript({
+      userId: currentUser.id,
+      episodeId,
+    })
+    return toSnakeCaseWithPublicMedia(episode as unknown as Record<string, unknown>, episodeMediaFields)
+  }
+
+  @Post(':id/rewrite-script')
+  async rewriteScript(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const episodeId = parseId(id)
+    const episode = await this.dramaAiFirstService.generateEpisodeScript({
+      userId: currentUser.id,
+      episodeId,
+      rewrite: true,
+    })
+    return toSnakeCaseWithPublicMedia(episode as unknown as Record<string, unknown>, episodeMediaFields)
+  }
+
+  @Patch(':id/blueprint')
+  async updateBlueprint(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const episodeId = parseId(id)
+    const episode = await this.requireOwnedEpisode(episodeId, currentUser.id)
+    const rawBlueprint = body.blueprint_payload !== undefined
+      ? body.blueprint_payload
+      : body.blueprint !== undefined
+        ? body.blueprint
+        : body
+    const blueprint = toJsonRecord(rawBlueprint)
+    if (!blueprint.title && !blueprint.summary && !blueprint.opening_hook) {
+      throw new BadRequestException('episode_blueprint_required')
+    }
+
+    const hasScript = Boolean(episode.scriptContent?.trim())
+    const status = hasScript
+      ? episode.status && episode.status !== 'failed'
+        ? episode.status
+        : 'script_ready'
+      : 'blueprint'
+    const generationMode = hasScript
+      ? markEpisodeGenerationModeStale(episode.generationMode, true, 'blueprint')
+      : toOptionalString(body.generation_mode) || episode.generationMode || 'manual_blueprint'
+    const sourceTrace = body.source_trace !== undefined
+      ? toOptionalJsonText(body.source_trace)
+      : blueprint.source_trace !== undefined
+        ? toOptionalJsonText(blueprint.source_trace)
+        : episode.sourceTrace
+
+    const [updated] = await this.databaseService.db
+      .update(episodes)
+      .set({
+        title: toOptionalString(body.title) || toOptionalString(blueprint.title) || episode.title,
+        description: toOptionalString(body.description) || toOptionalString(blueprint.summary) || episode.description,
+        blueprintPayload: toOptionalJsonText(rawBlueprint),
+        sourceTrace,
+        generationMode,
+        failureReason: null,
+        status,
+        updatedAt: now(),
+      })
+      .where(and(eq(episodes.id, episodeId), eq(episodes.userId, currentUser.id)))
+      .returning()
+
+    return toSnakeCaseWithPublicMedia((updated || episode) as unknown as Record<string, unknown>, episodeMediaFields)
   }
 
   @Put(':id')
@@ -283,6 +419,22 @@ export class EpisodesController {
     }
     if (body.status !== undefined) {
       updates.status = body.status
+      hasValidFields = true
+    }
+    if (body.blueprint_payload !== undefined) {
+      updates.blueprintPayload = toOptionalJsonText(body.blueprint_payload)
+      hasValidFields = true
+    }
+    if (body.source_trace !== undefined) {
+      updates.sourceTrace = toOptionalJsonText(body.source_trace)
+      hasValidFields = true
+    }
+    if (body.generation_mode !== undefined) {
+      updates.generationMode = toOptionalString(body.generation_mode)
+      hasValidFields = true
+    }
+    if (body.failure_reason !== undefined) {
+      updates.failureReason = toOptionalString(body.failure_reason)
       hasValidFields = true
     }
     if (body.image_config_id !== undefined) {

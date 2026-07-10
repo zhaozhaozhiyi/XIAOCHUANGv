@@ -2,57 +2,26 @@ import { Inject, Injectable } from '@nestjs/common'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
-import { imageGenerations, storyboards, taskLogs, tasks, videoGenerations, videoMerges } from '../../db/schema'
-import { AudioService } from '../audio/audio.service'
-import { ComposeService } from '../compose/compose.service'
-import { ImagesService } from '../images/images.service'
-import { MergeService } from '../merge/merge.service'
-import { VideosService } from '../videos/videos.service'
-import { TasksService } from './tasks.service'
+import { taskLogs, tasks } from '../../db/schema'
+import { TaskDomainRegistry } from './task-domain.registry'
 
 const LOCK_TTL_MS = 10 * 60_000
-const RESUME_MAX_AGE_MS = 12 * 60 * 60_000
 const MAX_RETRY_ATTEMPTS = 7
-
-function parsePayload(task: typeof tasks.$inferSelect): Record<string, unknown> {
-  if (!task.payloadJson) return {}
-  try {
-    const parsed = JSON.parse(task.payloadJson)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-  } catch {
-    return {}
-  }
-}
+const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'canceled', 'cancelled', 'dead_letter'])
 
 function isCanceledError(error: unknown) {
   return error instanceof Error && error.message.toLowerCase().includes('canceled')
 }
 
-function isTaskTooOldForResume(task: typeof tasks.$inferSelect) {
-  const createdAt = task.createdAt instanceof Date ? task.createdAt.getTime() : Date.parse(String(task.createdAt || ''))
-  if (!Number.isFinite(createdAt)) return true
-  return Date.now() - createdAt > RESUME_MAX_AGE_MS
-}
-
-function isStaleRunningTask(task: typeof tasks.$inferSelect) {
-  const updatedAt =
-    task.updatedAt instanceof Date
-      ? task.updatedAt.getTime()
-      : Date.parse(String(task.updatedAt || task.startedAt || task.createdAt || ''))
-  if (!Number.isFinite(updatedAt)) return true
-  return Date.now() - updatedAt > 5 * 60_000
+function isTerminalTaskStatus(status: string) {
+  return TERMINAL_TASK_STATUSES.has(status)
 }
 
 @Injectable()
 export class TaskExecutionService {
   constructor(
     @Inject(DatabaseService) private readonly databaseService: DatabaseService,
-    @Inject(TasksService) private readonly tasksService: TasksService,
-    @Inject(ImagesService) private readonly imagesService: ImagesService,
-    @Inject(VideosService) private readonly videosService: VideosService,
-    @Inject(AudioService) private readonly audioService: AudioService,
-    @Inject(ComposeService) private readonly composeService: ComposeService,
-    @Inject(MergeService) private readonly mergeService: MergeService,
+    @Inject(TaskDomainRegistry) private readonly taskDomainRegistry: TaskDomainRegistry,
   ) {}
 
   private log(task: typeof tasks.$inferSelect, message: string, level = 'info', metadata?: Record<string, unknown>) {
@@ -187,73 +156,9 @@ export class TaskExecutionService {
     return Number.isFinite(expiresAt) && expiresAt <= Date.now()
   }
 
-  private async isTaskCanceled(taskId: number) {
-    const [latest] = await this.databaseService.db
-      .select({ status: tasks.status })
-      .from(tasks)
-      .where(eq(tasks.id, taskId))
-    return latest?.status === 'canceled'
-  }
-
   private async markTaskCanceled(task: typeof tasks.$inferSelect) {
-    const timestamp = this.now()
     this.log(task, '任务被取消', 'warn', { domain_table: task.domainTable, domain_id: task.domainId })
-
-    if (task.domainTable === 'image_generations') {
-      await this.databaseService.db
-        .update(imageGenerations)
-        .set({ status: 'canceled', errorMsg: 'Canceled by worker', completedAt: timestamp, updatedAt: timestamp })
-        .where(eq(imageGenerations.id, task.domainId))
-      await this.tasksService.refreshTaskPresentation(task.id)
-      return
-    }
-
-    if (task.domainTable === 'video_generations') {
-      await this.databaseService.db
-        .update(videoGenerations)
-        .set({ status: 'canceled', errorMsg: 'Canceled by worker', completedAt: timestamp, updatedAt: timestamp })
-        .where(eq(videoGenerations.id, task.domainId))
-      await this.tasksService.refreshTaskPresentation(task.id)
-      return
-    }
-
-    if (task.domainTable === 'storyboard_tts') {
-      await this.databaseService.db
-        .update(tasks)
-        .set({
-          status: 'canceled',
-          errorKind: 'canceled',
-          errorMessage: 'Canceled by worker',
-          errorDetailsJson: JSON.stringify({
-            error_kind: 'canceled',
-            raw_error: 'Canceled by worker',
-          }),
-          completedAt: timestamp,
-          updatedAt: timestamp,
-          lockedBy: null,
-          lockedAt: null,
-          lockExpiresAt: null,
-        })
-        .where(eq(tasks.id, task.id))
-      return
-    }
-
-    if (task.domainTable === 'storyboard_compose') {
-      await this.databaseService.db
-        .update(storyboards)
-        .set({ status: 'compose_canceled', composedVideoUrl: null, updatedAt: timestamp })
-        .where(eq(storyboards.id, task.domainId))
-      await this.tasksService.refreshTaskPresentation(task.id)
-      return
-    }
-
-    if (task.domainTable === 'video_merges') {
-      await this.databaseService.db
-        .update(videoMerges)
-        .set({ status: 'canceled', errorMsg: 'Canceled by worker', completedAt: timestamp })
-        .where(eq(videoMerges.id, task.domainId))
-      await this.tasksService.refreshTaskPresentation(task.id)
-    }
+    await this.taskDomainRegistry.markCanceled(task)
   }
 
   private async markTaskDeadLetter(task: typeof tasks.$inferSelect) {
@@ -284,68 +189,14 @@ export class TaskExecutionService {
   }
 
   private async markTaskFailed(task: typeof tasks.$inferSelect, error: unknown) {
-    const timestamp = this.now()
     const message = error instanceof Error ? error.message : 'recover failed'
     this.log(task, `任务失败: ${message}`, 'error', { domain_table: task.domainTable, domain_id: task.domainId, error: message })
-
-    if (task.domainTable === 'image_generations') {
-      await this.databaseService.db
-        .update(imageGenerations)
-        .set({ status: 'failed', errorMsg: message, completedAt: timestamp, updatedAt: timestamp })
-        .where(eq(imageGenerations.id, task.domainId))
-      await this.tasksService.refreshTaskPresentation(task.id)
-      return
-    }
-
-    if (task.domainTable === 'video_generations') {
-      await this.databaseService.db
-        .update(videoGenerations)
-        .set({ status: 'failed', errorMsg: message, completedAt: timestamp, updatedAt: timestamp })
-        .where(eq(videoGenerations.id, task.domainId))
-      await this.tasksService.refreshTaskPresentation(task.id)
-      return
-    }
-
-    if (task.domainTable === 'storyboard_tts') {
-      await this.databaseService.db
-        .update(tasks)
-        .set({
-          status: 'failed',
-          errorKind: 'provider',
-          errorMessage: message,
-          errorDetailsJson: JSON.stringify({
-            error_kind: 'provider',
-            raw_error: message,
-          }),
-          completedAt: timestamp,
-          updatedAt: timestamp,
-          lockedBy: null,
-          lockedAt: null,
-          lockExpiresAt: null,
-        })
-        .where(eq(tasks.id, task.id))
-      return
-    }
-
-    if (task.domainTable === 'storyboard_compose') {
-      await this.databaseService.db
-        .update(storyboards)
-        .set({ status: 'compose_failed', composedVideoUrl: null, updatedAt: timestamp })
-        .where(eq(storyboards.id, task.domainId))
-      await this.tasksService.refreshTaskPresentation(task.id)
-      return
-    }
-
-    if (task.domainTable === 'video_merges') {
-      await this.databaseService.db
-        .update(videoMerges)
-        .set({ status: 'failed', errorMsg: message, completedAt: timestamp })
-        .where(eq(videoMerges.id, task.domainId))
-      await this.tasksService.refreshTaskPresentation(task.id)
-    }
+    await this.taskDomainRegistry.markFailed(task, error)
   }
 
   private async executeTask(task: typeof tasks.$inferSelect, workerId: string) {
+    if (isTerminalTaskStatus(task.status)) return `terminal:${task.status}`
+
     if (task.status === 'queued') {
       if ((task.attemptCount ?? 0) >= MAX_RETRY_ATTEMPTS) {
         await this.markTaskDeadLetter(task)
@@ -356,72 +207,6 @@ export class TaskExecutionService {
     if (task.status === 'running' && !this.canRecoverRunningTask(task, workerId)) return 'locked_elsewhere'
     if (task.status === 'running') await this.refreshTaskLock(task.id, workerId)
 
-    if (task.domainTable === 'image_generations') {
-      if (task.status === 'running' && isTaskTooOldForResume(task)) {
-        throw new Error('Image task too old to resume — provider download URL likely expired')
-      }
-      if (task.status === 'queued') {
-        await this.databaseService.db
-          .update(imageGenerations)
-          .set({ status: 'processing', updatedAt: this.now() })
-          .where(eq(imageGenerations.id, task.domainId))
-        await this.tasksService.refreshTaskPresentation(task.id)
-        await this.imagesService.processImageGeneration(task.domainId, task.aiConfigId)
-        return 'image_queued'
-      }
-
-      const resumed = await this.imagesService.resumeImageGeneration(task.domainId, task.aiConfigId)
-      if (!resumed && !task.providerTaskId && isStaleRunningTask(task)) {
-        throw new Error('Image task was running without provider task id; manual retry required to avoid duplicate submission')
-      }
-      return 'image'
-    }
-
-    if (task.domainTable === 'video_generations') {
-      if (task.status === 'running' && isTaskTooOldForResume(task)) {
-        throw new Error('Video task too old to resume — provider download URL likely expired')
-      }
-      if (task.status === 'queued') {
-        await this.databaseService.db
-          .update(videoGenerations)
-          .set({ status: 'processing', updatedAt: this.now() })
-          .where(eq(videoGenerations.id, task.domainId))
-        await this.tasksService.refreshTaskPresentation(task.id)
-        await this.videosService.processVideoGeneration(task.domainId, task.aiConfigId)
-        return 'video_queued'
-      }
-
-      const resumed = await this.videosService.resumeVideoGeneration(task.domainId, task.aiConfigId)
-      if (!resumed && !task.providerTaskId && isStaleRunningTask(task)) {
-        throw new Error('Video task was running without provider task id; manual retry required to avoid duplicate submission')
-      }
-      return 'video'
-    }
-
-    if (task.domainTable === 'storyboard_tts') {
-      const payload = parsePayload(task)
-      const text = String(payload.text || '').trim()
-      if (!text) throw new Error(`TTS task ${task.id} missing text payload`)
-
-      await this.audioService.processStoryboardTtsTask(task.id)
-
-      if (await this.isTaskCanceled(task.id)) {
-        return 'storyboard_tts_canceled'
-      }
-
-      return 'storyboard_tts'
-    }
-
-    if (task.domainTable === 'storyboard_compose') {
-      await this.composeService.composeStoryboard(task.domainId)
-      return task.status === 'queued' ? 'storyboard_compose_queued' : 'storyboard_compose'
-    }
-
-    if (task.domainTable === 'video_merges') {
-      await this.mergeService.processVideoMerge(task.domainId)
-      return task.status === 'queued' ? 'video_merge_queued' : 'video_merge'
-    }
-
-    return 'unknown'
+    return this.taskDomainRegistry.execute(task)
   }
 }

@@ -5,7 +5,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import type { AudioConfigOption } from '@/components/create/input-composer-types'
 
 const COMPOSER_CHIP_BTN =
-  'inline-flex items-center gap-1.5 rounded-[8px] border border-border bg-bg-0 px-2.5 py-1.5 text-text-1 transition-colors hover:bg-bg-hover'
+  'inline-flex items-center gap-1.5 rounded-[8px] border border-border/45 bg-bg-0 px-2.5 py-1.5 text-text-1 transition-colors hover:bg-bg-hover'
 
 const AUDIO_EMOTION_OPTIONS = [
   { label: '默认', value: '' },
