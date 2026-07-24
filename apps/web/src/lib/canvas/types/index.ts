@@ -24,7 +24,26 @@ export type ExecuteNodeType =
   | 'concat'
   | 'export'
 
-export type CanvasNodeType = ContentNodeType | ExecuteNodeType
+export type DramaClawNodeType =
+  | 'uploadNode'
+  | 'imageNode'
+  | 'imageGenNode'
+  | 'exportImageNode'
+  | 'beatContextNode'
+  | 'textAnnotationNode'
+  | 'groupNode'
+  | 'storyboardNode'
+  | 'storyboardGenNode'
+  | 'videoNode'
+  | 'audioNode'
+  | 'videoStoryNode'
+  | 'videoComposeNode'
+  | 'scriptNode'
+  | 'pano360ViewerNode'
+  | 'threeDWorldNode'
+  | 'skillNode'
+
+export type CanvasNodeType = ContentNodeType | ExecuteNodeType | DramaClawNodeType
 
 export interface CanvasNode {
   id: string
@@ -195,10 +214,14 @@ export interface CanvasSummary {
   title: string
   thumbnail?: string | null
   source: CanvasSource
+  profile?: 'general' | 'drama' | string
   source_drama_id?: string | null
+  source_episode_id?: string | null
+  source_storyboard_id?: string | null
   /** 来源短剧的标题（PR4 列表卡片 SourceBadge 显示） */
   source_drama_title?: string | null
   source_drama_snapshot_at?: string | null
+  production_context?: Record<string, unknown>
   /** 全局灵感板始终置顶 */
   is_pinned: boolean
   created_at: string
@@ -251,6 +274,12 @@ export interface CanvasListResponse {
 export interface CanvasCreateRequest {
   title?: string
   source?: CanvasSource
+  profile?: 'general' | 'drama' | string
+  source_drama_id?: string | number | null
+  source_episode_id?: string | number | null
+  source_storyboard_id?: string | number | null
+  source_drama_title?: string | null
+  production_context?: Record<string, unknown> | null
 }
 
 /** 整画布保存（3s 防抖触发） */
@@ -274,7 +303,19 @@ export interface CanvasRunStatusResponse {
 export interface CanvasUploadResponse {
   node: CanvasNode
   result: CanvasNodeResult
+  upload: {
+    url: string
+    mime_type: string
+    kind: 'image' | 'video' | 'audio'
+    title: string
+  }
   asset?: unknown
+}
+
+export interface SaveCanvasAssetResponse {
+  asset: unknown
+  node: CanvasNode
+  result: CanvasNodeResult
 }
 
 export interface CanvasNodeResultsResponse {

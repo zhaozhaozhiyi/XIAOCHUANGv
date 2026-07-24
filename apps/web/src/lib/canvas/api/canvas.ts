@@ -15,6 +15,7 @@ import type {
   CanvasSaveRequest,
   CanvasSummary,
   CanvasUploadResponse,
+  SaveCanvasAssetResponse,
 } from '@/lib/canvas/types'
 import { canvasClient } from './client'
 
@@ -114,7 +115,7 @@ export const canvasApi = {
   saveNodeResultToAsset(
     id: string,
     body: { node_id: string; result_id?: string; title?: string },
-  ): Promise<unknown> {
+  ): Promise<SaveCanvasAssetResponse> {
     return canvasClient.post(`/canvases/${id}/assets`, body)
   },
 

@@ -20,11 +20,11 @@ function cloneNode(node: MockNode): MockNode {
   return { ...node }
 }
 
-function createNode(data: Record<string, unknown> = {}): MockNode {
+function createNode(data: Record<string, unknown> = {}, nodeDefId = 'image'): MockNode {
   return {
     id: 'node_1',
     canvasId: 'cnv_1',
-    nodeDefId: 'image',
+    nodeDefId,
     label: '图片节点',
     dataJson: JSON.stringify(data),
     positionX: 10,
@@ -155,6 +155,50 @@ describe('CanvasNodeResultService', () => {
     expect(data.current_result_id).toBe('res_old')
     expect(data.previewUrl).toBe('/static/old.png')
     expect(output.result.id).toBe('res_old')
+  })
+
+  it('updates DramaClaw image node preview fields', async () => {
+    const mock = createDbMock(createNode({ isGenerating: true, status: 'generating' }, 'imageNode'))
+    const service = new CanvasNodeResultService(mock.db)
+
+    await service.appendResult('cnv_1', 'node_1', { kind: 'image', url: '/static/drama.png' })
+
+    const { data } = resultsFrom(mock.state.node)
+    expect(data.imageUrl).toBe('/static/drama.png')
+    expect(data.previewImageUrl).toBe('/static/drama.png')
+    expect(data.generationBatch).toEqual(['/static/drama.png'])
+    expect(data.isGenerating).toBe(false)
+    expect(data.status).toBe('completed')
+  })
+
+  it('updates DramaClaw video node result fields', async () => {
+    const mock = createDbMock(createNode({ isGenerating: true }, 'videoNode'))
+    const service = new CanvasNodeResultService(mock.db)
+
+    await service.appendResult('cnv_1', 'node_1', {
+      kind: 'video',
+      url: '/static/drama.mp4',
+      thumbnail_url: '/static/thumb.png',
+    })
+
+    const { data } = resultsFrom(mock.state.node)
+    expect(data.videoUrl).toBe('/static/drama.mp4')
+    expect(data.resultVideoUrl).toBe('/static/drama.mp4')
+    expect(data.url).toBe('/static/drama.mp4')
+    expect(data.previewImageUrl).toBe('/static/thumb.png')
+    expect(data.isGenerating).toBe(false)
+  })
+
+  it('updates DramaClaw audio node url fields', async () => {
+    const mock = createDbMock(createNode({ isGenerating: true }, 'audioNode'))
+    const service = new CanvasNodeResultService(mock.db)
+
+    await service.appendResult('cnv_1', 'node_1', { kind: 'audio', url: '/static/drama.mp3' })
+
+    const { data } = resultsFrom(mock.state.node)
+    expect(data.audioUrl).toBe('/static/drama.mp3')
+    expect(data.url).toBe('/static/drama.mp3')
+    expect(data.isGenerating).toBe(false)
   })
 
   it('marks a result asset id without changing a valid current selection', async () => {

@@ -11,6 +11,11 @@ const PROTECTED_PREFIXES = [
   '/writing',
 ] as const
 
+function isLocalAuthBypassEnabled() {
+  if (process.env.NODE_ENV === 'production') return false
+  return process.env.DEV_AUTH_BYPASS === '1' || process.env.E2E_AUTH_MOCK === '1'
+}
+
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl
 
@@ -22,7 +27,7 @@ export function middleware(request: NextRequest) {
   requestHeaders.set('x-pathname', `${pathname}${search}`)
 
   const protectedRoute = PROTECTED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
-  if (!protectedRoute || request.cookies.has(SESSION_COOKIE)) {
+  if (!protectedRoute || request.cookies.has(SESSION_COOKIE) || isLocalAuthBypassEnabled()) {
     return NextResponse.next({ request: { headers: requestHeaders } })
   }
 

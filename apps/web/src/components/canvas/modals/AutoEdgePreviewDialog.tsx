@@ -49,8 +49,8 @@ export function AutoEdgePreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent layout="panel" className="max-w-2xl">
-        <DialogHeaderBar>
+      <DialogContent variant="workspace" size="large">
+        <DialogHeaderBar variant="workspace">
           <DialogTitle>检测到 {inferred.length} 条建议连线</DialogTitle>
           <p className="mt-1 text-xs text-text-2">
             画布上的分镜尚未串成顺序。系统按位置推断了一条叙事链，建议补上 narrative
@@ -58,7 +58,7 @@ export function AutoEdgePreviewDialog({
           </p>
         </DialogHeaderBar>
 
-        <DialogMain>
+        <DialogMain variant="workspace">
           {/* 推断链可视化（横向滚动） */}
           <div className="overflow-x-auto">
             <div className="flex items-center gap-1 pb-2">
@@ -89,7 +89,7 @@ export function AutoEdgePreviewDialog({
           </label>
         </DialogMain>
 
-        <DialogActions>
+        <DialogActions variant="workspace">
           <Button variant="outline" onClick={onCancel}>
             取消
           </Button>

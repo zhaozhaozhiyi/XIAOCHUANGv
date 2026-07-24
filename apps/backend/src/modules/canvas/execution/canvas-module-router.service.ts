@@ -137,7 +137,6 @@ export class CanvasModuleRouterService {
     context: CanvasGenerateContext,
   ): Promise<CanvasTaskResult> {
     const imageUrl = inputs.imageUrl || inputs.references[0]
-    if (!imageUrl) throw new Error('image-to-video requires upstream image')
 
     const userId = Number(context.userId)
     const genId = await this.videosService.generateVideo({

@@ -69,6 +69,11 @@ docs/
 newdocs/
 参考图片/
 参考项目/
+!docs/
+docs/*
+!docs/0.24.0/
+docs/0.24.0/*
+!docs/0.24.0/技术设计-HermesAgent运行时集成方案.md
 
 # Misc
 tmp/
@@ -76,6 +81,7 @@ temp/
 .superpowers/
 /CLAUDE.md
 /AGENTS.md
+deploy/hermes/.build/
 Snipaste_*.png
 
 # Playwright (apps/web)

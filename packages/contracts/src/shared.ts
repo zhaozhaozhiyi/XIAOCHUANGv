@@ -6,6 +6,9 @@ export type DramaAiFirstStage =
   | 'blueprint_generating'
   | 'blueprint_ready'
   | 'script_generating'
+  | 'script_ready'
+  | 'graph_building'
+  | 'graph_ready'
   | 'in_production'
   | 'deliverable_ready'
 
@@ -40,6 +43,8 @@ export interface SourceAnalysis {
   protagonist: string
   antagonist?: string | null
   protagonist_goal: string
+  target_episode_count?: number | null
+  episode_duration?: string | null
   relationship_map?: Array<Record<string, unknown>>
   world_rules?: string[]
   emotional_curve?: Array<Record<string, unknown>>
@@ -154,6 +159,7 @@ export interface Episode {
   script_ai_run_id?: string | number | null
   script_remote_run_id?: string | null
   failure_reason?: string | null
+  review_status?: string | null
   created_at: string
   updated_at: string
   deleted_at: string | null
@@ -197,6 +203,7 @@ export interface Scene {
 export interface Storyboard {
   id: number
   episode_id: number
+  storyboard_set_id?: number | null
   scene_id: number | null
   storyboard_number: number
   title: string | null
@@ -329,6 +336,8 @@ export interface TaskRecord {
   completed_at: string | null
   deleted_at: string | null
   domain?: Record<string, unknown> | null
+  source_route?: string | null
+  source_stage?: EpisodeWorkspaceStage | null
 }
 
 export interface TaskListPayload {
@@ -394,6 +403,7 @@ export interface AssetRecord {
   mime_type: string | null
   source_type: string
   source_id: number | null
+  source_ref: string | null
   source_path: string | null
   drama_id: number | null
   episode_id: number | null
@@ -421,6 +431,7 @@ export interface WritingListItem {
   kind: WritingKind
   status: WritingStatus
   synopsis: string | null
+  cover_url: string | null
   updated_at: string
   document_count: number
   current_document_id: number | null
@@ -442,6 +453,7 @@ export interface WritingDetail {
   kind: WritingKind
   status: WritingStatus
   synopsis: string | null
+  cover_url: string | null
   outline_json: string | null
   brief_json: string | null
   current_document_id: number | null
@@ -681,3 +693,4 @@ export interface AiRuntimeActionItem {
   apply_result?: AiRuntimeApplyResultPayload
   [key: string]: unknown
 }
+import type { EpisodeWorkspaceStage } from './drama-workspace.js'

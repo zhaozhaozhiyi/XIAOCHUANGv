@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common'
+import { BadRequestException, Inject, Injectable } from '@nestjs/common'
 import type { FastifyReply } from 'fastify'
 import type { AiRuntimeActionItem, AiRuntimeApplyResultPayload, AiRuntimeReferenceItem, JsonObjectPayload } from '@xiaochuang/contracts'
 import { and, asc, desc, eq, isNull, lt } from 'drizzle-orm'
@@ -7,8 +7,9 @@ import path from 'node:path'
 
 import { DatabaseService } from '../../db/database.service'
 import { aiRuns, writingDocuments, writingKnowledgeCards, writingObjectHistories, writingProposals, writings } from '../../db/schema'
-import { getTextConfig, getTextProviderBaseUrl } from '../agents/agents.ai'
+import { getTextConfig, getTextProviderBaseUrl, withTextProviderRequestOptions } from '../agents/agents.ai'
 import { GridService } from '../grid/grid.service'
+import { DramaStoryGraphService } from '../dramas/drama-story-graph.service'
 import { extractorHandler } from './skill-handlers/extractor.handler'
 import { gridPromptHandler } from './skill-handlers/grid-prompt.handler'
 import { quickVideoSessionTitleHandler } from './skill-handlers/quick-video-session-title.handler'
@@ -244,7 +245,12 @@ const SKILL_HANDLERS: ReadonlyMap<string, SkillHandler> = new Map<string, SkillH
 
 @Injectable()
 export class AiService {
-  constructor(private readonly gridService: GridService) {}
+  constructor(
+    @Inject(GridService)
+    private readonly gridService: GridService,
+    @Inject(DramaStoryGraphService)
+    private readonly dramaStoryGraphService: DramaStoryGraphService,
+  ) {}
 
   async run(args: {
     payload: any
@@ -263,7 +269,10 @@ export class AiService {
         payload,
         currentUser,
         databaseService,
-        services: { gridService: this.gridService },
+        services: {
+          gridService: this.gridService,
+          dramaStoryGraphService: this.dramaStoryGraphService,
+        },
         reply,
         stream,
       })
@@ -445,7 +454,7 @@ export class AiService {
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-          body: JSON.stringify({
+          body: JSON.stringify(withTextProviderRequestOptions(config, {
             model: config.model,
             temperature: 0.7,
             stream: true,
@@ -453,7 +462,7 @@ export class AiService {
               { role: 'system', content: systemPrompt },
               { role: 'user', content: message },
             ],
-          }),
+          })),
         })
 
         if (!response.ok) {
@@ -785,14 +794,14 @@ export class AiService {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify({
+      body: JSON.stringify(withTextProviderRequestOptions(config, {
         model: config.model,
         temperature: 0.7,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message },
         ],
-      }),
+      })),
     })
 
     if (!response.ok) {
@@ -835,6 +844,3 @@ export class AiService {
     }
   }
 }
-
-
-

@@ -52,6 +52,15 @@ function clampProgress(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)))
 }
 
+function isStaleEpisodeGenerationMode(generationMode: string | null | undefined) {
+  return /_(?:source|analysis|strategy|blueprint)_stale(?:_|$)/.test(String(generationMode || ''))
+}
+
+function hasCurrentScript(episode: NonNullable<DramaOverviewRecord['episodes']>[number]) {
+  return Boolean(String(episode.script_content || '').trim())
+    && !isStaleEpisodeGenerationMode(episode.generation_mode)
+}
+
 function estimateTokens(source: NovelSource) {
   return Math.ceil(Math.max(source.word_count || source.content.replace(/\s/g, '').length, 0) * 1.6)
 }
@@ -134,22 +143,23 @@ export function getDramaProjectProgress(drama: DramaOverviewRecord | null | unde
       ok: aiFirst.source_health.status !== 'blocked',
     }
     : getNovelSourceHealthByDrama(drama)
-  const scriptedEpisodes = (drama.episodes || []).filter((episode) => String(episode.script_content || '').trim()).length
+  const scriptedEpisodes = (drama.episodes || []).filter(hasCurrentScript).length
   const blueprintEpisodes = (drama.episodes || []).filter((episode) => normalizeEpisodeBlueprintPayload(episode.blueprint_payload)).length
 
   let progress = 0
   if (sourceHealth.ok) progress = 25
-  if (sourceHealth.ok && aiFirst.source_analysis) progress = 40
-  if (aiFirst.adaptation_briefs.length > 0) progress = 52
-  if (aiFirst.selected_brief_id) progress = 62
-  if (blueprintEpisodes > 0) progress = 75
-  if (episodeCount > 0 && scriptedEpisodes > 0) progress = 82
+  if (sourceHealth.ok && aiFirst.source_analysis) progress = 45
+  if (blueprintEpisodes > 0) progress = 62
+  if (episodeCount > 0 && scriptedEpisodes > 0) progress = 72
+  if (['graph_ready', 'in_production', 'deliverable_ready'].includes(aiFirst.ai_first_stage || '')) progress = 86
 
   if (episodeCount > 0) {
-    const scriptRatio = drama.script_progress_percent != null
+    const scriptRatio = drama.episodes?.length
+      ? scriptedEpisodes / Math.max(episodeCount, 1)
+      : drama.script_progress_percent != null
       ? Math.max(0, Math.min(1, drama.script_progress_percent / 100))
       : scriptedEpisodes / Math.max(episodeCount, 1)
-    progress = Math.max(progress, 75 + scriptRatio * 25)
+    progress = Math.max(progress, 55 + scriptRatio * 30)
   }
 
   return clampProgress(progress)
@@ -167,22 +177,32 @@ export type DramaAiFirstComputedState = {
   scriptReadyCount: number
 }
 
-function describeStage(stage: DramaAiFirstStage, hasBriefs: boolean) {
+function normalizeLegacyStage(stage: DramaAiFirstStage): DramaAiFirstStage {
+  if (stage === 'brief_pending' || stage === 'brief_selected') return 'script_generating'
+  if (stage === 'blueprint_generating' || stage === 'blueprint_ready') return 'script_generating'
+  return stage
+}
+
+function describeStage(stage: DramaAiFirstStage) {
   switch (stage) {
     case 'source_pending':
       return { label: '待导入源稿', nextActionLabel: '导入源稿' }
     case 'source_ready':
       return { label: '待理解源稿', nextActionLabel: '生成源稿理解' }
     case 'brief_pending':
-      return { label: hasBriefs ? '待选择策略' : '待生成策略', nextActionLabel: hasBriefs ? '选择改编策略' : '生成改编策略' }
     case 'brief_selected':
-      return { label: '待生成蓝图', nextActionLabel: '生成分集蓝图' }
     case 'blueprint_generating':
-      return { label: '蓝图生成中', nextActionLabel: '查看生成进度' }
+      return { label: '正在生成分集规划', nextActionLabel: '查看分集规划进度' }
     case 'blueprint_ready':
-      return { label: '蓝图已生成', nextActionLabel: '生成试播正文' }
+      return { label: '分集规划已完成', nextActionLabel: '开始生成剧本正文' }
     case 'script_generating':
-      return { label: '试播生成中', nextActionLabel: '查看试播进度' }
+      return { label: '正在生成剧本正文', nextActionLabel: '查看剧本正文进度' }
+    case 'script_ready':
+      return { label: '剧本正文已完成', nextActionLabel: '构建故事地图' }
+    case 'graph_building':
+      return { label: '故事地图构建中', nextActionLabel: '查看构建进度' }
+    case 'graph_ready':
+      return { label: '故事地图已就绪', nextActionLabel: '开始分镜制作' }
     case 'in_production':
       return { label: '制作中', nextActionLabel: '继续制作' }
     case 'deliverable_ready':
@@ -208,33 +228,41 @@ export function getDramaAiFirstState(drama: DramaOverviewRecord | null | undefin
     } satisfies NovelSourceHealth
     : getNovelSourceHealthByDrama(drama)
   const episodes = drama?.episodes || []
+  const episodeCount = getDramaEpisodeCount(drama)
   const blueprintCount = episodes.filter((episode) => normalizeEpisodeBlueprintPayload(episode.blueprint_payload) || episode.status === 'blueprint').length
-  const scriptReadyCount = episodes.filter((episode) => String(episode.script_content || '').trim() || episode.status === 'script_ready').length
+  const scriptReadyCount = episodes.filter((episode) =>
+    hasCurrentScript(episode)
+    || (episode.status === 'script_ready' && !isStaleEpisodeGenerationMode(episode.generation_mode)),
+  ).length
   const legacyPlanOnly = Boolean(getAdaptationPlan(drama)) && !aiFirst.source_analysis && aiFirst.adaptation_briefs.length === 0 && blueprintCount === 0
 
-  let stage: DramaAiFirstStage = aiFirst.ai_first_stage || 'source_pending'
+  let stage: DramaAiFirstStage = normalizeLegacyStage(aiFirst.ai_first_stage || 'source_pending')
   if (!aiFirst.ai_first_stage) {
     if (!sourceHealth.ok) {
       stage = 'source_pending'
     } else if (!aiFirst.source_analysis) {
       stage = 'source_ready'
-    } else if (!aiFirst.selected_brief_id) {
-      stage = 'brief_pending'
-    } else if (blueprintCount === 0) {
-      stage = 'brief_selected'
     } else if (scriptReadyCount === 0) {
-      stage = 'blueprint_ready'
+      stage = 'script_generating'
     } else {
-      stage = 'in_production'
+      stage = 'script_ready'
     }
+  }
+  if (
+    episodes.length > 0
+    && episodeCount > 0
+    && scriptReadyCount < episodeCount
+    && ['script_ready', 'graph_building', 'graph_ready', 'in_production', 'deliverable_ready'].includes(stage)
+  ) {
+    stage = 'script_generating'
   }
 
   const blockers = [
     !sourceHealth.ok ? sourceHealth.message : null,
-    sourceHealth.over_context_limit ? `长篇源稿：约 ${sourceHealth.estimated_tokens.toLocaleString()} tokens，需分块理解` : null,
+    sourceHealth.over_context_limit ? `长篇源稿：AI 会自动分段理解并汇总全书主线` : null,
     legacyPlanOnly ? '存在旧方案草稿，需迁移或重新生成 AI 策略' : null,
   ].filter(Boolean) as string[]
-  const description = describeStage(stage, aiFirst.adaptation_briefs.length > 0)
+  const description = describeStage(stage)
 
   return {
     stage,

@@ -336,16 +336,15 @@ export function AIServicesTab() {
     }
   }
 
-  if (loading) return <div className="page-shell flex-1 min-h-0 text-text-3 text-sm">加载中...</div>
+  if (loading) return <div className="settings-pane"><div className="settings-pane-body text-sm text-text-3">加载中...</div></div>
 
   return (
-    <div className="page-shell animate-fade-up flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Head (sticky) */}
-      <div className="shrink-0 pb-4">
+    <div className="settings-pane">
+      <div className="settings-pane-head">
         <h2 className="page-title mb-2">AI 服务配置</h2>
         <p className="page-subtitle">按服务类型添加与管理 AI 模型配置。</p>
         <div
-          className="mt-4 flex gap-1 overflow-x-auto pb-0.5"
+          className="content-segmented-list mt-4"
           role="tablist"
           aria-label="AI 服务类型"
         >
@@ -358,12 +357,9 @@ export function AIServicesTab() {
                 type="button"
                 role="tab"
                 aria-selected={selected}
+                data-state={selected ? 'active' : 'inactive'}
                 onClick={() => setActiveType(st.type)}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-2 text-sm transition-colors cursor-pointer ${
-                  selected
-                    ? 'border-accent-glow bg-accent-bg font-semibold text-accent-text'
-                    : 'border-border bg-bg-0 text-text-2 hover:border-accent hover:bg-bg-hover hover:text-text-0'
-                }`}
+                className="content-segmented-trigger inline-flex cursor-pointer items-center gap-1.5"
               >
                 <span>{st.label}</span>
                 <span
@@ -379,7 +375,7 @@ export function AIServicesTab() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pt-5">
+      <div className="settings-pane-body">
         <section className="mb-6">
           <div className="mb-3 flex items-center gap-3">
             <div>
@@ -399,7 +395,7 @@ export function AIServicesTab() {
           </div>
           <div className="space-y-2">
             {byType(activeType).map(c => (
-              <div key={c.id} className="flex items-center gap-3 px-4 py-3 rounded-[14px] bg-bg-0 border border-border">
+              <div key={c.id} className="settings-record-row flex items-center gap-3 px-4 py-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="text-xs font-semibold text-text-0">{c.name || providerLabel(c.provider)}</span>
@@ -433,7 +429,7 @@ export function AIServicesTab() {
               </div>
             ))}
             {byType(activeType).length === 0 && (
-              <div className="rounded-[14px] border border-dashed border-border bg-bg-2 py-6 text-center text-sm text-text-3">
+              <div className="settings-empty-panel py-6 text-center text-sm text-text-3">
                 暂无配置
               </div>
             )}
@@ -443,8 +439,8 @@ export function AIServicesTab() {
 
       {/* Config Dialog */}
       <Dialog open={cfgDialog} onOpenChange={setCfgDialog}>
-        <DialogContent layout="panel" className="w-[min(960px,calc(100%-2rem))] max-w-[960px] sm:max-w-[960px]">
-          <DialogHeaderBar density="compact" className="border-b border-border/70">
+        <DialogContent variant="workspace" size="wide">
+          <DialogHeaderBar variant="workspace">
             <DialogTitle className="text-lg font-semibold text-text-0 sm:text-xl">
               {dialogTitle}
             </DialogTitle>
@@ -507,7 +503,7 @@ export function AIServicesTab() {
               </aside>
 
               {/* 右侧表单 */}
-              <DialogMain density="compact" className="min-h-0 flex-1 overflow-y-auto">
+              <DialogMain variant="workspace" className="min-h-0 flex-1 overflow-y-auto">
                 <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
                   <label className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-text-1">
@@ -637,7 +633,7 @@ export function AIServicesTab() {
               </DialogMain>
             </div>
 
-            <DialogActions density="compact" className="sm:justify-end">
+            <DialogActions variant="workspace" className="sm:justify-end">
               <Button variant="outline" className="h-9" onClick={() => setCfgDialog(false)}>
                 取消
               </Button>

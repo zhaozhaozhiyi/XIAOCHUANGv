@@ -9,11 +9,10 @@
 
 import { expect, test } from '@playwright/test'
 import { gotoCanvasList, resetCanvasMock } from './_helpers'
-import { loginAsConsumer } from '../helpers/auth'
 
 test.describe('generate movie', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsConsumer(page, { next: '/canvas' })
+    await page.goto('/canvas')
     await resetCanvasMock(page)
     await gotoCanvasList(page)
     await page.getByText(/演示画布/).first().click()

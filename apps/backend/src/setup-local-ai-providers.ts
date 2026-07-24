@@ -2,6 +2,8 @@ import 'reflect-metadata'
 import 'dotenv/config'
 
 import { and, eq } from 'drizzle-orm'
+import { getProviderPreset, type AIServiceType } from '@xiaochuang/contracts'
+import { prepareAiConfigSecretForStorage } from './modules/ai-configs/ai-configs.crypto'
 
 function getSetupUserId() {
   const id = Number(process.env.AI_SETUP_USER_ID || '1')
@@ -23,68 +25,51 @@ interface ProviderPreset {
   settings?: Record<string, unknown> | null
 }
 
-const PRESETS: ProviderPreset[] = [
-  {
-    serviceType: 'text',
-    provider: 'moonshot',
-    name: '月之暗面',
-    description: '文本 · Kimi，Agent 对话',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    apiKeyEnv: 'MOONSHOT_API_KEY',
-    modelEnv: 'MOONSHOT_TEXT_MODEL',
-    priority: 900_004,
-  },
-  {
-    serviceType: 'text',
-    provider: 'deepseek',
-    name: 'DeepSeek',
-    description: '文本 · 高性价比推理',
-    baseUrl: 'https://api.deepseek.com/v1',
-    apiKeyEnv: 'DEEPSEEK_API_KEY',
-    modelEnv: 'DEEPSEEK_TEXT_MODEL',
-    priority: 900_003,
-  },
-  {
-    serviceType: 'text',
-    provider: 'minimax',
-    name: 'MiniMax',
-    description: '文本 · abab，Agent 对话',
-    baseUrl: 'https://api.minimaxi.com/v1',
-    apiKeyEnv: 'MINIMAX_API_KEY',
-    modelEnv: 'MINIMAX_TEXT_MODEL',
-    priority: 900_002,
-  },
-  {
-    serviceType: 'text',
-    provider: 'ali',
-    name: '阿里云',
-    description: '文本 · 通义 Qwen，Agent 对话',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    apiKeyEnv: 'ALI_API_KEY',
-    modelEnv: 'ALI_TEXT_MODEL',
-    priority: 900_001,
-  },
-  {
-    serviceType: 'image',
-    provider: 'minimax',
-    name: 'MiniMax',
-    description: '图片 · image-01，角色与场景图',
-    baseUrl: 'https://api.minimaxi.com',
-    apiKeyEnv: 'MINIMAX_API_KEY',
-    modelEnv: 'MINIMAX_IMAGE_MODEL',
-    priority: 900_010,
-  },
+type ProviderEnvBinding = {
+  serviceType: AIServiceType
+  provider: string
+  apiKeyEnv: string
+  modelEnv: string
+  priority: number
+  settings?: Record<string, unknown> | null
+}
+
+const PROVIDER_ENV_BINDINGS: ProviderEnvBinding[] = [
+  { serviceType: 'text', provider: 'moonshot', apiKeyEnv: 'MOONSHOT_API_KEY', modelEnv: 'MOONSHOT_TEXT_MODEL', priority: 900_004 },
+  { serviceType: 'text', provider: 'deepseek', apiKeyEnv: 'DEEPSEEK_API_KEY', modelEnv: 'DEEPSEEK_TEXT_MODEL', priority: 900_003 },
+  { serviceType: 'text', provider: 'minimax', apiKeyEnv: 'MINIMAX_API_KEY', modelEnv: 'MINIMAX_TEXT_MODEL', priority: 900_002 },
+  { serviceType: 'text', provider: 'ali', apiKeyEnv: 'ALI_API_KEY', modelEnv: 'ALI_TEXT_MODEL', priority: 900_001 },
+  { serviceType: 'image', provider: 'minimax', apiKeyEnv: 'MINIMAX_API_KEY', modelEnv: 'MINIMAX_IMAGE_MODEL', priority: 900_010 },
   {
     serviceType: 'audio',
     provider: 'minimax',
-    name: 'MiniMax',
-    description: '音频 · 高清 TTS',
-    baseUrl: 'https://api.minimaxi.com',
     apiKeyEnv: 'MINIMAX_API_KEY',
     modelEnv: 'MINIMAX_AUDIO_MODEL',
     priority: 900_009,
+    settings: {
+      supportedLanguageTags: ['zh-CN'],
+    },
   },
 ]
+
+const PRESETS: ProviderPreset[] = PROVIDER_ENV_BINDINGS.map((binding) => {
+  const preset = getProviderPreset(binding.serviceType, binding.provider)
+  if (!preset) {
+    throw new Error(`Missing shared provider preset for ${binding.provider}/${binding.serviceType}`)
+  }
+
+  return {
+    serviceType: binding.serviceType,
+    provider: binding.provider,
+    name: preset.defaultName,
+    description: preset.defaultDescription,
+    baseUrl: preset.baseUrl,
+    apiKeyEnv: binding.apiKeyEnv,
+    modelEnv: binding.modelEnv,
+    priority: binding.priority,
+    settings: binding.settings ?? null,
+  }
+})
 
 async function main() {
   const [{ NestFactory }, { AppModule }, { DatabaseService }, schema] = await Promise.all([
@@ -128,7 +113,7 @@ async function main() {
         name: preset.name,
         description: preset.description,
         baseUrl: preset.baseUrl,
-        apiKey,
+        apiKey: prepareAiConfigSecretForStorage(apiKey),
         model: JSON.stringify([model]),
         priority: preset.priority,
         isDefault: false,

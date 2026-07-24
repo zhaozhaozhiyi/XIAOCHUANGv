@@ -4,6 +4,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { toPublicMediaUrl } from '../../../common/media-url'
 import { DatabaseService } from '../../../db/database.service'
 import { videoGenerations } from '../../../db/schema'
+import { assertContinuityVideoRetryAllowed } from '../../drama-workspace/continuity-production-gate'
 import { VideosService } from '../../videos/videos.service'
 import { BaseTaskDomainHandler } from './base-task-domain.handler'
 import type { TaskDomainHandler, TaskRecord } from './task-domain-handler'
@@ -12,6 +13,7 @@ import {
   isStaleRunningTask,
   isTaskTooOldForResume,
   mapGenerationStatus,
+  parseJsonValue,
   sanitizePayload,
   trimText,
 } from './task-domain-utils'
@@ -34,6 +36,28 @@ export class VideoGenerationTaskHandler extends BaseTaskDomainHandler implements
       .where(and(eq(videoGenerations.id, task.domainId), eq(videoGenerations.userId, task.userId ?? 0), isNull(videoGenerations.deletedAt)))
 
     if (!generation) throw new NotFoundException('video_generation_not_found')
+    const previousPayload = parseJsonValue(task.payloadJson)
+    const continuityRetry = await assertContinuityVideoRetryAllowed(this.databaseService, {
+      episodeId: task.episodeId,
+      userId: task.userId ?? generation.userId,
+      videoGenerationId: generation.id,
+      storyboardId: generation.storyboardId,
+      payload: {
+        ...(previousPayload && typeof previousPayload === 'object' && !Array.isArray(previousPayload)
+          ? previousPayload as Record<string, unknown>
+          : {}),
+        ...payload,
+      },
+    })
+
+    if (continuityRetry != null) {
+      await this.videosService.retryContinuityVideoGeneration({
+        videoGenerationId: generation.id,
+        runId: continuityRetry.runId,
+        userId: continuityRetry.userId,
+        episodeId: continuityRetry.episodeId,
+      })
+    }
 
     await this.databaseService.db
       .update(videoGenerations)
@@ -66,10 +90,10 @@ export class VideoGenerationTaskHandler extends BaseTaskDomainHandler implements
 
     if (!generation) throw new NotFoundException('video_generation_not_found')
 
-    await this.databaseService.db
-      .update(videoGenerations)
-      .set({ status: 'canceled', errorMsg: 'Canceled by user', completedAt: this.now(), updatedAt: this.now() })
-      .where(eq(videoGenerations.id, generation.id))
+    await this.videosService.cancelVideoGeneration(
+      generation.id,
+      'Canceled by user',
+    )
 
     await this.cancelTaskRecord(task, {
       provider: generation.provider || null,
@@ -116,22 +140,17 @@ export class VideoGenerationTaskHandler extends BaseTaskDomainHandler implements
   }
 
   async markCanceled(task: TaskRecord) {
-    const timestamp = this.now()
-    await this.databaseService.db
-      .update(videoGenerations)
-      .set({ status: 'canceled', errorMsg: 'Canceled by worker', completedAt: timestamp, updatedAt: timestamp })
-      .where(eq(videoGenerations.id, task.domainId))
+    await this.videosService.cancelVideoGeneration(
+      task.domainId,
+      'Canceled by worker',
+    )
     await this.refreshPresentation(task)
     return true
   }
 
   async markFailed(task: TaskRecord, error: unknown) {
-    const timestamp = this.now()
     const message = error instanceof Error ? error.message : 'recover failed'
-    await this.databaseService.db
-      .update(videoGenerations)
-      .set({ status: 'failed', errorMsg: message, completedAt: timestamp, updatedAt: timestamp })
-      .where(eq(videoGenerations.id, task.domainId))
+    await this.videosService.failVideoGeneration(task.domainId, message)
     await this.refreshPresentation(task)
     return true
   }

@@ -1,6 +1,7 @@
 import type { FastifyReply } from 'fastify'
 
 import type { DatabaseService } from '../../../db/database.service'
+import type { DramaStoryGraphService } from '../../dramas/drama-story-graph.service'
 import type { GridService } from '../../grid/grid.service'
 import type { AiRuntimeActionItem, AiRuntimeReferenceItem } from '@xiaochuang/contracts'
 
@@ -10,6 +11,7 @@ import type { AiRuntimeActionItem, AiRuntimeReferenceItem } from '@xiaochuang/co
 // payload — that hides the dependency and breaks DI testing.
 export interface SkillHandlerServices {
   gridService: GridService
+  dramaStoryGraphService: DramaStoryGraphService
 }
 
 // ──────────────────────────────────────────────────────────────────────────

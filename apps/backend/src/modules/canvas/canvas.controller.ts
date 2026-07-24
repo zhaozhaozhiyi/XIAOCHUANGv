@@ -37,10 +37,27 @@ export class CanvasController {
   @Post()
   @HttpCode(201)
   async create(
-    @Body() body: { title?: string; source?: string },
+    @Body() body: {
+      title?: string
+      source?: string
+      profile?: string
+      source_drama_id?: string | number | null
+      source_episode_id?: string | number | null
+      source_storyboard_id?: string | number | null
+      source_drama_title?: string | null
+      production_context?: Record<string, unknown> | null
+    },
     @CurrentUser() user: CurrentUserType,
   ) {
-    const summary = await this.canvasService.createCanvas(user.id, body?.title)
+    const summary = await this.canvasService.createCanvas(user.id, body?.title, {
+      source: body?.source,
+      profile: body?.profile,
+      sourceDramaId: body?.source_drama_id,
+      sourceEpisodeId: body?.source_episode_id,
+      sourceStoryboardId: body?.source_storyboard_id,
+      sourceDramaTitle: body?.source_drama_title,
+      productionContext: body?.production_context,
+    })
     return { code: 0, message: 'ok', data: summary }
   }
 

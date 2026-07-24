@@ -8,5 +8,6 @@ import { SkillsService } from './skills.service'
   imports: [AuthModule],
   controllers: [SkillsController],
   providers: [SkillsService],
+  exports: [SkillsService],
 })
 export class SkillsModule {}

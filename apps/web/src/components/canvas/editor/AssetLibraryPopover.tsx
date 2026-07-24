@@ -12,6 +12,12 @@ import { useCanvasStore, useHistoryStore, useNodesStore, useUiStore, type FlowNo
 import { cryptoRandomId, findFreePosition } from './_utils'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { useCanvasRuntime } from './CanvasRuntimeContext'
+import {
+  DRAMACLAW_NODE_TYPES,
+  createDramaClawNode,
+  createDramaClawNodeFromAsset,
+} from '@/components/canvas/dramaclaw'
 
 type AssetTab = 'characters' | 'scenes' | 'images' | 'videos' | 'audios'
 
@@ -24,6 +30,8 @@ const TABS: Array<{ id: AssetTab; label: string }> = [
 ]
 
 export function AssetLibraryPopover({ onInserted }: { onInserted?: () => void }) {
+  const runtime = useCanvasRuntime()
+  const freezoneChrome = runtime.chrome === 'freezone'
   const reactFlow = useReactFlow()
   const addNode = useNodesStore((s) => s.addNode)
   const markEditing = useCanvasStore((s) => s.markEditing)
@@ -128,6 +136,19 @@ export function AssetLibraryPopover({ onInserted }: { onInserted?: () => void })
 
   const insertCharacter = useCallback((character: Character) => {
     const imageUrl = staticUrl(character.image_url || character.reference_images || '')
+    if (freezoneChrome) {
+      insertNode(createDramaClawNode(DRAMACLAW_NODE_TYPES.imageEdit, nextPosition(), {
+        displayName: character.name,
+        title: character.name,
+        label: character.name,
+        prompt: character.description || character.appearance || '',
+        imageUrl,
+        previewImageUrl: imageUrl,
+        media_kind: 'character',
+        characterId: String(character.id),
+      }))
+      return
+    }
     insertNode({
       id: `node_${cryptoRandomId()}`,
       type: 'character',
@@ -140,10 +161,24 @@ export function AssetLibraryPopover({ onInserted }: { onInserted?: () => void })
         characterId: String(character.id),
       },
     })
-  }, [insertNode, nextPosition])
+  }, [freezoneChrome, insertNode, nextPosition])
 
   const insertScene = useCallback((scene: Scene) => {
     const imageUrl = staticUrl(scene.image_url || '')
+    if (freezoneChrome) {
+      const title = scene.location || '未命名场景'
+      insertNode(createDramaClawNode(DRAMACLAW_NODE_TYPES.imageEdit, nextPosition(), {
+        displayName: title,
+        title,
+        label: title,
+        prompt: [scene.time, scene.prompt].filter(Boolean).join(' · '),
+        imageUrl,
+        previewImageUrl: imageUrl,
+        media_kind: 'scene',
+        sceneId: String(scene.id),
+      }))
+      return
+    }
     insertNode({
       id: `node_${cryptoRandomId()}`,
       type: 'scene',
@@ -156,10 +191,14 @@ export function AssetLibraryPopover({ onInserted }: { onInserted?: () => void })
         sceneId: String(scene.id),
       },
     })
-  }, [insertNode, nextPosition])
+  }, [freezoneChrome, insertNode, nextPosition])
 
   const insertAsset = useCallback((asset: AssetRecord) => {
     const previewUrl = staticUrl(asset.url || '')
+    if (freezoneChrome) {
+      insertNode(createDramaClawNodeFromAsset(asset, nextPosition()))
+      return
+    }
     if (asset.kind === 'audio') {
       insertNode({
         id: `node_${cryptoRandomId()}`,
@@ -204,7 +243,7 @@ export function AssetLibraryPopover({ onInserted }: { onInserted?: () => void })
         text: '图片资产引用',
       },
     })
-  }, [insertNode, nextPosition])
+  }, [freezoneChrome, insertNode, nextPosition])
 
   const renderCharacterList = () => (
     <div className="grid gap-2">

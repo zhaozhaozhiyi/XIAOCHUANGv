@@ -13,7 +13,9 @@ function thenable(result: any) {
 }
 
 function createDbMock(sourceNode: any | null = null) {
+  const insertedValues: any[] = []
   return {
+    insertedValues,
     db: {
       select: vi.fn(() => ({
         from: vi.fn(() => ({
@@ -21,7 +23,11 @@ function createDbMock(sourceNode: any | null = null) {
         })),
       })),
       insert: vi.fn(() => ({
-        values: vi.fn(() => Promise.resolve()),
+        values: vi.fn((values: any) => {
+          if (Array.isArray(values)) insertedValues.push(...values)
+          else insertedValues.push(values)
+          return Promise.resolve()
+        }),
       })),
     } as any,
   }
@@ -36,7 +42,11 @@ describe('BusinessActionService', () => {
   // 已知业务动作（快速验证）
   // ═══════════════════════════════════════════════
 
-  const KNOWN_ACTIONS = ['构想画面', '改画面', '换装', '换表情', '换时段', '换天气', '生成镜头视频', '配音']
+  const KNOWN_ACTIONS = [
+    '构想画面', '改画面', '换装', '换表情', '换时段', '换天气',
+    '生成镜头视频', '配音', '生成', '生成视频', '生成音频', '生成分镜',
+    '整理脚本', '合成', '执行技能',
+  ]
 
   for (const actionLabel of KNOWN_ACTIONS) {
     it(`已知业务动作: "${actionLabel}"`, async () => {
@@ -107,5 +117,40 @@ describe('BusinessActionService', () => {
 
     expect(result.hidden_node_id).toMatch(/^node_/)
     expect(result.run_id).toMatch(/^run_/)
+  })
+
+  it('兼容 DramaClaw 视频节点动作和目标节点数据', async () => {
+    const mockDb = createDbMock({
+      id: 'node_src', canvasId: 'cnv_1', nodeDefId: 'imageNode',
+      label: '参考图', dataJson: JSON.stringify({ imageUrl: '/static/source.png' }),
+      positionX: 100, positionY: 200,
+    })
+    const service = new BusinessActionService(mockDb as any, createOrchestratorMock() as any)
+
+    const result = await service.triggerAction('cnv_1', 1, {
+      sourceNodeId: 'node_src',
+      actionLabel: '生成视频',
+      userInput: '镜头向前推进',
+      renderedPrompt: '镜头向前推进',
+      outputMode: 'insert_new_node',
+      targetNodeType: 'videoNode',
+    })
+
+    expect(result.node?.type).toBe('videoNode')
+    expect(result.node?.data).toMatchObject({
+      displayName: '镜头向前推进',
+      videoUrl: null,
+      isGenerating: true,
+      genMode: 'textToVideo',
+    })
+
+    const visibleNode = mockDb.insertedValues.find((value) => value.nodeDefId === 'videoNode')
+    expect(JSON.parse(visibleNode.dataJson)).toMatchObject({ videoUrl: null, isGenerating: true })
+
+    const hiddenNode = mockDb.insertedValues.find((value) => value.nodeDefId === 'image-to-video')
+    expect(JSON.parse(hiddenNode.dataJson)).toMatchObject({
+      actionLabel: '生成视频',
+      references: ['/static/source.png'],
+    })
   })
 })

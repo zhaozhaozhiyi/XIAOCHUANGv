@@ -1,5 +1,7 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common'
+import { createHash } from 'node:crypto'
 import { and, eq, isNull, sql } from 'drizzle-orm'
+import ffmpeg from 'fluent-ffmpeg'
 
 import { toPublicMediaUrl } from '../../common/media-url'
 import { AssetsService } from '../assets/assets.service'
@@ -7,10 +9,15 @@ import { AiConfigResolverService } from '../ai-configs/ai-configs.resolver'
 import { defaultVolcVoiceForConfig, isVolcVoiceCompatibleWithConfig } from '../ai-configs/ai-configs.utils'
 import { DatabaseService } from '../../db/database.service'
 import { characters, dramas, episodes, storyboards, tasks } from '../../db/schema'
+import { DramaProductionBackfillService } from '../drama-workspace/drama-production-backfill.service'
 import { readProjectDefaults, resolveProjectConfigId } from '../dramas/drama-metadata'
 import { TaskQueueService } from '../queue/task-queue.service'
 import { StorageService } from '../storage/storage.service'
 import { getStoryboardTtsDialogue, isNarratorSpeaker, parseDialogueForTTS } from './audio.dialogue'
+import {
+  assertDialogueVoiceLanguageSupported,
+  getDialogueVoiceCapabilities,
+} from './audio.capabilities'
 import { getTTSAdapter } from './audio.providers.registry'
 import { saveBufferFile } from './audio.storage'
 import type { AIConfig } from './audio.config'
@@ -67,6 +74,7 @@ export class AudioService {
     @Inject(DatabaseService) private readonly databaseService: DatabaseService,
     @Inject(AiConfigResolverService) private readonly aiConfigResolver: AiConfigResolverService,
     @Inject(AssetsService) private readonly assetsService: AssetsService,
+    @Inject(DramaProductionBackfillService) private readonly backfillService: DramaProductionBackfillService,
     @Inject(StorageService) private readonly storageService: StorageService,
     @Inject(TaskQueueService) private readonly taskQueueService: TaskQueueService,
   ) {}
@@ -77,6 +85,42 @@ export class AudioService {
 
   private async resolveAudioConfig(configId?: number | null) {
     return this.aiConfigResolver.resolveConfig('audio', configId)
+  }
+
+  async resolveDialogueVoiceSnapshot(params: {
+    configId?: number | null
+    requestedVoiceId?: string | null
+    languageTag?: string | null
+  }) {
+    const config = await this.resolveAudioConfig(params.configId)
+    const requestedVoiceId = String(params.requestedVoiceId || '').trim()
+    const voiceId = requestedVoiceId || this.defaultVoiceForConfig(config)
+    if (!voiceId || !this.isVoiceCompatible(config, voiceId)) {
+      throw new Error('voice_profile_rejected')
+    }
+    const languageContract =
+      params.languageTag == null
+        ? null
+        : assertDialogueVoiceLanguageSupported({
+          config,
+          voiceId,
+          languageTag: params.languageTag,
+        })
+    return {
+      provider: config.provider,
+      model: config.model,
+      voiceId,
+      languageTag: languageContract?.languageTag ?? null,
+      capabilities: languageContract?.capabilities ?? getDialogueVoiceCapabilities(config),
+      version:
+        typeof config.settings?.voice_version === 'string'
+          ? config.settings.voice_version
+          : undefined,
+      allowedParameters: {
+        speed: true,
+        emotion: true,
+      },
+    }
   }
 
   private async resolveEpisodeProjectDefaults(episodeId: number) {
@@ -144,6 +188,24 @@ export class AudioService {
       createdAt: new Date(),
       updatedAt: new Date(),
     } as any)
+  }
+
+  private async readStoredAudioDurationMs(url: string) {
+    const filePath = await this.storageService.ensureLocalFile(url)
+    return new Promise<number>((resolve, reject) => {
+      ffmpeg.ffprobe(filePath, (error, metadata: any) => {
+        if (error) {
+          reject(new Error(`dialogue_audio_duration_unavailable: ${error.message}`))
+          return
+        }
+        const durationSeconds = Number(metadata?.format?.duration)
+        if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+          reject(new Error('dialogue_audio_duration_unavailable'))
+          return
+        }
+        resolve(Math.round(durationSeconds * 1000))
+      })
+    })
   }
 
   private async syncStoryboardTtsTask(args: {
@@ -256,6 +318,7 @@ export class AudioService {
     speed?: number
     emotion?: string
     configId?: number | null
+    languageTag?: string | null
   }) {
     const config = await this.resolveAudioConfig(params.configId)
     const adapter = getTTSAdapter(config.provider)
@@ -337,6 +400,94 @@ export class AudioService {
       voiceId: effectiveVoice,
       provider: config.provider,
       model: config.model,
+    }
+  }
+
+  /**
+   * Generates the authoritative audio for a continuous dialogue take.
+   *
+   * Unlike legacy single-shot TTS, this path never falls back to a different
+   * voice. A locked voice is a production input, not a best-effort preference.
+   */
+  async generateDialogueTake(params: {
+    text: string
+    voice: string
+    model?: string
+    speed?: number
+    emotion?: string
+    configId?: number | null
+    languageTag?: string | null
+  }) {
+    const config = await this.resolveAudioConfig(params.configId)
+    const adapter = getTTSAdapter(config.provider)
+    const voiceId = String(params.voice || '').trim()
+    if (!voiceId || !this.isVoiceCompatible(config, voiceId)) {
+      throw new Error('voice_profile_rejected')
+    }
+    if (params.languageTag != null) {
+      assertDialogueVoiceLanguageSupported({
+        config,
+        voiceId,
+        languageTag: params.languageTag,
+      })
+    }
+
+    let parsed
+    try {
+      if (adapter.generate) {
+        parsed = await adapter.generate(config, {
+          text: params.text,
+          voice: voiceId,
+          model: params.model || config.model,
+          speed: params.speed,
+          emotion: params.emotion,
+        })
+      } else {
+        const request = adapter.buildGenerateRequest(config, {
+          text: params.text,
+          voice: voiceId,
+          model: params.model || config.model,
+          speed: params.speed,
+          emotion: params.emotion,
+        })
+        const response = await fetch(request.url, {
+          method: request.method,
+          headers: request.headers,
+          body: JSON.stringify(request.body),
+        })
+        if (!response.ok) {
+          const errorText = await response.text()
+          throw new Error(`TTS API error ${response.status}: ${errorText}`)
+        }
+        parsed = adapter.parseResponse(await response.json() as any)
+      }
+    } catch (error) {
+      if (config.provider === 'volcengine' && isVolcResourceMismatch(error)) {
+        throw new Error('voice_profile_rejected')
+      }
+      throw error
+    }
+
+    const buffer = Buffer.from(parsed.audioHex, 'hex')
+    const storedFile = await saveBufferFile(
+      this.storageService,
+      buffer,
+      'audio',
+      parsed.format || 'mp3',
+      parsed.format === 'wav' ? 'audio/wav' : 'audio/mpeg',
+    )
+    const durationMs = await this.readStoredAudioDurationMs(storedFile.url)
+
+    return {
+      url: storedFile.url,
+      voiceId,
+      provider: config.provider,
+      model: params.model || config.model,
+      durationMs,
+      format: parsed.format || 'mp3',
+      audioSha256: createHash('sha256').update(buffer).digest('hex'),
+      sampleRateHz: parsed.sampleRate || null,
+      channelCount: parsed.channel || null,
     }
   }
 
@@ -438,6 +589,7 @@ export class AudioService {
   async generateStoryboardTts(args: {
     userId: number
     storyboardId: number
+    taskPayloadExtra?: Record<string, unknown>
   }) {
     const [storyboard] = await this.databaseService.db
       .select()
@@ -487,6 +639,7 @@ export class AudioService {
       text: parsedDialogue.pureText,
       voice_id: voiceId,
       config_id: episode.audioConfigId ?? resolveProjectConfigId(episodeDefaults?.drama?.metadata, 'audio') ?? null,
+      ...(args.taskPayloadExtra ?? {}),
     }
 
     const taskTitle = trimText(storyboard.dialogue || storyboard.title || storyboard.description, 40)
@@ -590,9 +743,9 @@ export class AudioService {
       })
 
       try {
-        await this.assetsService.ensureAssetFromTask(task.id)
+        await this.backfillService.backfillTaskResult(task.id)
       } catch (error) {
-        console.error('[AudioService] Failed to auto-create asset from storyboard tts task', task.id, error)
+        console.error('[AudioService] Failed to backfill storyboard tts task result', task.id, error)
       }
 
       return {

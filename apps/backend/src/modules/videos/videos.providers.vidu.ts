@@ -7,6 +7,7 @@ import type {
   VideoProviderRequest,
 } from './videos.providers.types'
 import { joinProviderUrl } from './videos.providers.url'
+import { requireViduCallbackUrl } from './videos.webhook'
 
 export class ViduVideoAdapter implements VideoProviderAdapter {
   provider = 'vidu'
@@ -19,12 +20,18 @@ export class ViduVideoAdapter implements VideoProviderAdapter {
       model,
       images: [],
       prompt: record.prompt,
+      callback_url: requireViduCallbackUrl(),
     }
     if (record.referenceMode === 'single' && record.imageUrl) {
       body.images.push(record.imageUrl)
     } else if (record.referenceMode === 'first_last') {
       if (record.firstFrameUrl) body.images.push(record.firstFrameUrl)
       if (record.lastFrameUrl) body.images.push(record.lastFrameUrl)
+      if (record.referenceImageUrls) {
+        try {
+          body.images.push(...JSON.parse(record.referenceImageUrls))
+        } catch {}
+      }
     } else if (record.referenceMode === 'multiple' && record.referenceImageUrls) {
       try {
         const refs = JSON.parse(record.referenceImageUrls)

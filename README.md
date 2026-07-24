@@ -31,7 +31,7 @@
 
 ## 版本规划
 
-当前产品版本为 `0.22.0`，下一版本规划为 `0.23.0`。后续版本线、当前版与上一版差异、下一版重点统一维护在 [VERSION_PLAN.md](./VERSION_PLAN.md)，当前版发布说明见 [RELEASES/0.22.0.md](./RELEASES/0.22.0.md)。
+当前产品版本为 `0.23.2`，下一版本规划为 `0.23.3`。后续版本线、当前版与上一版差异、下一版重点统一维护在 [docs/VERSION_PLAN.md](./docs/VERSION_PLAN.md)，当前版发布说明见 [RELEASES/0.23.2.md](./RELEASES/0.23.2.md)。
 
 ## 为什么值得做
 
@@ -144,7 +144,7 @@
 
 ## 技术栈
 
-- 前端：Next.js 16、React 19
+- 前端：Next.js 15、React 19
 - 后端：NestJS 11、Fastify
 - 数据层：PostgreSQL、Drizzle ORM
 - 队列：Redis、BullMQ

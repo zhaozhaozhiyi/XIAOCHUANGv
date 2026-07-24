@@ -160,7 +160,7 @@ async function main() {
 
     const storageDriver = configService.get<'local' | 's3'>('STORAGE_DRIVER', 'local')
     const publicBaseUrl = configService.get<string>('STORAGE_PUBLIC_BASE_URL') || null
-    const redisUrl = configService.get<string>('REDIS_URL', 'redis://127.0.0.1:6379')
+    const redisUrl = configService.getOrThrow<string>('REDIS_URL')
     const connection = queueShared.createTaskQueueConnection(redisUrl, 'worker')
     const workerId = `smoke-worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
 

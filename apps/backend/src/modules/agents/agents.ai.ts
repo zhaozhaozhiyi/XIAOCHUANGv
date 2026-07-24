@@ -25,6 +25,23 @@ export function getTextProviderBaseUrl(config: AIConfig) {
   return config.baseUrl
 }
 
+export function withTextProviderRequestOptions(config: AIConfig, body: Record<string, unknown>) {
+  const provider = config.provider.toLowerCase()
+  const model = String(body.model || config.model || '').trim().toLowerCase()
+
+  const hasThinkingOption = Object.prototype.hasOwnProperty.call(body, 'thinking')
+
+  if (provider === 'deepseek' && model.startsWith('deepseek-v4-') && !hasThinkingOption) {
+    return {
+      ...body,
+      // DeepSeek V4 defaults to thinking mode; existing text flows expect final content only.
+      thinking: { type: 'disabled' },
+    }
+  }
+
+  return body
+}
+
 export async function getTextConfig(databaseService: DatabaseService, userId?: number | null): Promise<AIConfig> {
   const resolver = new AiConfigResolverService(databaseService)
   const config = await resolver.getActiveConfig('text', userId)

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common'
 
 import { AudioModule } from '../audio/audio.module'
+import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module'
 import { AuthModule } from '../auth/auth.module'
 import { ComposeModule } from '../compose/compose.module'
 import { DramasModule } from '../dramas/dramas.module'
@@ -11,8 +12,11 @@ import { DramaAdaptationBriefsTaskHandler } from './domain-handlers/drama-adapta
 import { DramaEpisodeBlueprintsTaskHandler } from './domain-handlers/drama-episode-blueprints-task.handler'
 import { DramaPilotScriptsTaskHandler } from './domain-handlers/drama-pilot-scripts-task.handler'
 import { DramaSourceAnalysisTaskHandler } from './domain-handlers/drama-source-analysis-task.handler'
+import { DramaStoryGraphBuildTaskHandler } from './domain-handlers/drama-story-graph-build-task.handler'
+import { EpisodeDialogueTakeTaskHandler } from './domain-handlers/episode-dialogue-take-task.handler'
 import { ImageGenerationTaskHandler } from './domain-handlers/image-generation-task.handler'
 import { StoryboardComposeTaskHandler } from './domain-handlers/storyboard-compose-task.handler'
+import { StoryboardBreakdownTaskHandler } from './domain-handlers/storyboard-breakdown-task.handler'
 import { StoryboardTtsTaskHandler } from './domain-handlers/storyboard-tts-task.handler'
 import { VideoGenerationTaskHandler } from './domain-handlers/video-generation-task.handler'
 import { VideoMergeTaskHandler } from './domain-handlers/video-merge-task.handler'
@@ -22,7 +26,7 @@ import { TasksController } from './tasks.controller'
 import { TasksService } from './tasks.service'
 
 @Module({
-  imports: [AuthModule, ImagesModule, VideosModule, AudioModule, ComposeModule, MergeModule, DramasModule],
+  imports: [AuthModule, ImagesModule, VideosModule, AudioModule, ComposeModule, MergeModule, DramasModule, AgentRuntimeModule],
   controllers: [TasksController],
   providers: [
     TasksService,
@@ -32,10 +36,13 @@ import { TasksService } from './tasks.service'
     DramaAdaptationBriefsTaskHandler,
     DramaEpisodeBlueprintsTaskHandler,
     DramaPilotScriptsTaskHandler,
+    DramaStoryGraphBuildTaskHandler,
     ImageGenerationTaskHandler,
     VideoGenerationTaskHandler,
     StoryboardTtsTaskHandler,
+    EpisodeDialogueTakeTaskHandler,
     StoryboardComposeTaskHandler,
+    StoryboardBreakdownTaskHandler,
     VideoMergeTaskHandler,
   ],
   exports: [TasksService, TaskExecutionService, TaskDomainRegistry],

@@ -16,7 +16,7 @@
  * 保留 PR1 行为：debounced save、viewport 同步、isValidConnection。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -33,6 +33,21 @@ import {
   type XYPosition,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import {
+  ArrowLeft,
+  BookOpenText,
+  CheckCircle2,
+  Film,
+  LayoutGrid,
+  Loader2,
+  Maximize2,
+  Plus,
+  Redo2,
+  Undo2,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
+import Link from 'next/link'
 import { toast } from 'sonner'
 
 import { cn } from '@/lib/cn'
@@ -43,8 +58,10 @@ import {
   useHistoryStore,
   useNodesStore,
   usePipelineStore,
+  useRuntimeStore,
   useUiStore,
   type FlowNode,
+  type SaveStatus,
 } from '@/lib/canvas/store'
 import { useDebouncedSave } from '@/lib/canvas/hooks/useDebouncedSave'
 import { useAutoLayout } from '@/lib/canvas/hooks/useAutoLayout'
@@ -65,7 +82,30 @@ import { LeftToolbar } from './LeftToolbar'
 import { NodeContextMenu } from './NodeContextMenu'
 import { DurationPopover } from './DurationPopover'
 import { TopBarSkeleton } from './TopBarSkeleton'
+import { RunProgressIndicator } from './RunProgressIndicator'
+import { CanvasRuntimeProvider, useCanvasRuntime, type CanvasRuntimeValue } from './CanvasRuntimeContext'
 import { GenerateMovieDialog } from '../modals/GenerateMovieDialog'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { AddNodeSubmenu } from './AddNodeSubmenu'
+import { AssetLibraryPopover } from './AssetLibraryPopover'
+import {
+  DRAMACLAW_ASSET_DRAG_MIME,
+  DRAMACLAW_NODE_TYPES,
+  createDramaClawNode,
+  createDramaClawNodeFromAsset,
+  dramaClawNodeTypes,
+  parseDramaClawAssetDrag,
+} from '@/components/canvas/dramaclaw'
 
 /**
  * PR2：10 个独立节点组件（5 内容 + 5 执行），按 nodeRegistry.id 注册。
@@ -101,7 +141,155 @@ const EDGE_TYPES: EdgeTypes = {
   default: canvasEdges.NarrativeEdge,
 }
 
+interface FreezoneCanvasChromeProps {
+  onUndo: () => void
+  onRedo: () => void
+  onAutoLayout: () => void
+  onOpenGenerate: () => void
+  onCancelRun: () => void
+  canUndo: boolean
+  canRedo: boolean
+  canAutoLayout: boolean
+}
+
+function FreezoneCanvasChrome({
+  onUndo,
+  onRedo,
+  onAutoLayout,
+  onOpenGenerate,
+  onCancelRun,
+  canUndo,
+  canRedo,
+  canAutoLayout,
+}: FreezoneCanvasChromeProps) {
+  const runtime = useCanvasRuntime()
+  const reactFlow = useReactFlow()
+  const title = useCanvasStore((s) => s.title)
+  const saveStatus = useCanvasStore((s) => s.saveStatus)
+  const runState = useRuntimeStore((s) => s.runState)
+
+  return (
+    <TooltipProvider delayDuration={0}>
+      <div className="drama-freezone-title-pill">
+        <Link
+          href={runtime.backHref || '/canvas'}
+          aria-label={runtime.backLabel || '返回画布列表'}
+          className="drama-freezone-icon-button"
+        >
+          <ArrowLeft size={15} />
+        </Link>
+        <div className="drama-freezone-title-copy">
+          <strong>{title || '未命名画布'}</strong>
+          <SavePill status={saveStatus} />
+        </div>
+        {runState === 'running' ? (
+          <RunProgressIndicator onCancel={onCancelRun} />
+        ) : (
+          <button type="button" className="drama-freezone-primary-button" onClick={onOpenGenerate}>
+            <Film size={14} />
+            <span>生成成片</span>
+          </button>
+        )}
+      </div>
+
+      <div className="drama-freezone-quickbar">
+        <Popover>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <button type="button" className="drama-freezone-tool-button" aria-label="添加节点">
+                  <Plus size={17} />
+                </button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="top">添加节点</TooltipContent>
+          </Tooltip>
+          <PopoverContent side="top" align="center" className="drama-freezone-popover w-60 p-1">
+            <AddNodeSubmenu position="screen-center" variant="menu" />
+          </PopoverContent>
+        </Popover>
+
+        <Popover>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <button type="button" className="drama-freezone-tool-button" aria-label="引用资产">
+                  <BookOpenText size={17} />
+                </button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="top">引用资产</TooltipContent>
+          </Tooltip>
+          <PopoverContent side="top" align="center" className="drama-freezone-popover w-[380px] p-3">
+            <AssetLibraryPopover />
+          </PopoverContent>
+        </Popover>
+
+        <div className="drama-freezone-tool-separator" />
+        <FreezoneToolButton icon={LayoutGrid} label="自动排列" onClick={onAutoLayout} disabled={!canAutoLayout} />
+        <FreezoneToolButton icon={Undo2} label="撤销" onClick={onUndo} disabled={!canUndo} />
+        <FreezoneToolButton icon={Redo2} label="重做" onClick={onRedo} disabled={!canRedo} />
+      </div>
+
+      <div className="drama-freezone-zoom-stack">
+        <FreezoneToolButton icon={ZoomIn} label="放大" onClick={() => reactFlow.zoomIn({ duration: 160 })} />
+        <FreezoneToolButton icon={ZoomOut} label="缩小" onClick={() => reactFlow.zoomOut({ duration: 160 })} />
+        <FreezoneToolButton icon={Maximize2} label="适应画布" onClick={() => reactFlow.fitView({ padding: 0.22, duration: 220 })} />
+      </div>
+    </TooltipProvider>
+  )
+}
+
+function FreezoneToolButton({
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+}: {
+  icon: React.ElementType
+  label: string
+  onClick: () => void
+  disabled?: boolean
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="drama-freezone-tool-button"
+          onClick={onClick}
+          disabled={disabled}
+          aria-label={label}
+        >
+          <Icon size={17} />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function SavePill({ status }: { status: SaveStatus }) {
+  const map: Record<SaveStatus, { icon: React.ElementType; text: string; className: string }> = {
+    idle: { icon: CheckCircle2, text: '准备中', className: 'is-muted' },
+    editing: { icon: Loader2, text: '编辑中', className: 'is-warning' },
+    saving: { icon: Loader2, text: '保存中', className: 'is-saving' },
+    saved: { icon: CheckCircle2, text: '已保存', className: 'is-saved' },
+    error: { icon: CheckCircle2, text: '保存失败', className: 'is-error' },
+  }
+  const item = map[status]
+  const Icon = item.icon
+  return (
+    <span className={cn('drama-freezone-save-pill', item.className)}>
+      <Icon size={12} className={status === 'saving' || status === 'editing' ? 'animate-spin' : undefined} />
+      <span>{item.text}</span>
+    </span>
+  )
+}
+
 function InnerEditor() {
+  const runtime = useCanvasRuntime()
+  const freezoneChrome = runtime.chrome === 'freezone'
   const canvasId = useCanvasStore((s) => s.canvasId)
   const setViewport = useCanvasStore((s) => s.setViewport)
   const markEditing = useCanvasStore((s) => s.markEditing)
@@ -141,9 +329,12 @@ function InnerEditor() {
   const chatOpen = usePipelineStore((s) => s.chatOpen)
 
   const reactFlow = useReactFlow()
+  const sourceFocusKeyRef = useRef<string | null>(null)
   const { applyAutoLayout, fitWithPanels } = useAutoLayout()
 
-  const nodeTypes = useMemo(() => NODE_TYPES, [])
+  const nodeTypes = useMemo(() => (
+    freezoneChrome ? { ...NODE_TYPES, ...dramaClawNodeTypes } : NODE_TYPES
+  ), [freezoneChrome])
   const edgeTypes = useMemo(() => EDGE_TYPES, [])
 
   // ─── 保存链路（保留 PR1） ──────────────────────────────────────────────────
@@ -280,18 +471,23 @@ function InnerEditor() {
     (pos: XYPosition) => {
       historyPush()
       const id = `node_${cryptoRandomId()}`
-      const newNode: FlowNode = {
-        id,
-        // PR2：用 nodeRegistry['image'] 真正的 ImageNode 渲染（替代 PR1.x 兜底）
-        type: 'image',
-        position: findFreePosition(pos, useNodesStore.getState().nodes),
-        data: { label: '', images: [] },
+      const newNode: FlowNode = freezoneChrome
+        ? createDramaClawNode(
+            DRAMACLAW_NODE_TYPES.imageEdit,
+            findFreePosition(pos, useNodesStore.getState().nodes),
+          )
+        : {
+            id,
+            // PR2：用 nodeRegistry['image'] 真正的 ImageNode 渲染（替代 PR1.x 兜底）
+            type: 'image',
+            position: findFreePosition(pos, useNodesStore.getState().nodes),
+            data: { label: '', images: [] },
       }
       addNode(newNode)
       markEditing()
-      setSelectedNodeId(id)
+      setSelectedNodeId(newNode.id)
     },
-    [addNode, historyPush, markEditing, setSelectedNodeId],
+    [addNode, freezoneChrome, historyPush, markEditing, setSelectedNodeId],
   )
 
   // PR3 起"添加节点"由 AddNodeSubmenu（左工具栏 popover / 右键子菜单）接管，
@@ -347,26 +543,57 @@ function InnerEditor() {
       x: typeof window !== 'undefined' ? window.innerWidth / 2 : 600,
       y: typeof window !== 'undefined' ? window.innerHeight / 2 : 400,
     })
-    addNode({
-      id,
-      type: 'image',
-      position: findFreePosition(
-        { x: pos.x - 128, y: pos.y - 80 },
-        useNodesStore.getState().nodes,
-      ),
-      data: { label: '粘贴图片', images: [img] },
-    })
+    const position = findFreePosition(
+      { x: pos.x - 128, y: pos.y - 80 },
+      useNodesStore.getState().nodes,
+    )
+    const pastedNode: FlowNode = freezoneChrome
+      ? createDramaClawNode(DRAMACLAW_NODE_TYPES.imageEdit, position, {
+          displayName: '粘贴图片',
+          imageUrl: img,
+          previewImageUrl: img,
+        })
+      : {
+          id,
+          type: 'image',
+          position,
+          data: { label: '粘贴图片', images: [img] },
+        }
+    addNode(pastedNode)
     markEditing()
-    setSelectedNodeId(id)
+    setSelectedNodeId(pastedNode.id)
   }, [
     addNode,
     clipboardImage,
+    freezoneChrome,
     historyPush,
     markEditing,
     reactFlow,
     setClipboardImage,
     setSelectedNodeId,
   ])
+
+  const handleDragOver = useCallback<React.DragEventHandler<HTMLDivElement>>((event) => {
+    if (event.dataTransfer.types.includes(DRAMACLAW_ASSET_DRAG_MIME)) {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+    }
+  }, [])
+
+  const handleDrop = useCallback<React.DragEventHandler<HTMLDivElement>>((event) => {
+    const asset = parseDramaClawAssetDrag(event.dataTransfer.getData(DRAMACLAW_ASSET_DRAG_MIME))
+    if (!asset) return
+    event.preventDefault()
+    historyPush()
+    const flowPosition = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    const node = createDramaClawNodeFromAsset(asset, findFreePosition(
+      { x: flowPosition.x - 160, y: flowPosition.y - 120 },
+      useNodesStore.getState().nodes,
+    ))
+    addNode(node)
+    markEditing()
+    setSelectedNodeId(node.id)
+  }, [addNode, historyPush, markEditing, reactFlow, setSelectedNodeId])
 
   // ─── 全局快捷键 ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -478,6 +705,26 @@ function InnerEditor() {
     fitWithPanels()
   }, [chatOpen, inspectorOpen, nodes.length, fitWithPanels])
 
+  // 资产库回源：/canvas/:id?node=:nodeId 打开后定位并选中来源节点。
+  useEffect(() => {
+    const sourceNodeId = new URLSearchParams(window.location.search).get('node')
+    if (!canvasId || !sourceNodeId || nodes.length === 0) return
+    const focusKey = `${canvasId}:${sourceNodeId}`
+    if (sourceFocusKeyRef.current === focusKey) return
+
+    const target = nodes.find((item) => item.id === sourceNodeId)
+    sourceFocusKeyRef.current = focusKey
+    if (!target) {
+      toast.info('来源节点已不存在', { description: '已打开来源画布' })
+      return
+    }
+
+    setSelectedNodeId(sourceNodeId)
+    window.requestAnimationFrame(() => {
+      reactFlow.fitView({ nodes: [{ id: sourceNodeId }], padding: 0.35, duration: 500 })
+    })
+  }, [canvasId, nodes, reactFlow, setSelectedNodeId])
+
   // PR3：关联模式时 cursor 变十字
   const cursorClass = associateMode ? 'cursor-crosshair' : ''
 
@@ -507,14 +754,22 @@ function InnerEditor() {
       canRedo={canRedo}
       canPaste={!!clipboardImage}
     >
-      <div className="flex h-full flex-col">
-        <TopBarSkeleton
-          onOpenGenerate={() => setGenerateOpen(true)}
-          onCancelRun={runStatus.stop}
-        />
+      <div className={cn('flex h-full flex-col', freezoneChrome && 'drama-freezone-canvas-editor')}>
+        {!freezoneChrome ? (
+          <TopBarSkeleton
+            onOpenGenerate={() => setGenerateOpen(true)}
+            onCancelRun={runStatus.stop}
+          />
+        ) : null}
         <div
-          className={cn('relative min-h-0 flex-1 bg-canvas-bg', cursorClass)}
+          className={cn(
+            'relative min-h-0 flex-1 bg-canvas-bg',
+            cursorClass,
+            freezoneChrome && 'drama-freezone-canvas-surface',
+          )}
           onDoubleClick={handlePaneDblClick}
+          onDragOver={freezoneChrome ? handleDragOver : undefined}
+          onDrop={freezoneChrome ? handleDrop : undefined}
         >
         <ReactFlow
           nodes={nodes}
@@ -548,14 +803,16 @@ function InnerEditor() {
           <Background
             variant={BackgroundVariant.Dots}
             gap={20}
-            size={1}
+            size={freezoneChrome ? 2 : 1}
             color="var(--canvas-grid-dot)"
           />
-          <Controls
-            position="bottom-left"
-            showInteractive={false}
-            className="!bottom-3 !left-3 !rounded-lg !border !border-border !bg-canvas-surface !shadow-default [&_button]:!border-border [&_button]:!bg-bg-1 [&_button:hover]:!bg-bg-hover [&_svg]:!fill-canvas-text"
-          />
+          {!freezoneChrome && (
+            <Controls
+              position="bottom-left"
+              showInteractive={false}
+              className="!bottom-3 !left-3 !rounded-lg !border !border-border !bg-canvas-surface !shadow-default [&_button]:!border-border [&_button]:!bg-bg-1 [&_button:hover]:!bg-bg-hover [&_svg]:!fill-canvas-text"
+            />
+          )}
           {!inspectorOpen && (
           <MiniMap
             position="bottom-right"
@@ -563,25 +820,46 @@ function InnerEditor() {
             zoomable
             nodeStrokeWidth={2}
             maskColor="var(--canvas-minimap-mask)"
-            className="!bottom-3 !right-3 !rounded-lg !border !border-border !bg-canvas-surface"
+            className={cn(
+              '!rounded-lg !border',
+              freezoneChrome
+                ? 'drama-freezone-minimap !border-border !bg-canvas-surface'
+                : '!bottom-3 !right-3 !border-border !bg-canvas-surface',
+            )}
             nodeColor={getMinimapNodeColor}
           />
           )}
         </ReactFlow>
 
         <CanvasEmptyState />
-        <LeftToolbar
-          onUndo={historyUndo}
-          onRedo={historyRedo}
-          onAutoLayout={() => applyAutoLayout()}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          canAutoLayout={nodes.length > 0}
-        />
-        {/* v2.2 PR-A：左=对话编排；右=统一检视面板（流程/属性 Tab），
-            与 LeftToolbar 同为 overlay，共用同一 React Flow 画布 */}
-        <ChatDock />
-        <InspectorPanel />
+        {freezoneChrome ? (
+          <FreezoneCanvasChrome
+            onUndo={historyUndo}
+            onRedo={historyRedo}
+            onAutoLayout={() => applyAutoLayout()}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            canAutoLayout={nodes.length > 0}
+            onOpenGenerate={() => setGenerateOpen(true)}
+            onCancelRun={runStatus.stop}
+          />
+        ) : (
+          <>
+            <LeftToolbar
+              onUndo={historyUndo}
+              onRedo={historyRedo}
+              onAutoLayout={() => applyAutoLayout()}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              canAutoLayout={nodes.length > 0}
+            />
+            {/* v2.2 PR-A：左=对话编排；右=统一检视面板（流程/属性 Tab），
+                与 LeftToolbar 同为 overlay，共用同一 React Flow 画布 */}
+            <ChatDock />
+            <InspectorPanel />
+          </>
+        )}
+        {freezoneChrome ? <ChatDock /> : null}
         <NodeContextMenu />
         <DurationPopover />
         </div>
@@ -595,10 +873,12 @@ function InnerEditor() {
   )
 }
 
-export function CanvasEditor() {
+export function CanvasEditor({ runtime }: { runtime?: CanvasRuntimeValue } = {}) {
   return (
-    <ReactFlowProvider>
-      <InnerEditor />
-    </ReactFlowProvider>
+    <CanvasRuntimeProvider value={runtime}>
+      <ReactFlowProvider>
+        <InnerEditor />
+      </ReactFlowProvider>
+    </CanvasRuntimeProvider>
   )
 }

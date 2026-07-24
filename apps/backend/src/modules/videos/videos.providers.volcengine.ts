@@ -22,6 +22,12 @@ export class VolcEngineVideoAdapter implements VideoProviderAdapter {
     } else if (record.referenceMode === 'first_last') {
       if (record.firstFrameUrl) content.push({ type: 'image_url', image_url: { url: record.firstFrameUrl }, role: 'first_frame' })
       if (record.lastFrameUrl) content.push({ type: 'image_url', image_url: { url: record.lastFrameUrl }, role: 'last_frame' })
+      if (record.referenceImageUrls) {
+        try {
+          const refs = JSON.parse(record.referenceImageUrls)
+          for (const url of refs) content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
+        } catch {}
+      }
     } else if (record.referenceMode === 'multiple' && record.referenceImageUrls) {
       try {
         const refs = JSON.parse(record.referenceImageUrls)

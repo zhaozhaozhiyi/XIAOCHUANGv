@@ -30,6 +30,9 @@ export async function sendVerificationSms(args: SendVerificationSmsArgs) {
   }
 
   if (provider === 'console') {
+    if (!isDevOrTest()) {
+      throw new Error('生产环境不能使用 console 短信服务提供商')
+    }
     await sendByConsole(args)
     return
   }

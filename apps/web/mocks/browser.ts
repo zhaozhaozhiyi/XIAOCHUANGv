@@ -7,8 +7,9 @@
 import { setupWorker } from 'msw/browser'
 import { canvasHandlers } from './handlers/canvas'
 import { aiHandlers } from './handlers/ai'
+import { dramaWorkspaceHandlers } from './handlers/drama-workspace'
 
-export const worker = setupWorker(...canvasHandlers, ...aiHandlers)
+export const worker = setupWorker(...canvasHandlers, ...aiHandlers, ...dramaWorkspaceHandlers)
 
 /** 提供给开发者控制台调试用 */
 if (typeof window !== 'undefined') {

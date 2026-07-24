@@ -1,13 +1,26 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Optional } from '@nestjs/common'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
 import { taskLogs, tasks } from '../../db/schema'
+import {
+  AgentExecutionService,
+  type AgentExecutionRecord,
+} from '../agent-runtime/agent-execution.service'
+import { AgentRuntimeService } from '../agent-runtime/agent-runtime.service'
 import { TaskDomainRegistry } from './task-domain.registry'
 
 const LOCK_TTL_MS = 10 * 60_000
 const MAX_RETRY_ATTEMPTS = 7
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'canceled', 'cancelled', 'dead_letter'])
+const ACTIVE_AGENT_EXECUTION_STATUSES = new Set([
+  'created',
+  'queued',
+  'starting',
+  'running',
+  'checkpointed',
+  'stopping',
+])
 
 function isCanceledError(error: unknown) {
   return error instanceof Error && error.message.toLowerCase().includes('canceled')
@@ -22,12 +35,19 @@ export class TaskExecutionService {
   constructor(
     @Inject(DatabaseService) private readonly databaseService: DatabaseService,
     @Inject(TaskDomainRegistry) private readonly taskDomainRegistry: TaskDomainRegistry,
+    @Optional()
+    @Inject(AgentRuntimeService)
+    private readonly agentRuntimeService?: AgentRuntimeService,
+    @Optional()
+    @Inject(AgentExecutionService)
+    private readonly agentExecutionService?: AgentExecutionService,
   ) {}
 
   private log(task: typeof tasks.$inferSelect, message: string, level = 'info', metadata?: Record<string, unknown>) {
     void this.databaseService.db.insert(taskLogs).values({
       taskId: task.id,
       userId: task.userId ?? null,
+      organizationId: task.organizationId ?? null,
       level,
       message,
       metadataJson: metadata ? JSON.stringify(metadata) : null,
@@ -49,7 +69,24 @@ export class TaskExecutionService {
   }
 
   async recoverPendingTasks(limit: number, dryRun: boolean, workerId: string) {
+    const agentRuntime = !dryRun && this.agentRuntimeService
+      ? await this.agentRuntimeService.reconcileActive(limit).catch((error) => ({
+          enabled: this.agentRuntimeService?.isEnabled() ?? false,
+          checked: 0,
+          reconciled: 0,
+          orphaned: 0,
+          failures: [error instanceof Error ? error.message : 'agent_runtime_recovery_failed'],
+        }))
+      : null
     const pendingTasks = await this.listPendingTasks(limit)
+    const latestAgentExecutions = !dryRun && this.agentExecutionService
+      ? await this.agentExecutionService.findLatestForTaskIds(
+          pendingTasks.map((task) => task.id),
+        )
+      : []
+    const latestAgentExecutionByTaskId = new Map(
+      latestAgentExecutions.map((execution) => [execution.taskId, execution]),
+    )
     let recovered = 0
     const failures: Array<{ id: number; error: string }> = []
     const pending: Array<{ id: number; status: string; domainTable: string; domainId: number }> = []
@@ -65,6 +102,19 @@ export class TaskExecutionService {
           })
           recovered += 1
           continue
+        }
+
+        const agentExecution = latestAgentExecutionByTaskId.get(task.id)
+        if (agentExecution && task.status === 'running') {
+          const recovery = await this.reconcileAgentTask(
+            task,
+            agentExecution,
+          )
+          if (recovery === 'active_remote_run') continue
+          if (recovery === 'terminal_reconciled') {
+            recovered += 1
+            continue
+          }
         }
 
         const kind = await this.executeTask(task, workerId)
@@ -88,6 +138,7 @@ export class TaskExecutionService {
       dryRun,
       pending,
       failures,
+      agentRuntime,
     }
   }
 
@@ -124,6 +175,19 @@ export class TaskExecutionService {
         updatedAt: timestamp,
       })
       .where(eq(tasks.id, taskId))
+  }
+
+  private async releaseDeferredTaskLock(taskId: number, workerId: string) {
+    const timestamp = this.now()
+    await this.databaseService.db
+      .update(tasks)
+      .set({
+        lockedBy: null,
+        lockedAt: null,
+        lockExpiresAt: null,
+        updatedAt: timestamp,
+      })
+      .where(and(eq(tasks.id, taskId), eq(tasks.lockedBy, workerId)))
   }
 
   private async claimQueuedTask(task: typeof tasks.$inferSelect, workerId: string) {
@@ -194,6 +258,36 @@ export class TaskExecutionService {
     await this.taskDomainRegistry.markFailed(task, error)
   }
 
+  private async reconcileAgentTask(
+    task: typeof tasks.$inferSelect,
+    execution: AgentExecutionRecord,
+  ) {
+    if (
+      ACTIVE_AGENT_EXECUTION_STATUSES.has(execution.status) &&
+      Boolean(execution.remoteRunId)
+    ) {
+      return 'active_remote_run' as const
+    }
+
+    if (execution.status === 'orphaned') return 'resume_attempt' as const
+
+    if (execution.status === 'canceled') {
+      await this.markTaskCanceled(task)
+      return 'terminal_reconciled' as const
+    }
+
+    if (execution.status === 'failed' || execution.status === 'completed') {
+      const message =
+        execution.status === 'completed'
+          ? 'Agent 已结束，但未通过受控工具提交当前阶段所需产物'
+          : execution.errorMessage || 'AI 生产任务执行失败'
+      await this.markTaskFailed(task, new Error(message))
+      return 'terminal_reconciled' as const
+    }
+
+    return 'resume_attempt' as const
+  }
+
   private async executeTask(task: typeof tasks.$inferSelect, workerId: string) {
     if (isTerminalTaskStatus(task.status)) return `terminal:${task.status}`
 
@@ -207,6 +301,10 @@ export class TaskExecutionService {
     if (task.status === 'running' && !this.canRecoverRunningTask(task, workerId)) return 'locked_elsewhere'
     if (task.status === 'running') await this.refreshTaskLock(task.id, workerId)
 
-    return this.taskDomainRegistry.execute(task)
+    const result = await this.taskDomainRegistry.execute(task)
+    if (typeof result === 'string' && result.endsWith('_agent_runtime')) {
+      await this.releaseDeferredTaskLock(task.id, workerId)
+    }
+    return result
   }
 }

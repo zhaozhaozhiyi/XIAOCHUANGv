@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import { toPublicMediaUrl } from '../../../common/media-url'
 import { DatabaseService } from '../../../db/database.service'
 import { videoMerges } from '../../../db/schema'
+import { assertLegacyEpisodeProductionAllowed } from '../../drama-workspace/continuity-production-gate'
 import { MergeService } from '../../merge/merge.service'
 import { BaseTaskDomainHandler } from './base-task-domain.handler'
 import type { TaskDomainHandler, TaskRecord } from './task-domain-handler'
@@ -33,6 +34,13 @@ export class VideoMergeTaskHandler extends BaseTaskDomainHandler implements Task
       .where(eq(videoMerges.id, task.domainId))
 
     if (!merge) throw new NotFoundException('video_merge_not_found')
+    if (merge.editRevisionId == null && merge.episodeId != null) {
+      await assertLegacyEpisodeProductionAllowed(
+        this.databaseService,
+        merge.episodeId,
+        merge.userId ?? task.userId,
+      )
+    }
 
     const scenes = parseJsonValue(merge.scenes)
     const videos = Array.isArray(scenes) ? scenes : getPayloadVideos(task.payloadJson)
@@ -41,6 +49,7 @@ export class VideoMergeTaskHandler extends BaseTaskDomainHandler implements Task
       .update(videoMerges)
       .set({ status: 'pending', mergedUrl: null, duration: null, errorMsg: null, completedAt: null })
       .where(eq(videoMerges.id, merge.id))
+    await this.mergeService.resetEditRevisionRenderForRetry(merge.id)
 
     await this.syncTaskUpdate(task.id, {
       status: 'queued',
@@ -64,6 +73,7 @@ export class VideoMergeTaskHandler extends BaseTaskDomainHandler implements Task
       .update(videoMerges)
       .set({ status: 'canceled', errorMsg: 'Canceled by user', completedAt: this.now() })
       .where(eq(videoMerges.id, task.domainId))
+    await this.mergeService.cancelEditRevisionRender(task.domainId)
 
     await this.cancelTaskRecord(task)
     return { canceled: true }
@@ -105,6 +115,7 @@ export class VideoMergeTaskHandler extends BaseTaskDomainHandler implements Task
       .update(videoMerges)
       .set({ status: 'canceled', errorMsg: 'Canceled by worker', completedAt: this.now() })
       .where(eq(videoMerges.id, task.domainId))
+    await this.mergeService.cancelEditRevisionRender(task.domainId)
     await this.refreshPresentation(task)
     return true
   }
@@ -115,6 +126,7 @@ export class VideoMergeTaskHandler extends BaseTaskDomainHandler implements Task
       .update(videoMerges)
       .set({ status: 'failed', errorMsg: message, completedAt: this.now() })
       .where(eq(videoMerges.id, task.domainId))
+    await this.mergeService.failEditRevisionRender(task.domainId, message)
     await this.refreshPresentation(task)
     return true
   }

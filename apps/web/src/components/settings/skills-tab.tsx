@@ -126,11 +126,16 @@ export function SkillsTab() {
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden">
       {/* Agent List Sidebar */}
-      <aside className="w-[200px] shrink-0 border-r border-border bg-bg-0 p-4 overflow-y-auto">
-        <div className="text-[10px] font-bold tracking-[0.1em] uppercase text-text-3 mb-3">Agent 列表</div>
+      <aside className="settings-sidebar w-[220px] overflow-y-auto">
+        <div className="settings-sidebar-intro">
+          <p className="settings-kicker">Agent 列表</p>
+          <p>选择一个 Agent，再维护它对应的 Skill 目录与提示词内容。</p>
+        </div>
         {AGENT_DEFS.map(a => (
           <button key={a.type}
-            className={`w-full flex items-center gap-2 px-3 py-2 rounded-[8px] text-left text-xs mb-1 cursor-pointer transition-colors ${selectedAgent === a.type ? 'bg-accent-bg text-accent-text font-semibold' : 'hover:bg-bg-hover text-text-2'}`}
+            type="button"
+            className="settings-nav-button"
+            data-active={selectedAgent === a.type ? 'true' : 'false'}
             onClick={() => { setSelectedAgent(a.type); setEditingSkill(null) }}
           >
             <span className="text-base">{a.icon}</span>
@@ -143,8 +148,8 @@ export function SkillsTab() {
       </aside>
 
       {/* Skills Main */}
-      <div className="page-shell flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="mb-4 shrink-0 border-b border-border pb-4">
+      <div className="settings-pane">
+        <div className="settings-pane-head">
           <div className="flex items-center gap-3 mb-2">
             <span className="text-lg w-8 h-8 flex items-center justify-center">{selectedAgentDef.icon}</span>
             <div>
@@ -158,11 +163,11 @@ export function SkillsTab() {
           </Button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pt-2">
+        <div className="settings-pane-body">
           {loading ? (
             <div className="text-sm text-text-3 py-8 text-center">加载中...</div>
           ) : currentSkills.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 rounded-[14px] border border-dashed border-border bg-bg-2 py-12 text-center">
+            <div className="settings-empty-panel flex flex-col items-center gap-2 py-12 text-center">
               <div className="w-14 h-14 rounded-[14px] bg-bg-2 flex items-center justify-center text-text-3">
                 <FileText size={28} strokeWidth={1.3} />
               </div>
@@ -175,29 +180,32 @@ export function SkillsTab() {
                 const isEditing = editingSkill === s.id
                 const relativeId = s.id.replace(`${selectedAgent}/`, '')
                 return (
-                  <div key={s.id} className="rounded-[14px] bg-bg-0 border border-border overflow-hidden">
-                    <button className="w-full flex items-center gap-3 p-4 cursor-pointer hover:bg-bg-hover transition-colors text-left" onClick={() => toggleEdit(s.id)}>
-                      <FileText size={14} className="text-accent shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-semibold text-text-0">{s.name}</div>
-                        <div className="text-[11px] text-text-3">{s.description}</div>
-                      </div>
+                  <div key={s.id} className="settings-record-card">
+                    <div className="flex items-start gap-2 p-4">
+                      <button
+                        type="button"
+                        className="flex flex-1 items-center gap-3 text-left"
+                        onClick={() => toggleEdit(s.id)}
+                      >
+                        <FileText size={14} className="text-accent shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-semibold text-text-0">{s.name}</div>
+                          <div className="text-[11px] text-text-3">{s.description}</div>
+                        </div>
+                        <ChevronDown size={14} className={`text-text-3 shrink-0 transition-transform ${isEditing ? 'rotate-180' : ''}`} />
+                      </button>
                       <button
                         type="button"
                         aria-label={`删除 Skill「${s.name}」`}
-                        className="p-1 rounded hover:bg-bg-hover shrink-0"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteTargetId(s.id)
-                        }}
+                        className="shrink-0 rounded-[10px] p-2 transition-colors hover:bg-bg-hover"
+                        onClick={() => setDeleteTargetId(s.id)}
                       >
                         <Trash2 size={13} className="text-text-3" />
                       </button>
-                      <ChevronDown size={14} className={`text-text-3 shrink-0 transition-transform ${isEditing ? 'rotate-180' : ''}`} />
-                    </button>
+                    </div>
 
                     {isEditing && (
-                      <div className="px-4 pb-4 border-t border-border pt-4 flex flex-col gap-3">
+                      <div className="settings-subtle-divider flex flex-col gap-3 border-t px-4 pb-4 pt-4">
                         <Textarea value={skillContent}
                           onChange={e => setSkillContent(e.target.value)}
                           rows={20}
@@ -227,7 +235,9 @@ export function SkillsTab() {
       {/* Add Skill Dialog */}
       <Dialog open={addDialog} onOpenChange={setAddDialog}>
         <DialogContent
-          className="flex max-h-[min(90dvh,calc(100dvh-2rem))] w-full max-w-[min(100%-2rem,480px)] flex-col gap-0 overflow-hidden rounded-[var(--radius-xl)] border-border bg-bg-surface p-0 shadow-shadow-elevated animate-scale-in sm:max-w-[480px]"
+          variant="form"
+          size="standard"
+          className="animate-scale-in"
           onKeyDown={(event) => {
             if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
             event.preventDefault()
@@ -235,7 +245,7 @@ export function SkillsTab() {
           }}
         >
           <DialogTitle className="sr-only">新增 Skill</DialogTitle>
-          <DialogHeaderBar className="border-0 bg-transparent p-0">
+          <DialogHeaderBar variant="form">
             <div className="flex gap-3.5 sm:gap-4">
               <div
                 className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-accent-glow bg-accent-bg text-accent shadow-shadow-xs sm:size-11"
@@ -255,7 +265,7 @@ export function SkillsTab() {
             </div>
           </DialogHeaderBar>
 
-          <DialogMain className="min-h-0 flex-1 w-full items-start justify-start gap-5 border-t border-border/70 px-0 pt-6 pb-2 sm:gap-6 sm:pt-7 sm:pb-3">
+          <DialogMain variant="form" className="w-full items-start justify-start gap-5 sm:gap-6">
             <label className="flex w-full flex-col gap-2">
               <span className="text-xs font-semibold text-text-1">
                 Skill 目录名 <span className="font-normal text-text-3">(英文，唯一)</span>
@@ -292,7 +302,7 @@ export function SkillsTab() {
             </label>
           </DialogMain>
 
-          <DialogActions className="flex-col-reverse gap-3 px-0 pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <DialogActions variant="form" className="sm:justify-between">
             <Button variant="ghost" className="h-10 w-full sm:w-auto sm:min-w-[88px]" onClick={() => setAddDialog(false)}>
               取消
             </Button>

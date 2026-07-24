@@ -2,23 +2,31 @@
 /**
  * verify:skill-driven — static gate for the unified AI skill runtime.
  *
- * After T1-T9 of .claude/plans/skill-driven-ai-runtime.md, every AI call
- * in the platform should flow through:
+ * After T1-T9 of .claude/plans/skill-driven-ai-runtime.md, interactive AI
+ * calls in the platform should flow through:
  *
  *     POST /api/v1/ai/runs
  *       → AiService.run()
  *       → SKILL.md loaded from skills/<skill_id>/SKILL.md
  *       → registered SkillHandler under apps/backend/src/modules/ai/skill-handlers/
  *
- * This script enforces that boundary at commit time. It does four checks:
+ * Long-running drama production uses a second, equally constrained path:
  *
- *   1. Backend chat/completions calls — only the AI runtime is allowed to talk
- *      to the LLM provider directly. Anything else (e.g. a business module
- *      growing its own ad-hoc fetch like the previous quick-video-sessions.ai.ts)
- *      is rejected.
+ *     task handler → AgentRuntimeService → Hermes
+ *       → release-pinned SKILL.md bundle + xiaochuang-drama MCP
+ *       → ModelGatewayService → Provider
+ *
+ * This script enforces those boundaries at commit time. It does four grouped
+ * checks:
+ *
+ *   1. Backend chat/completions calls — only established AI-runtime
+ *      boundaries may talk to a Provider directly. Anything else (e.g. a
+ *      business module growing its own ad-hoc fetch) is rejected.
  *   2. Frontend agent path — /api/v1/agent/ is gone (T5 deleted the controller).
  *      Any frontend reference would 404 at runtime, so we fail at lint time.
- *   3. skill_id ↔ SKILL.md double-pointer — every skill_id literal in
+ *   3. Skill ↔ SKILL.md double-pointer — every interactive skill_id literal
+ *      and every versioned Agent Runtime Skill reference must have a matching
+ *      SKILL.md. Every SKILL.md must have at least one real consumer.
  *      apps/web/src/**.{ts,tsx} must have a matching skills/<id>/SKILL.md, and
  *      every SKILL.md must have at least one consumer (frontend literal or
  *      backend handler registration). Catches both orphan SKILL.md (like the
@@ -77,7 +85,7 @@ function relativeToRepo(file) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Check 1: Backend chat/completions whitelist
+// Check 1: Backend chat/completions allowlist
 // ──────────────────────────────────────────────────────────────────────────
 
 const CHAT_COMPLETIONS_WHITELIST = new Set([
@@ -101,6 +109,17 @@ const CHAT_COMPLETIONS_WHITELIST = new Set([
   // (b) get flagged in code review.
   'apps/backend/src/modules/writings/writings.service.ts',
   'apps/backend/src/modules/writings/writing-agent.controller.ts',
+  // The compatibility path used only while AGENT_RUNTIME_PROVIDER is
+  // disabled. Its system instructions are still loaded from
+  // drama_adaptation_copilot/SKILL.md; the production Agent path goes through
+  // Hermes and ModelGatewayService below.
+  'apps/backend/src/modules/dramas/drama-agent.service.ts',
+  // The only process allowed to forward a managed Hermes model request to a
+  // user-scoped Provider. The controller/types contain the protocol path, and
+  // the service owns the authenticated fetch.
+  'apps/backend/src/modules/agent-runtime/model-gateway.controller.ts',
+  'apps/backend/src/modules/agent-runtime/model-gateway.service.ts',
+  'apps/backend/src/modules/agent-runtime/model-gateway.types.ts',
 ])
 const CHAT_COMPLETIONS_WHITELIST_PREFIXES = [
   'apps/backend/src/modules/ai/skill-handlers/',
@@ -111,6 +130,9 @@ const CHAT_COMPLETIONS_WHITELIST_PREFIXES = [
 
 function isChatCompletionsAllowed(file) {
   const rel = relativeToRepo(file)
+  // Tests may describe protocol URLs or mock Provider responses. They are not
+  // runtime LLM call sites and should not weaken the production boundary.
+  if (rel.endsWith('.test.ts')) return true
   if (CHAT_COMPLETIONS_WHITELIST.has(rel)) return true
   return CHAT_COMPLETIONS_WHITELIST_PREFIXES.some((prefix) => rel.startsWith(prefix))
 }
@@ -155,7 +177,7 @@ record(
 )
 
 // ──────────────────────────────────────────────────────────────────────────
-// Check 3: skill_id ↔ SKILL.md double-pointer
+// Check 3: Skill ↔ SKILL.md double-pointer
 // ──────────────────────────────────────────────────────────────────────────
 
 // Collect skill_id literals from frontend.
@@ -176,6 +198,47 @@ const HANDLER_REGISTER_RE = /\[\s*['"]([\w-]+)['"],\s*\w+Handler\s*\]/g
 const registeredSkillIds = new Set()
 for (const match of aiServiceSrc.matchAll(HANDLER_REGISTER_RE)) {
   registeredSkillIds.add(match[1])
+}
+
+// Agent Runtime Skills are intentionally not registered in AiService: they
+// are pinned to a Hermes execution profile as `skill_id@version`. Scan the
+// production runtime and drama task-handler sources so those Skills remain
+// subject to the same consumer and dangling-reference checks.
+const runtimeSkillRefs = new Map() // ref -> [files]
+const RUNTIME_SKILL_REF_RE =
+  /['"](([A-Za-z0-9_/-]+)@[A-Za-z0-9._-]+)['"]/g
+const runtimeConsumerDirs = [
+  path.join(repoRoot, 'apps/backend/src/modules/agent-runtime'),
+  path.join(repoRoot, 'apps/backend/src/modules/tasks/domain-handlers'),
+]
+for (const dir of runtimeConsumerDirs) {
+  for (const file of walk(dir, ['.ts'])) {
+    if (file.endsWith('.test.ts')) continue
+    const content = readFile(file)
+    for (const match of content.matchAll(RUNTIME_SKILL_REF_RE)) {
+      const ref = match[1]
+      if (!runtimeSkillRefs.has(ref)) runtimeSkillRefs.set(ref, [])
+      runtimeSkillRefs.get(ref).push(relativeToRepo(file))
+    }
+  }
+}
+
+// Some compatibility code consumes a Skill directly from SkillsService rather
+// than through the interactive registry or Hermes. Keep that use explicit so
+// it cannot silently turn into a hard-coded prompt.
+const directBackendSkillConsumers = new Map() // folder -> [files]
+const DIRECT_SKILL_CONTENT_RE =
+  /getSkillContent\(\s*\[\s*['"]([A-Za-z0-9_-]+)['"]\s*\]\s*\)/g
+for (const file of walk(backendDir, ['.ts'])) {
+  if (file.endsWith('.test.ts')) continue
+  const content = readFile(file)
+  for (const match of content.matchAll(DIRECT_SKILL_CONTENT_RE)) {
+    const folder = match[1]
+    if (!directBackendSkillConsumers.has(folder)) {
+      directBackendSkillConsumers.set(folder, [])
+    }
+    directBackendSkillConsumers.get(folder).push(relativeToRepo(file))
+  }
 }
 
 // Collect SKILL.md folders. The loader at ai.service.ts:loadSkillPrompt
@@ -224,7 +287,23 @@ record(
   danglingBackend.length ? danglingBackend.join(', ') : '',
 )
 
-// 3c: every SKILL.md has at least one consumer (frontend literal OR backend handler).
+// 3c: every release-pinned Runtime Skill reference has a SKILL.md.
+const danglingRuntimeSkills = []
+for (const [ref, files] of runtimeSkillRefs) {
+  const skillId = ref.slice(0, ref.lastIndexOf('@'))
+  if (!skillFolderForId(skillId)) {
+    danglingRuntimeSkills.push(`${ref} (used in ${files.join(', ')})`)
+  }
+}
+record(
+  danglingRuntimeSkills.length === 0,
+  'every runtime Skill binding has a matching SKILL.md',
+  danglingRuntimeSkills.length ? danglingRuntimeSkills.join(' | ') : '',
+)
+
+// 3d: every SKILL.md has at least one consumer (frontend literal, interactive
+// backend handler, versioned Runtime binding, or an explicit compatibility
+// loader).
 // writing_copilot is consumed by writing-chat-panel.tsx (frontend literal).
 // quick-video-session-title is consumed only via AiService.run() inside the
 // quick-video-sessions controller (backend), not via a literal.
@@ -233,10 +312,20 @@ for (const folder of skillFolders) {
   const usedByFrontend = [...frontendSkillIds.keys()].some((id) => skillFolderForId(id) === folder)
   const usedByBackend = [...registeredSkillIds].some((id) => skillFolderForId(id) === folder)
     || aiServiceSrc.includes(`'${folder}'`) || aiServiceSrc.includes(`"${folder}"`)
+  const usedByRuntime = [...runtimeSkillRefs.keys()].some((ref) => {
+    const skillId = ref.slice(0, ref.lastIndexOf('@'))
+    return skillFolderForId(skillId) === folder
+  })
+  const usedByCompatibilityLoader = directBackendSkillConsumers.has(folder)
   // Also accept: the controller imports a buildSessionTitleHistoryText
   // helper from a handler whose skill_id matches the folder name. This
   // covers the quick-video-session-title path.
-  if (!usedByFrontend && !usedByBackend) {
+  if (
+    !usedByFrontend &&
+    !usedByBackend &&
+    !usedByRuntime &&
+    !usedByCompatibilityLoader
+  ) {
     orphanSkills.push(folder)
   }
 }

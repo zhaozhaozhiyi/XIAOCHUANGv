@@ -1,7 +1,7 @@
 import { BadGatewayException, BadRequestException } from '@nestjs/common'
 
 import type { DatabaseService } from '../../db/database.service'
-import { getTextProviderBaseUrl } from '../agents/agents.ai'
+import { getTextProviderBaseUrl, withTextProviderRequestOptions } from '../agents/agents.ai'
 import { AiConfigResolverService } from '../ai-configs/ai-configs.resolver'
 
 type AiAction = 'continue' | 'polish' | 'summarize' | 'extract_outline'
@@ -79,7 +79,7 @@ export async function runWritingAiAction(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify({
+    body: JSON.stringify(withTextProviderRequestOptions(config, {
       model: config.model,
       temperature: action === 'summarize' || action === 'extract_outline' ? 0.4 : 0.7,
       messages: [
@@ -88,7 +88,7 @@ export async function runWritingAiAction(
           content: getActionPrompt(action, args),
         },
       ],
-    }),
+    })),
   })
 
   if (!response.ok) {

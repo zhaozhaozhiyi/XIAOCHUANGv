@@ -34,7 +34,7 @@ npm run test:e2e:headed # Run Playwright headed
 
 ## Environment & Local Data
 
-- `BACKEND_BASE_URL` points to the unified backend service. Default: `http://127.0.0.1:3010`.
+- `BACKEND_BASE_URL` points to the unified backend service and must be configured explicitly.
 - Public media URLs should resolve directly to backend/object-storage origins via `NEXT_PUBLIC_MEDIA_BASE_URL` (or `NEXT_PUBLIC_BACKEND_BASE_URL/static` as local fallback); creation and upload requests should be handled by `apps/backend`.
 
 ## Architecture

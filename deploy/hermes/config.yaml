@@ -1,0 +1,14 @@
+model:
+  provider: custom
+  default: xiaochuang-managed
+  base_url: ${HERMES_MODEL_GATEWAY_BASE_URL}
+  api_key: ${HERMES_MODEL_GATEWAY_SERVICE_KEY}
+
+skills:
+  creation_nudge_interval: 0
+  disabled:
+    - skill_manage
+
+platform_toolsets:
+  api_server:
+    - xiaochuang-drama

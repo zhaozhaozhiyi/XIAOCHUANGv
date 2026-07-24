@@ -8,7 +8,14 @@ import { v4 as uuid } from 'uuid'
 
 import { toSnakeCaseWithPublicMedia } from '../../common/transform'
 import { DatabaseService } from '../../db/database.service'
-import { episodes, storyboards, tasks, videoMerges } from '../../db/schema'
+import {
+  episodeEditRevisions,
+  episodes,
+  storyboards,
+  tasks,
+  videoMerges,
+} from '../../db/schema'
+import { assertLegacyEpisodeProductionAllowed } from '../drama-workspace/continuity-production-gate'
 import { getAbsolutePath } from '../images/images.storage'
 import { sanitizePayload, toPublicMediaUrl, trimText } from '../images/images.utils'
 import { TaskQueueService } from '../queue/task-queue.service'
@@ -16,6 +23,146 @@ import { StorageService } from '../storage/storage.service'
 
 const MERGE_VIDEO_CRF = '18'
 const MERGE_AUDIO_BITRATE = '256k'
+
+type TimelineClip = {
+  storyboard_id: number
+  video_generation_id: number
+  video_url: string
+  transition?: { type?: string | null; boundary_id?: number | null } | null
+  audio_policy?: string | null
+}
+
+type TimelineDialogueCue = {
+  cue_id: number
+  dialogue_take_id: number
+  audio_url: string
+  speaker_name?: string | null
+  take_in_ms: number
+  take_out_ms: number
+  timeline_in_ms: number
+  subtitle_segments?: Array<{
+    start_ms?: number
+    end_ms?: number
+    text?: string
+  }>
+}
+
+function parseJsonObject(value: string | null | undefined) {
+  if (!value) return {} as Record<string, unknown>
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function normalizeTimelineClips(value: unknown): TimelineClip[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const record = item as Record<string, unknown>
+    const storyboardId = Number(record.storyboard_id)
+    const generationId = Number(record.video_generation_id)
+    const videoUrl = String(record.video_url || '').trim()
+    if (!Number.isInteger(storyboardId) || !Number.isInteger(generationId) || !videoUrl) return []
+    const transition =
+      record.transition && typeof record.transition === 'object' && !Array.isArray(record.transition)
+        ? record.transition as TimelineClip['transition']
+        : null
+    return [{
+      storyboard_id: storyboardId,
+      video_generation_id: generationId,
+      video_url: videoUrl,
+      transition,
+      audio_policy: String(record.audio_policy || 'mute'),
+    }]
+  })
+}
+
+function normalizeTimelineDialogueCues(value: unknown): TimelineDialogueCue[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const record = item as Record<string, unknown>
+    const cueId = Number(record.cue_id)
+    const takeId = Number(record.dialogue_take_id)
+    const audioUrl = String(record.audio_url || '').trim()
+    const takeInMs = Number(record.take_in_ms)
+    const takeOutMs = Number(record.take_out_ms)
+    const timelineInMs = Number(record.timeline_in_ms)
+    if (
+      !Number.isInteger(cueId) ||
+      !Number.isInteger(takeId) ||
+      !audioUrl ||
+      !Number.isInteger(takeInMs) ||
+      !Number.isInteger(takeOutMs) ||
+      !Number.isInteger(timelineInMs) ||
+      takeInMs < 0 ||
+      takeOutMs <= takeInMs ||
+      timelineInMs < 0
+    ) {
+      return []
+    }
+    const subtitleSegments = Array.isArray(record.subtitle_segments)
+      ? record.subtitle_segments.flatMap((segment) => {
+        if (!segment || typeof segment !== 'object' || Array.isArray(segment)) return []
+        const value = segment as Record<string, unknown>
+        const startMs = Number(value.start_ms)
+        const endMs = Number(value.end_ms)
+        const text = String(value.text || '').trim()
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs || !text) return []
+        return [{ start_ms: startMs, end_ms: endMs, text }]
+      })
+      : []
+    return [{
+      cue_id: cueId,
+      dialogue_take_id: takeId,
+      audio_url: audioUrl,
+      speaker_name: typeof record.speaker_name === 'string' ? record.speaker_name : null,
+      take_in_ms: takeInMs,
+      take_out_ms: takeOutMs,
+      timeline_in_ms: timelineInMs,
+      subtitle_segments: subtitleSegments,
+    }]
+  })
+}
+
+function keepsOriginalAudio(policy: string | null | undefined) {
+  return ['verified_ambience', 'sfx_only', 'music_only'].includes(String(policy || 'mute'))
+}
+
+function formatSecondsFromMs(value: number) {
+  return Math.max(0, value / 1000).toFixed(3)
+}
+
+function formatSrtTimestamp(seconds: number) {
+  const totalMs = Math.max(0, Math.round(seconds * 1000))
+  const hours = Math.floor(totalMs / 3_600_000)
+  const minutes = Math.floor((totalMs % 3_600_000) / 60_000)
+  const wholeSeconds = Math.floor((totalMs % 60_000) / 1000)
+  const milliseconds = totalMs % 1000
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(wholeSeconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`
+}
+
+function subtitleFileContent(cues: TimelineDialogueCue[]) {
+  const rows: string[] = []
+  let index = 1
+  for (const cue of cues) {
+    for (const segment of cue.subtitle_segments || []) {
+      const startMs = cue.timeline_in_ms + Math.max(0, Number(segment.start_ms || 0) - cue.take_in_ms)
+      const endMs = cue.timeline_in_ms + Math.max(0, Number(segment.end_ms || 0) - cue.take_in_ms)
+      if (endMs <= startMs || !segment.text) continue
+      rows.push(
+        `${index}\n${formatSrtTimestamp(startMs / 1000)} --> ${formatSrtTimestamp(endMs / 1000)}\n${segment.text}\n`,
+      )
+      index += 1
+    }
+  }
+  return rows.join('\n')
+}
 
 function now() {
   return new Date()
@@ -319,6 +466,11 @@ export class MergeService {
   }
 
   async enqueueEpisodeMerge(episodeId: number, dramaId: number, userId?: number | null) {
+    await assertLegacyEpisodeProductionAllowed(
+      this.databaseService,
+      episodeId,
+      userId,
+    )
     const videos = await this.getEpisodeMergeVideos(episodeId)
 
     const [created] = await this.databaseService.db
@@ -356,6 +508,121 @@ export class MergeService {
     return mergeId
   }
 
+  async enqueueEditRevision(editRevisionId: number, userId: number) {
+    const [revision] = await this.databaseService.db
+      .select()
+      .from(episodeEditRevisions)
+      .where(
+        and(
+          eq(episodeEditRevisions.id, editRevisionId),
+          eq(episodeEditRevisions.userId, userId),
+          isNull(episodeEditRevisions.deletedAt),
+        ),
+      )
+    if (!revision) throw new Error('episode_edit_revision_not_found')
+    if (revision.status !== 'approved') {
+      throw new Error('episode_edit_revision_not_approved')
+    }
+
+    const timeline = parseJsonObject(revision.timelineJson)
+    const clips = normalizeTimelineClips(timeline.clips)
+    if (!clips.length) throw new Error('episode_edit_revision_clips_missing')
+
+    const [created] = await this.databaseService.db
+      .insert(videoMerges)
+      .values({
+        userId,
+        episodeId: revision.episodeId,
+        dramaId: revision.dramaId,
+        title: `Episode ${revision.episodeId} Edit ${revision.id}`,
+        provider: 'ffmpeg',
+        model: 'ffmpeg-timeline-h264-aac',
+        status: 'pending',
+        scenes: JSON.stringify(clips.map((clip) => clip.video_url)),
+        editRevisionId: revision.id,
+        createdAt: now(),
+      })
+      .returning({ id: videoMerges.id })
+    const mergeId = created?.id
+    if (!mergeId) throw new Error('episode_edit_merge_create_failed')
+
+    await this.databaseService.db
+      .update(episodeEditRevisions)
+      .set({
+        status: 'rendering',
+        failureCode: null,
+        failureDetail: null,
+        updatedAt: now(),
+      })
+      .where(eq(episodeEditRevisions.id, revision.id))
+    const taskId = await this.syncVideoMergeTask({
+      mergeId,
+      userId,
+      payload: {
+        episode_id: revision.episodeId,
+        drama_id: revision.dramaId,
+        edit_revision_id: revision.id,
+        clips: clips.map((clip) => ({
+          storyboard_id: clip.storyboard_id,
+          video_generation_id: clip.video_generation_id,
+        })),
+      },
+    })
+    if (taskId != null) await this.taskQueueService.enqueueTask(taskId)
+    return mergeId
+  }
+
+  async resetEditRevisionRenderForRetry(mergeId: number) {
+    const [merge] = await this.databaseService.db
+      .select({ editRevisionId: videoMerges.editRevisionId })
+      .from(videoMerges)
+      .where(eq(videoMerges.id, mergeId))
+    if (!merge?.editRevisionId) return
+    await this.databaseService.db
+      .update(episodeEditRevisions)
+      .set({
+        status: 'rendering',
+        failureCode: null,
+        failureDetail: null,
+        updatedAt: now(),
+      })
+      .where(eq(episodeEditRevisions.id, merge.editRevisionId))
+  }
+
+  async cancelEditRevisionRender(mergeId: number) {
+    const [merge] = await this.databaseService.db
+      .select({ editRevisionId: videoMerges.editRevisionId })
+      .from(videoMerges)
+      .where(eq(videoMerges.id, mergeId))
+    if (!merge?.editRevisionId) return
+    await this.databaseService.db
+      .update(episodeEditRevisions)
+      .set({
+        status: 'approved',
+        failureCode: null,
+        failureDetail: null,
+        updatedAt: now(),
+      })
+      .where(eq(episodeEditRevisions.id, merge.editRevisionId))
+  }
+
+  async failEditRevisionRender(mergeId: number, detail: string) {
+    const [merge] = await this.databaseService.db
+      .select({ editRevisionId: videoMerges.editRevisionId })
+      .from(videoMerges)
+      .where(eq(videoMerges.id, mergeId))
+    if (!merge?.editRevisionId) return
+    await this.databaseService.db
+      .update(episodeEditRevisions)
+      .set({
+        status: 'failed',
+        failureCode: 'timeline_render_failed',
+        failureDetail: detail,
+        updatedAt: now(),
+      })
+      .where(eq(episodeEditRevisions.id, merge.editRevisionId))
+  }
+
   async mergeEpisodeVideos(episodeId: number, dramaId: number, userId?: number | null) {
     return this.enqueueEpisodeMerge(episodeId, dramaId, userId)
   }
@@ -379,6 +646,9 @@ export class MergeService {
     if (!merge) throw new Error(`Video merge ${mergeId} not found`)
     if (String(merge.status || '').toLowerCase() === 'canceled') return
     if (!merge.episodeId || !merge.dramaId) throw new Error(`Video merge ${mergeId} missing episode or drama`)
+    if (merge.editRevisionId) {
+      return this.processEditRevisionMerge(merge)
+    }
 
     const videos = parseMergeScenes(merge.scenes)
     if (!videos.length) throw new Error(`Video merge ${mergeId} has no videos`)
@@ -527,6 +797,264 @@ export class MergeService {
       if (fs.existsSync(listPath)) fs.unlinkSync(listPath)
       for (const normalizedPath of normalizedPaths) {
         if (fs.existsSync(normalizedPath)) fs.unlinkSync(normalizedPath)
+      }
+    }
+  }
+
+  private async processEditRevisionMerge(merge: typeof videoMerges.$inferSelect) {
+    const revisionId = merge.editRevisionId
+    if (!revisionId) throw new Error('episode_edit_revision_not_found')
+    const [revision] = await this.databaseService.db
+      .select()
+      .from(episodeEditRevisions)
+      .where(eq(episodeEditRevisions.id, revisionId))
+    if (!revision || revision.deletedAt) throw new Error('episode_edit_revision_not_found')
+    if (!merge.episodeId || !merge.dramaId) {
+      throw new Error(`Video merge ${merge.id} missing episode or drama`)
+    }
+
+    const timeline = parseJsonObject(revision.timelineJson)
+    const clips = normalizeTimelineClips(timeline.clips)
+    const dialogueCues = normalizeTimelineDialogueCues(timeline.dialogue_cues)
+    if (!clips.length) throw new Error('episode_edit_revision_clips_missing')
+
+    await this.databaseService.db
+      .update(videoMerges)
+      .set({ status: 'processing', errorMsg: null })
+      .where(eq(videoMerges.id, merge.id))
+    await this.databaseService.db
+      .update(episodeEditRevisions)
+      .set({
+        status: 'rendering',
+        failureCode: null,
+        failureDetail: null,
+        updatedAt: now(),
+      })
+      .where(eq(episodeEditRevisions.id, revision.id))
+    await this.syncVideoMergeTask({
+      mergeId: merge.id,
+      userId: merge.userId ?? null,
+      payload: {
+        episode_id: merge.episodeId,
+        drama_id: merge.dramaId,
+        edit_revision_id: revision.id,
+        clips: clips.map((clip) => ({
+          storyboard_id: clip.storyboard_id,
+          video_generation_id: clip.video_generation_id,
+        })),
+      },
+    })
+
+    const tempDir = getAbsolutePath(this.storageService, 'temp')
+    const outputDir = getAbsolutePath(this.storageService, 'merged')
+    fs.mkdirSync(tempDir, { recursive: true })
+    fs.mkdirSync(outputDir, { recursive: true })
+    const listPath = path.join(tempDir, `${uuid()}.txt`)
+    const concatPath = path.join(tempDir, `${uuid()}-timeline.mp4`)
+    const outputFilename = `${uuid()}.mp4`
+    const outputPath = path.join(outputDir, outputFilename)
+    const normalizedPaths: string[] = []
+    const dialoguePaths: string[] = []
+    let subtitlePath: string | null = null
+
+    try {
+      for (const clip of clips) {
+        const inputPath = await this.toAbsPath(clip.video_url)
+        const sourceHasAudio = await hasAudioStream(inputPath)
+        const normalizedPath = path.join(tempDir, `${uuid()}.mp4`)
+        await normalizeClipForConcat(
+          inputPath,
+          normalizedPath,
+          sourceHasAudio && keepsOriginalAudio(clip.audio_policy),
+        )
+        normalizedPaths.push(normalizedPath)
+      }
+
+      fs.writeFileSync(
+        listPath,
+        normalizedPaths.map((video) => `file '${video}'`).join('\n'),
+        'utf-8',
+      )
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg()
+          .input(listPath)
+          .inputOptions(['-f', 'concat', '-safe', '0'])
+          .outputOptions([
+            '-fflags', '+genpts',
+            '-c:v', 'libx264',
+            '-preset', 'medium',
+            '-crf', MERGE_VIDEO_CRF,
+            '-af', 'aresample=48000:async=1:first_pts=0',
+            '-c:a', 'aac',
+            '-ar', '48000',
+            '-ac', '2',
+            '-b:a', MERGE_AUDIO_BITRATE,
+            '-movflags', '+faststart',
+          ])
+          .output(concatPath)
+          .on('end', () => resolve())
+          .on('error', (error) => reject(error))
+          .run()
+      })
+
+      for (const cue of dialogueCues) {
+        dialoguePaths.push(await this.toAbsPath(cue.audio_url))
+      }
+      const srt = subtitleFileContent(dialogueCues)
+      if (srt) {
+        subtitlePath = path.join(tempDir, `${uuid()}.srt`)
+        fs.writeFileSync(subtitlePath, srt, 'utf-8')
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        let command = ffmpeg(concatPath)
+        for (const dialoguePath of dialoguePaths) {
+          command = command.input(dialoguePath)
+        }
+        const audioFilters = [
+          '[0:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[base_audio]',
+        ]
+        const mixInputs = ['[base_audio]']
+        dialogueCues.forEach((cue, index) => {
+          const inputIndex = index + 1
+          const outputLabel = `dialogue_${index}`
+          audioFilters.push(
+            `[${inputIndex}:a:0]atrim=start=${formatSecondsFromMs(cue.take_in_ms)}:end=${formatSecondsFromMs(cue.take_out_ms)},asetpts=PTS-STARTPTS,adelay=${cue.timeline_in_ms}|${cue.timeline_in_ms},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[${outputLabel}]`,
+          )
+          mixInputs.push(`[${outputLabel}]`)
+        })
+        if (mixInputs.length === 1) {
+          audioFilters.push('[base_audio]anull[mixed_audio]')
+        } else {
+          audioFilters.push(
+            `${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=first:dropout_transition=0,loudnorm=I=-16:TP=-1.5:LRA=11[mixed_audio]`,
+          )
+        }
+
+        let shouldReencodeVideo = false
+        if (subtitlePath) {
+          const escapedPath = subtitlePath
+            .replace(/\\/g, '/')
+            .replace(/:/g, '\\:')
+            .replace(/'/g, "\\'")
+          command = command.videoFilter(
+            `subtitles=filename='${escapedPath}':force_style='FontSize=20\\,PrimaryColour=&HFFFFFF&\\,OutlineColour=&H000000&\\,Outline=2'`,
+          )
+          shouldReencodeVideo = true
+        }
+        command
+          .outputOptions([
+            '-map',
+            '0:v:0',
+            '-filter_complex',
+            audioFilters.join(';'),
+            '-map',
+            '[mixed_audio]',
+            '-c:v',
+            shouldReencodeVideo ? 'libx264' : 'copy',
+            ...(shouldReencodeVideo
+              ? ['-preset', 'medium', '-crf', MERGE_VIDEO_CRF]
+              : []),
+            '-c:a',
+            'aac',
+            '-ar',
+            '48000',
+            '-ac',
+            '2',
+            '-b:a',
+            MERGE_AUDIO_BITRATE,
+            '-movflags',
+            '+faststart',
+          ])
+          .output(outputPath)
+          .on('end', () => resolve())
+          .on('error', (error) => reject(error))
+          .run()
+      })
+
+      const duration = await getVideoDuration(outputPath)
+      const buffer = fs.readFileSync(outputPath)
+      const storedVideo = await this.storageService.saveBuffer({
+        buffer,
+        subDir: 'merged',
+        fileName: outputFilename,
+        extension: '.mp4',
+        mimeType: 'video/mp4',
+      })
+      await this.databaseService.db
+        .update(videoMerges)
+        .set({
+          status: 'completed',
+          mergedUrl: storedVideo.url,
+          duration,
+          completedAt: now(),
+        })
+        .where(eq(videoMerges.id, merge.id))
+      await this.databaseService.db
+        .update(episodeEditRevisions)
+        .set({
+          status: 'completed',
+          mergedVideoUrl: storedVideo.url,
+          failureCode: null,
+          failureDetail: null,
+          completedAt: now(),
+          updatedAt: now(),
+        })
+        .where(eq(episodeEditRevisions.id, revision.id))
+      await this.databaseService.db
+        .update(episodes)
+        .set({ videoUrl: storedVideo.url, updatedAt: now() })
+        .where(eq(episodes.id, merge.episodeId))
+      await this.syncVideoMergeTask({
+        mergeId: merge.id,
+        userId: merge.userId ?? null,
+        payload: {
+          episode_id: merge.episodeId,
+          drama_id: merge.dramaId,
+          edit_revision_id: revision.id,
+        },
+      })
+      return storedVideo.url
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'timeline_render_failed'
+      const canceled = message.toLowerCase().includes('canceled')
+      await this.databaseService.db
+        .update(videoMerges)
+        .set({
+          status: canceled ? 'canceled' : 'failed',
+          errorMsg: canceled ? 'Canceled by user' : message,
+          completedAt: now(),
+        })
+        .where(eq(videoMerges.id, merge.id))
+      await this.databaseService.db
+        .update(episodeEditRevisions)
+        .set({
+          status: canceled ? 'approved' : 'failed',
+          failureCode: canceled ? 'canceled' : 'timeline_render_failed',
+          failureDetail: canceled ? 'Canceled by user' : message,
+          updatedAt: now(),
+        })
+        .where(eq(episodeEditRevisions.id, revision.id))
+      await this.syncVideoMergeTask({
+        mergeId: merge.id,
+        userId: merge.userId ?? null,
+        payload: {
+          episode_id: merge.episodeId,
+          drama_id: merge.dramaId,
+          edit_revision_id: revision.id,
+        },
+        errorMessage: canceled ? 'Canceled by user' : message,
+      })
+      throw error
+    } finally {
+      for (const file of [
+        listPath,
+        concatPath,
+        subtitlePath,
+        outputPath,
+        ...normalizedPaths,
+      ]) {
+        if (file && fs.existsSync(file)) fs.unlinkSync(file)
       }
     }
   }

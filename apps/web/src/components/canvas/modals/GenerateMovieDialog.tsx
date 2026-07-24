@@ -152,8 +152,8 @@ export function GenerateMovieDialog({ open, onOpenChange, onStart }: Props) {
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent layout="panel" className="max-w-2xl">
-          <DialogHeaderBar>
+        <DialogContent variant="workspace" size="large">
+          <DialogHeaderBar variant="workspace">
             <DialogTitle className="flex items-center gap-2">
               <Film className="size-5 text-accent" />
               生成成片
@@ -163,7 +163,7 @@ export function GenerateMovieDialog({ open, onOpenChange, onStart }: Props) {
             </p>
           </DialogHeaderBar>
 
-          <DialogMain className="space-y-4">
+          <DialogMain variant="workspace" className="space-y-4">
             <div className="max-h-64 overflow-y-auto rounded-md border border-border">
               {shots.length === 0 ? (
                 <div className="flex h-32 items-center justify-center text-sm text-text-3">
@@ -243,7 +243,7 @@ export function GenerateMovieDialog({ open, onOpenChange, onStart }: Props) {
             </div>
           </DialogMain>
 
-          <DialogActions>
+          <DialogActions variant="workspace">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               取消
             </Button>

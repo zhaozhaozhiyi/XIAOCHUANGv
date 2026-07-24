@@ -108,8 +108,8 @@ function CreateEntryCard({
       type="button"
       onClick={onActivate}
       className={cn(
-        'group relative flex h-full min-h-[112px] items-center gap-4 rounded-[10px] bg-[color-mix(in_srgb,var(--color-bg-2)_72%,var(--color-bg-0))] px-4 py-4 pr-12 text-left transition-colors duration-200',
-        'hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0',
+        'group relative flex h-full min-h-[112px] items-center gap-4 rounded-[10px] bg-[color-mix(in_srgb,var(--color-bg-2)_68%,var(--color-bg-0))] px-4 py-4 pr-12 text-left shadow-shadow-xs transition-[background-color,box-shadow] duration-200',
+        'hover:bg-[color-mix(in_srgb,var(--color-bg-2)_82%,var(--color-bg-0))] hover:shadow-shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0',
       )}
     >
       <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-bg-0/60">
@@ -150,6 +150,8 @@ function ProjectHistoryCard({
 }) {
   const progress = getDramaProjectProgress(drama)
   const thumbnail = staticUrl(drama.thumbnail)
+  const [failedThumbnail, setFailedThumbnail] = useState('')
+  const thumbnailSrc = thumbnail && failedThumbnail !== thumbnail ? thumbnail : ''
   const episodes = getDramaEpisodeCount(drama)
   const styleLabel = drama.style ? dramaStyleLabel(drama.style) : null
   const sourceHealth = getNovelSourceHealthByDrama(drama)
@@ -159,19 +161,20 @@ function ProjectHistoryCard({
   return (
     <Link
       href={href}
-      className="group flex cursor-pointer gap-4 rounded-[8px] bg-bg-0/72 p-0 transition-[background-color,transform] duration-200 ease-out hover:-translate-y-0.5 hover:bg-[color-mix(in_srgb,var(--color-accent)_5%,var(--color-bg-0))] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0 motion-reduce:transform-none motion-reduce:transition-colors sm:items-center"
+      className="group flex cursor-pointer gap-4 rounded-[8px] bg-bg-0/72 px-3 py-3 transition-[background-color,transform] duration-200 ease-out hover:-translate-y-0.5 hover:bg-[color-mix(in_srgb,var(--color-accent)_5%,var(--color-bg-0))] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-0 motion-reduce:transform-none motion-reduce:transition-colors sm:items-center sm:px-4"
     >
       <div
         className={cn(
-          'relative flex size-[64px] shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-[color-mix(in_srgb,var(--color-bg-2)_78%,var(--color-bg-0))] transition-[background-color,transform] duration-200 ease-out group-hover:bg-[color-mix(in_srgb,var(--color-accent)_8%,var(--color-bg-2))] group-hover:scale-[1.015] group-focus-visible:bg-[color-mix(in_srgb,var(--color-accent)_8%,var(--color-bg-2))] group-focus-visible:scale-[1.015] motion-reduce:group-hover:scale-100 motion-reduce:group-focus-visible:scale-100',
+          'relative flex size-[68px] shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-[color-mix(in_srgb,var(--color-bg-2)_78%,var(--color-bg-0))] transition-[background-color,transform] duration-200 ease-out group-hover:bg-[color-mix(in_srgb,var(--color-accent)_8%,var(--color-bg-2))] group-hover:scale-[1.015] group-focus-visible:bg-[color-mix(in_srgb,var(--color-accent)_8%,var(--color-bg-2))] group-focus-visible:scale-[1.015] motion-reduce:group-hover:scale-100 motion-reduce:group-focus-visible:scale-100 sm:size-[72px]',
         )}
       >
-        {thumbnail ? (
+        {thumbnailSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={thumbnail}
+            src={thumbnailSrc}
             alt=""
             className="size-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.025] group-focus-visible:scale-[1.025] motion-reduce:transition-none motion-reduce:group-hover:scale-100 motion-reduce:group-focus-visible:scale-100"
+            onError={() => setFailedThumbnail(thumbnailSrc)}
           />
         ) : (
           <Film
@@ -186,7 +189,7 @@ function ProjectHistoryCard({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h3 className="truncate font-display text-base font-semibold text-text-0 sm:text-lg">{drama.title}</h3>
-            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-2 sm:text-sm">
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-2 sm:text-sm">
               {styleLabel ? <span>{styleLabel}</span> : null}
               {hasSourceIssue ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-warning/30 bg-warning-bg px-2 py-0.5 text-[11px] font-medium text-warning">
@@ -208,7 +211,7 @@ function ProjectHistoryCard({
               </span>
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2 pt-0.5">
+          <div className="flex shrink-0 items-center gap-2 pt-1">
             <span
               className={cn(
                 'rounded-full bg-[color-mix(in_srgb,var(--color-bg-2)_72%,var(--color-bg-0))] px-2.5 py-1 text-xs font-medium tabular-nums text-text-2 transition-colors duration-200 group-hover:bg-bg-0 group-hover:text-text-1 group-focus-visible:bg-bg-0 group-focus-visible:text-text-1',
@@ -415,7 +418,7 @@ export function HomePageClient({
           </div>
 
           {sortedDramas.length ? (
-            <div className="grid gap-2">
+            <div className="grid gap-3">
               {sortedDramas.slice(0, 4).map((drama) => (
                 <ProjectHistoryCard
                   key={drama.id}
@@ -432,17 +435,18 @@ export function HomePageClient({
               onAction={() => {
                 void startCreateProject()
               }}
+              className="border-0 bg-transparent"
             />
           )}
         </section>
       </div>
 
       <Dialog open={showCreate} onOpenChange={handleCreateDialogOpenChange}>
-        <DialogContent layout="panel" size="compact" className="animate-scale-in">
+        <DialogContent variant="form" size="compact" className="animate-scale-in">
           <DialogDescription className="sr-only">
             创建一个新的短剧项目，需要填写项目名称，可选择视觉风格。
           </DialogDescription>
-          <DialogHeaderBar density="compact" className="border-0 bg-transparent">
+          <DialogHeaderBar variant="form">
             <div className="flex gap-3 sm:gap-3.5">
               <div
                 className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-accent-glow bg-accent-bg text-accent shadow-shadow-xs sm:size-10"
@@ -470,7 +474,7 @@ export function HomePageClient({
             }}
             className="flex min-h-0 flex-1 flex-col"
           >
-            <DialogMain density="compact" className="min-h-0 flex-1 border-t border-border/70">
+            <DialogMain variant="form">
               {createError ? (
                 <div
                   role="alert"
@@ -523,7 +527,7 @@ export function HomePageClient({
               </div>
             </DialogMain>
 
-            <DialogActions density="compact" className="sm:items-center sm:justify-end">
+            <DialogActions variant="form" className="sm:items-center sm:justify-end">
               <Button type="button" variant="ghost" className="h-10 w-full sm:w-auto sm:min-w-[88px]" onClick={() => handleCreateDialogOpenChange(false)} disabled={creating}>
                 取消
               </Button>

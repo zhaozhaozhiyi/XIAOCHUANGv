@@ -2,12 +2,23 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Loader2, Users, MapPin, Mic2, FileText, Plus, Trash2,
+  Loader2, Users, MapPin, Mic2, FileText, Network, Plus, Trash2,
+  AlertTriangle, RotateCcw, XCircle, Eye, Replace,
 } from 'lucide-react'
+import Link from 'next/link'
 import { useWorkbench } from '@/hooks/use-workbench'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogDescription,
+  DialogHeaderBar,
+  DialogMain,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { cn } from '@/lib/cn'
-import { storyboardAPI } from '@/lib/api'
+import { storyboardAPI, type StoryboardDraftPreview } from '@/lib/api'
 import { staticUrl } from '@/lib/utils'
 import type { Character, Episode, Scene, Storyboard } from '@/types/api'
 
@@ -37,9 +48,20 @@ function sceneSummary(scene: Scene) {
 interface ScriptPanelProps {
   activeStep: string
   onRefresh?: () => void
+  storyboardUnlocked?: boolean
+  storyboardGateLoading?: boolean
+  storyboardGateMessage?: string
+  storyboardGateHref?: string
 }
 
-export function ScriptPanel({ activeStep, onRefresh }: ScriptPanelProps) {
+export function ScriptPanel({
+  activeStep,
+  onRefresh,
+  storyboardUnlocked = true,
+  storyboardGateLoading = false,
+  storyboardGateMessage,
+  storyboardGateHref,
+}: ScriptPanelProps) {
   const step = activeStep.replace('script-', '')
 
   return (
@@ -48,7 +70,15 @@ export function ScriptPanel({ activeStep, onRefresh }: ScriptPanelProps) {
       {step === 'rewrite' && <RewriteStep />}
       {step === 'extract' && <ExtractStep />}
       {step === 'voice' && <VoiceStep />}
-      {step === 'storyboard' && <StoryboardStep onRefresh={onRefresh} />}
+      {step === 'storyboard' && (
+        <StoryboardStep
+          onRefresh={onRefresh}
+          storyboardUnlocked={storyboardUnlocked}
+          storyboardGateLoading={storyboardGateLoading}
+          storyboardGateMessage={storyboardGateMessage}
+          storyboardGateHref={storyboardGateHref}
+        />
+      )}
     </div>
   )
 }
@@ -102,6 +132,7 @@ function ScriptStepBubble({ currentKey, disabled = false, onPrimaryClick, primar
       <div className="bubble-dots">
         {SCRIPT_FLOW.map((step, index) => (
           <button
+            type="button"
             key={step.key}
             className={cn(
               'bubble-dot',
@@ -110,10 +141,11 @@ function ScriptStepBubble({ currentKey, disabled = false, onPrimaryClick, primar
             )}
             onClick={() => wb.goSubStep(step.key)}
             title={step.label}
+            aria-label={`前往${step.label}`}
           />
         ))}
       </div>
-      <button className="bubble-btn primary" disabled={disabled} onClick={onPrimaryClick || goNext}>
+      <button type="button" className="bubble-btn primary" disabled={disabled} onClick={onPrimaryClick || goNext}>
         {label}
       </button>
     </div>
@@ -327,7 +359,7 @@ function ExtractStep() {
   }
 
   return (
-    <div className="script-step">
+    <div className="script-step script-step-extract">
       <div className="step-toolbar">
         <div className="toolbar-left">
           <div className="step-indicator">
@@ -424,7 +456,7 @@ function ExtractStep() {
       <ScriptStepBubble
         currentKey="script-extract"
         disabled={wb.running}
-        primaryLabel={hasExtracted ? '分配配音' : '提取角色场景'}
+        primaryLabel={hasExtracted ? '分配音色' : '提取角色场景'}
         onPrimaryClick={hasExtracted ? () => wb.goSubStep('script-voice') : wb.doExtract}
       />
     </div>
@@ -459,7 +491,7 @@ function VoiceStep() {
   }
 
   return (
-    <div className="script-step">
+    <div className="script-step script-step-voice">
       <div className="step-toolbar">
         <div className="toolbar-left">
           <div className="step-indicator">
@@ -648,20 +680,41 @@ function VoiceStep() {
 // ——————————————————————————————————————————————
 interface StoryboardStepProps {
   onRefresh?: () => void
+  storyboardUnlocked: boolean
+  storyboardGateLoading: boolean
+  storyboardGateMessage?: string
+  storyboardGateHref?: string
 }
 
-function StoryboardStep({ onRefresh }: StoryboardStepProps) {
+function StoryboardStep({
+  onRefresh,
+  storyboardUnlocked,
+  storyboardGateLoading,
+  storyboardGateMessage,
+  storyboardGateHref,
+}: StoryboardStepProps) {
   const wb = useWorkbench()
   const [selectedSbId, setSelectedSbId] = useState<number | null>(null)
+  const [showLongRunningHint, setShowLongRunningHint] = useState(false)
+  const [draftReviewOpen, setDraftReviewOpen] = useState(false)
   const isLoading = wb.running && wb.runningType === 'storyboard_breaker'
   const hasSavedScript = !!wb.episode?.script_content?.trim()
-  const hasExtractedContext = wb.characters.length > 0 || wb.scenes.length > 0
+  const breakdownIssue = wb.storyboardBreakdownIssue
+  const storyboardDraftReview = wb.storyboardDraftReview
 
   const selectedSb = useMemo(() => {
     if (wb.storyboards.length === 0) return null
     if (selectedSbId == null) return wb.storyboards[0]
     return wb.storyboards.find((s) => s.id === selectedSbId) ?? wb.storyboards[0]
   }, [selectedSbId, wb.storyboards])
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setShowLongRunningHint(isLoading),
+      isLoading ? 15000 : 0,
+    )
+    return () => window.clearTimeout(timer)
+  }, [isLoading])
 
   const handleAddShot = async () => {
     if (!wb.episode) return
@@ -676,6 +729,86 @@ function StoryboardStep({ onRefresh }: StoryboardStepProps) {
     } catch {
       // handled
     }
+  }
+
+  const renderBreakdownIssue = (compact = false) => {
+    if (!breakdownIssue) return null
+    const isCanceled = breakdownIssue.kind === 'canceled'
+    return (
+      <div
+        className={cn(
+          compact ? 'storyboard-breakdown-banner' : 'step-empty storyboard-breakdown-status',
+          isCanceled ? 'is-canceled' : 'is-failed',
+        )}
+        role={isCanceled ? 'status' : 'alert'}
+        aria-live={isCanceled ? 'polite' : 'assertive'}
+      >
+        <AlertTriangle size={compact ? 15 : 28} className="storyboard-breakdown-icon" />
+        <div className="storyboard-breakdown-copy">
+          <div className={compact ? 'storyboard-breakdown-title' : 'empty-title'}>
+            {isCanceled ? '分镜拆解已取消' : '分镜拆解失败'}
+          </div>
+          <div className={compact ? 'storyboard-breakdown-desc' : 'empty-desc'}>
+            {breakdownIssue.message}
+          </div>
+          {breakdownIssue.detail ? (
+            <div className="storyboard-breakdown-note">{breakdownIssue.detail}</div>
+          ) : null}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className={cn('panel-btn', !compact && 'panel-btn-primary')}
+          disabled={wb.running}
+          onClick={wb.doBreakdown}
+        >
+          <RotateCcw size={12} />
+          重试拆解
+        </Button>
+      </div>
+    )
+  }
+
+  const renderDraftReview = (compact = false) => {
+    if (!storyboardDraftReview) return null
+    const currentCount = storyboardDraftReview.current_baseline.storyboard_count
+    const hasProducedMedia = storyboardDraftReview.current_baseline.has_produced_media
+    return (
+      <div
+        className={cn(
+          compact ? 'storyboard-breakdown-banner storyboard-draft-review-banner' : 'step-empty storyboard-breakdown-status storyboard-draft-review-status',
+        )}
+        role="status"
+        aria-live="polite"
+      >
+        <AlertTriangle size={compact ? 15 : 28} className="storyboard-draft-review-icon" />
+        <div className="storyboard-breakdown-copy">
+          <div className={compact ? 'storyboard-breakdown-title' : 'empty-title'}>
+            AI 分镜草稿等待确认
+          </div>
+          <div className={compact ? 'storyboard-breakdown-desc' : 'empty-desc'}>
+            已生成 v{storyboardDraftReview.revision}（{storyboardDraftReview.items.length} 镜）。
+            {currentCount
+              ? ` 当前 ${currentCount} 个分镜将保持不变，直到你确认替换。`
+              : ' 请先检查草稿内容，再发布为本集分镜。'}
+          </div>
+          {hasProducedMedia ? (
+            <div className="storyboard-breakdown-note">
+              当前分镜已关联镜头产物；确认替换后，已有产物不会自动迁移到新分镜。
+            </div>
+          ) : null}
+        </div>
+        <Button
+          variant={compact ? 'outline' : 'default'}
+          size="sm"
+          className={cn('panel-btn', !compact && 'panel-btn-primary')}
+          onClick={() => setDraftReviewOpen(true)}
+        >
+          <Eye size={13} />
+          查看并确认
+        </Button>
+      </div>
+    )
   }
 
   if (!hasSavedScript) {
@@ -695,25 +828,34 @@ function StoryboardStep({ onRefresh }: StoryboardStepProps) {
     )
   }
 
-  if (!hasExtractedContext) {
+  if (!storyboardUnlocked) {
     return (
       <div className="script-step locked-script-step">
         <div className="studio-locked-empty">
-          <Users size={34} className="studio-locked-icon" />
-          <div className="empty-title">尚未准备就绪</div>
-          <div className="empty-desc">请先提取角色与场景</div>
+          <Network size={34} className="studio-locked-icon" />
+          <div className="empty-title">
+            {storyboardGateLoading ? '正在确认故事地图状态' : '故事地图尚未就绪'}
+          </div>
+          <div className="empty-desc">
+            {storyboardGateMessage || '请先在第四步构建故事地图，再开始本集分镜。'}
+          </div>
+          {storyboardGateHref && !storyboardGateLoading ? (
+            <Button asChild className="locked-empty-button">
+              <Link href={storyboardGateHref}>前往故事地图</Link>
+            </Button>
+          ) : null}
         </div>
         <ScriptStepBubble
           currentKey="script-storyboard"
-          primaryLabel="前往提取"
-          onPrimaryClick={() => wb.goSubStep('script-extract')}
+          disabled
+          primaryLabel={storyboardGateLoading ? '正在确认' : '等待故事地图'}
         />
       </div>
     )
   }
 
   return (
-    <div className="script-step">
+    <div className="script-step script-step-storyboard">
       <div className="step-toolbar">
         <div className="toolbar-left">
           <div className="step-indicator">
@@ -752,10 +894,29 @@ function StoryboardStep({ onRefresh }: StoryboardStepProps) {
 
       <div className="step-editor">
         {isLoading ? (
-          <div className="step-loading">
+          <div className="step-loading storyboard-breakdown-status" role="status" aria-live="polite">
             <Loader2 size={28} className="animate-spin text-accent" />
+            <div className="empty-title">正在拆解分镜</div>
             <div className="loading-text">{wb.runningNote || '正在拆解分镜...'}</div>
+            {showLongRunningHint ? (
+              <div className="storyboard-breakdown-note">耗时较长，AI 仍在处理本集剧本和故事地图上下文。</div>
+            ) : null}
+            {wb.runningAbortController || wb.runningTaskId ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="panel-btn storyboard-cancel-btn"
+                onClick={wb.cancelRunningAgent}
+              >
+                <XCircle size={12} />
+                取消拆解
+              </Button>
+            ) : null}
           </div>
+        ) : wb.storyboards.length === 0 && breakdownIssue ? (
+          renderBreakdownIssue(false)
+        ) : wb.storyboards.length === 0 && storyboardDraftReview ? (
+          renderDraftReview(false)
         ) : wb.storyboards.length === 0 ? (
           <div className="step-empty">
             <div className="empty-title">将剧本拆解为分镜序列</div>
@@ -764,72 +925,76 @@ function StoryboardStep({ onRefresh }: StoryboardStepProps) {
             </div>
           </div>
         ) : (
-          <div className="split-layout">
-            {/* Left: Shot list */}
-            <div className="shot-list">
-              <div className="shot-list-head">
-                <div>
-                  <div className="shot-list-title">镜头序列</div>
-                  <div className="shot-list-sub">按镜头顺序检查内容与素材状态</div>
+          <>
+            {renderDraftReview(true)}
+            {renderBreakdownIssue(true)}
+            <div className="split-layout">
+              {/* Left: Shot list */}
+              <div className="shot-list">
+                <div className="shot-list-head">
+                  <div>
+                    <div className="shot-list-title">镜头序列</div>
+                    <div className="shot-list-sub">按镜头顺序检查内容与素材状态</div>
+                  </div>
+                  <span className="tag mono">{wb.totalDuration()}s</span>
                 </div>
-                <span className="tag mono">{wb.totalDuration()}s</span>
-              </div>
-              <div className="shot-list-body">
-                {wb.storyboards.map((sb, i) => {
-                  const characters = sb.characters || []
-                  const scene = wb.scenes.find(s => s.id === sb.scene_id)
-                  return (
-                    <div
-                      key={sb.id}
-                      className={cn('shot-item', selectedSb?.id === sb.id && 'active')}
-                      onClick={() => setSelectedSbId(sb.id)}
-                    >
-                      <div className="shot-item-header">
-                        <div className="shot-num">#{String(i + 1).padStart(2, '0')}</div>
-                        <span className="tag">{sb.shot_type || '—'}</span>
-                        {characters.length > 0 && <span className="tag">{characters.length} 角色</span>}
-                        <div className="shot-status">
-                          {(sb.composed_image || sb.first_frame_image || sb.last_frame_image) && (
-                            <span className="shot-dot has-img" title="已生成图片" />
+                <div className="shot-list-body">
+                  {wb.storyboards.map((sb, i) => {
+                    const characters = sb.characters || []
+                    const scene = wb.scenes.find(s => s.id === sb.scene_id)
+                    return (
+                      <div
+                        key={sb.id}
+                        className={cn('shot-item', selectedSb?.id === sb.id && 'active')}
+                        onClick={() => setSelectedSbId(sb.id)}
+                      >
+                        <div className="shot-item-header">
+                          <div className="shot-num">#{String(i + 1).padStart(2, '0')}</div>
+                          <span className="tag">{sb.shot_type || '—'}</span>
+                          {characters.length > 0 && <span className="tag">{characters.length} 角色</span>}
+                          <div className="shot-status">
+                            {(sb.composed_image || sb.first_frame_image || sb.last_frame_image) && (
+                              <span className="shot-dot has-img" title="已生成图片" />
+                            )}
+                            {(sb.video_url || sb.composed_video_url) && (
+                              <span className="shot-dot has-video" title="已生成视频" />
+                            )}
+                            {sb.dialogue && <span className="shot-dot has-dialogue" title="有对白" />}
+                          </div>
+                        </div>
+                        <div className="shot-body">
+                          <div className="shot-desc">{sb.description || sb.title || '无描述'}</div>
+                        </div>
+                        <div className="shot-meta">
+                          <span className="mono dim">{sb.duration || 10}s</span>
+                          {(sb.location || scene?.location) && (
+                            <span className="shot-location">{sb.location || scene?.location}</span>
                           )}
-                          {(sb.video_url || sb.composed_video_url) && (
-                            <span className="shot-dot has-video" title="已生成视频" />
+                          {characters.length > 0 && (
+                            <span className="shot-location">
+                              {characters.map(c => c.name).filter(Boolean).join(' / ')}
+                            </span>
                           )}
-                          {sb.dialogue && <span className="shot-dot has-dialogue" title="有对白" />}
+                          {sb.dialogue && <span className="shot-dialogue">{sb.dialogue}</span>}
                         </div>
                       </div>
-                      <div className="shot-body">
-                        <div className="shot-desc">{sb.description || sb.title || '无描述'}</div>
-                      </div>
-                      <div className="shot-meta">
-                        <span className="mono dim">{sb.duration || 10}s</span>
-                        {(sb.location || scene?.location) && (
-                          <span className="shot-location">{sb.location || scene?.location}</span>
-                        )}
-                        {characters.length > 0 && (
-                          <span className="shot-location">
-                            {characters.map(c => c.name).filter(Boolean).join(' / ')}
-                          </span>
-                        )}
-                        {sb.dialogue && <span className="shot-dialogue">{sb.dialogue}</span>}
-                      </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Right: Shot detail */}
+              <div className="detail-panel">
+                {selectedSb ? (
+                  <ShotDetail key={selectedSb.id} sb={selectedSb} />
+                ) : (
+                  <div className="storyboard-empty">
+                    选择一个镜头查看详情
+                  </div>
+                )}
               </div>
             </div>
-
-            {/* Right: Shot detail */}
-            <div className="detail-panel">
-              {selectedSb ? (
-                <ShotDetail key={selectedSb.id} sb={selectedSb} />
-              ) : (
-                <div className="storyboard-empty">
-                  选择一个镜头查看详情
-                </div>
-              )}
-            </div>
-          </div>
+          </>
         )}
       </div>
       <ScriptStepBubble
@@ -840,11 +1005,97 @@ function StoryboardStep({ onRefresh }: StoryboardStepProps) {
             ? '拆解中'
             : wb.storyboards.length
               ? '进入制作'
-              : 'AI拆解分镜'
+              : breakdownIssue
+                ? '重试拆解'
+                : 'AI 拆解分镜'
         }
         onPrimaryClick={wb.storyboards.length ? () => wb.goSubStep('prod-chars') : wb.doBreakdown}
       />
+      <StoryboardDraftReviewDialog
+        draft={storyboardDraftReview}
+        open={draftReviewOpen}
+        onOpenChange={setDraftReviewOpen}
+        publishing={wb.publishingStoryboardDraft}
+        onPublish={async () => {
+          const published = await wb.confirmStoryboardDraftPublication()
+          if (!published) return
+          setDraftReviewOpen(false)
+          await onRefresh?.()
+        }}
+      />
     </div>
+  )
+}
+
+function StoryboardDraftReviewDialog({
+  draft,
+  open,
+  onOpenChange,
+  publishing,
+  onPublish,
+}: {
+  draft: StoryboardDraftPreview | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  publishing: boolean
+  onPublish: () => Promise<void>
+}) {
+  if (!draft) return null
+  const currentCount = draft.current_baseline.storyboard_count
+  const shouldWarnAboutMedia = draft.current_baseline.has_produced_media
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent variant="workspace" aria-describedby={undefined}>
+        <DialogHeaderBar variant="workspace">
+          <DialogTitle>检查 AI 分镜草稿</DialogTitle>
+          <DialogDescription className="mt-2 leading-6">
+            v{draft.revision} · {draft.items.length} 镜。当前 {currentCount} 个分镜会继续保留，直到你确认发布。
+          </DialogDescription>
+        </DialogHeaderBar>
+        <DialogMain variant="workspace" className="storyboard-draft-review-dialog-main">
+          {shouldWarnAboutMedia ? (
+            <div className="storyboard-draft-review-warning">
+              已有镜头产物不会自动迁移到新分镜。请确认替换范围后再发布。
+            </div>
+          ) : null}
+          <div className="storyboard-draft-review-list">
+            {draft.items.map((item) => (
+              <article key={item.shot_number} className="storyboard-draft-review-item">
+                <div className="storyboard-draft-review-item-head">
+                  <strong>#{String(item.shot_number).padStart(2, '0')}</strong>
+                  <span>{item.shot_type || '未设置景别'}</span>
+                  <span>{item.duration}s</span>
+                </div>
+                <p>{item.description || item.action || item.title || '未提供镜头描述'}</p>
+                {item.dialogue ? <small>对白：{item.dialogue}</small> : null}
+              </article>
+            ))}
+          </div>
+        </DialogMain>
+        <DialogActions variant="workspace">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={publishing}
+            onClick={() => onOpenChange(false)}
+          >
+            保留当前分镜
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={publishing}
+            onClick={() => {
+              void onPublish()
+            }}
+          >
+            {publishing ? <Loader2 className="animate-spin" /> : <Replace />}
+            确认替换并发布
+          </Button>
+        </DialogActions>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -853,6 +1104,7 @@ function StoryboardStep({ onRefresh }: StoryboardStepProps) {
 // ——————————————————————————————————————————————
 function ShotDetail({ sb }: { sb: Storyboard }) {
   const wb = useWorkbench()
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const selectedIndex = Math.max(0, wb.storyboards.findIndex(s => s.id === sb.id))
   const scene = wb.scenes.find(s => s.id === sb.scene_id)
@@ -959,151 +1211,167 @@ function ShotDetail({ sb }: { sb: Storyboard }) {
           </div>
         </div>
 
-        <div className="detail-section">
-          <div className="detail-section-head">
-            <span className="detail-section-title">镜头结构</span>
-            <span className="detail-section-copy">景别、角度、运镜、场景绑定和时长</span>
-          </div>
-          <div className="field-grid field-grid-4">
-            <label className="field">
-              <span className="field-label">标题</span>
-              {inlineField('title', '如：深夜难眠')}
-            </label>
-            <label className="field">
-              <span className="field-label">景别</span>
-              {inlineField('shot_type', '选择或输入景别', 'shot-type-list')}
-            </label>
-            <label className="field">
-              <span className="field-label">角度</span>
-              {inlineField('angle', '选择或输入角度', 'shot-angle-list')}
-            </label>
-            <label className="field">
-              <span className="field-label">运镜</span>
-              {inlineField('movement', '选择或输入运镜', 'shot-movement-list')}
-            </label>
-          </div>
-          <div className="field-grid field-grid-4">
-            <label className="field field-wide">
-              <span className="field-label">绑定角色</span>
-              <div className="role-pills">
-                {wb.characters.map(c => {
-                  const isIn = (sb.characters || []).some(ch => ch.id === c.id)
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      className={cn('role-pill', isIn && 'active')}
-                      onClick={() => wb.toggleStoryboardCharacter(sb, c.id)}
-                    >
-                      {c.name}
-                    </button>
-                  )
-                })}
-                {wb.characters.length === 0 && (
-                  <span className="dim text-xs">当前集还没有角色</span>
-                )}
+        <div className="detail-quick-actions">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="panel-btn"
+            onClick={() => setAdvancedOpen((value) => !value)}
+          >
+            {advancedOpen ? '收起高级编辑' : '编辑镜头细节'}
+          </Button>
+          <span>默认只展示镜头摘要；提示词与结构字段收进高级编辑。</span>
+        </div>
+
+        {advancedOpen ? (
+          <>
+            <div className="detail-section">
+              <div className="detail-section-head">
+                <span className="detail-section-title">镜头结构</span>
+                <span className="detail-section-copy">景别、角度、运镜、场景绑定和时长</span>
               </div>
-            </label>
-            <label className="field">
-              <span className="field-label">绑定场景</span>
-              <select
-                className="input"
-                defaultValue={sb.scene_id || ''}
-                onChange={e => wb.updateField(sb, 'scene_id', e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">未绑定场景</option>
-                {wb.scenes.map(s => (
-                  <option key={s.id} value={s.id}>{s.location} · {s.time || '未设时间'}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span className="field-label">地点</span>
-              {inlineField('location', '场景地点')}
-            </label>
-            <label className="field">
-              <span className="field-label">时间</span>
-              {inlineField('time', '如：深夜 / 清晨')}
-            </label>
-            <label className="field">
-              <span className="field-label">时长</span>
-              <input
-                type="number"
-                className="input"
-                defaultValue={sb.duration || 10}
-                min={1}
-                max={60}
-                onBlur={e => wb.updateField(sb, 'duration', Number(e.target.value))}
-              />
-            </label>
-          </div>
-        </div>
+              <div className="field-grid field-grid-4">
+                <label className="field">
+                  <span className="field-label">标题</span>
+                  {inlineField('title', '如：深夜难眠')}
+                </label>
+                <label className="field">
+                  <span className="field-label">景别</span>
+                  {inlineField('shot_type', '选择或输入景别', 'shot-type-list')}
+                </label>
+                <label className="field">
+                  <span className="field-label">角度</span>
+                  {inlineField('angle', '选择或输入角度', 'shot-angle-list')}
+                </label>
+                <label className="field">
+                  <span className="field-label">运镜</span>
+                  {inlineField('movement', '选择或输入运镜', 'shot-movement-list')}
+                </label>
+              </div>
+              <div className="field-grid field-grid-4">
+                <label className="field field-wide">
+                  <span className="field-label">绑定角色</span>
+                  <div className="role-pills">
+                    {wb.characters.map(c => {
+                      const isIn = (sb.characters || []).some(ch => ch.id === c.id)
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className={cn('role-pill', isIn && 'active')}
+                          onClick={() => wb.toggleStoryboardCharacter(sb, c.id)}
+                        >
+                          {c.name}
+                        </button>
+                      )
+                    })}
+                    {wb.characters.length === 0 && (
+                      <span className="dim text-xs">当前集还没有角色</span>
+                    )}
+                  </div>
+                </label>
+                <label className="field">
+                  <span className="field-label">绑定场景</span>
+                  <select
+                    className="input"
+                    defaultValue={sb.scene_id || ''}
+                    onChange={e => wb.updateField(sb, 'scene_id', e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="">未绑定场景</option>
+                    {wb.scenes.map(s => (
+                      <option key={s.id} value={s.id}>{s.location} · {s.time || '未设时间'}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="field-label">地点</span>
+                  {inlineField('location', '场景地点')}
+                </label>
+                <label className="field">
+                  <span className="field-label">时间</span>
+                  {inlineField('time', '如：深夜 / 清晨')}
+                </label>
+                <label className="field">
+                  <span className="field-label">时长</span>
+                  <input
+                    type="number"
+                    className="input"
+                    defaultValue={sb.duration || 10}
+                    min={1}
+                    max={60}
+                    onBlur={e => wb.updateField(sb, 'duration', Number(e.target.value))}
+                  />
+                </label>
+              </div>
+            </div>
 
-        <div className="detail-section">
-          <div className="detail-section-head">
-            <span className="detail-section-title">画面语义</span>
-            <span className="detail-section-copy">动作、结果、氛围和对白</span>
-          </div>
-          <div className="field-grid field-grid-2">
-            <label className="field">
-              <span className="field-label">动作</span>
-              {field('action', '谁在做什么，表情和动作细节是什么')}
-            </label>
-            <label className="field">
-              <span className="field-label">结果</span>
-              {field('result', '镜头结束时的状态变化或画面结果')}
-            </label>
-          </div>
-          <div className="field-grid field-grid-2">
-            <label className="field">
-              <span className="field-label">画面描述</span>
-              {field('description', '描述画面内容...', 4)}
-            </label>
-            <label className="field">
-              <span className="field-label">氛围</span>
-              {field('atmosphere', '光线、色调、空气感、环境氛围', 4)}
-            </label>
-          </div>
-          <label className="field">
-            <span className="field-label">对白 / 旁白</span>
-            {field('dialogue', '角色名：台词内容 或 旁白：内容')}
-          </label>
-        </div>
+            <div className="detail-section">
+              <div className="detail-section-head">
+                <span className="detail-section-title">画面语义</span>
+                <span className="detail-section-copy">动作、结果、氛围和对白</span>
+              </div>
+              <div className="field-grid field-grid-2">
+                <label className="field">
+                  <span className="field-label">动作</span>
+                  {field('action', '谁在做什么，表情和动作细节是什么')}
+                </label>
+                <label className="field">
+                  <span className="field-label">结果</span>
+                  {field('result', '镜头结束时的状态变化或画面结果')}
+                </label>
+              </div>
+              <div className="field-grid field-grid-2">
+                <label className="field">
+                  <span className="field-label">画面描述</span>
+                  {field('description', '描述画面内容...', 4)}
+                </label>
+                <label className="field">
+                  <span className="field-label">氛围</span>
+                  {field('atmosphere', '光线、色调、空气感、环境氛围', 4)}
+                </label>
+              </div>
+              <label className="field">
+                <span className="field-label">对白 / 旁白</span>
+                {field('dialogue', '角色名：台词内容 或 旁白：内容')}
+              </label>
+            </div>
 
-        <div className="detail-section">
-          <div className="detail-section-head">
-            <span className="detail-section-title">生成提示</span>
-            <span className="detail-section-copy">分别服务图片、视频、配乐和音效生成</span>
-          </div>
-          <label className="field">
-            <span className="field-label">静态画面提示词</span>
-            {field('image_prompt', '用于首帧、尾帧和镜头图片的单帧画面提示词', 4)}
-          </label>
-          <label className="field">
-            <span className="field-label">视频提示词</span>
-            {field('video_prompt', '按 3 秒分段的视频提示词...', 5)}
-          </label>
-          <div className="field-grid field-grid-2">
-            <label className="field">
-              <span className="field-label">配乐提示词</span>
-              {field('bgm_prompt', '如：压抑低频弦乐，缓慢推进')}
-            </label>
-            <label className="field">
-              <span className="field-label">音效提示词</span>
-              {field('sound_effect', '如：风雪声、脚步声、衣料摩擦声')}
-            </label>
-          </div>
-        </div>
+            <div className="detail-section">
+              <div className="detail-section-head">
+                <span className="detail-section-title">生成提示</span>
+                <span className="detail-section-copy">分别服务图片、视频、配乐和音效生成</span>
+              </div>
+              <label className="field">
+                <span className="field-label">静态画面提示词</span>
+                {field('image_prompt', '用于首帧、尾帧和镜头图片的单帧画面提示词', 4)}
+              </label>
+              <label className="field">
+                <span className="field-label">视频提示词</span>
+                {field('video_prompt', '按 3 秒分段的视频提示词...', 5)}
+              </label>
+              <div className="field-grid field-grid-2">
+                <label className="field">
+                  <span className="field-label">配乐提示词</span>
+                  {field('bgm_prompt', '如：压抑低频弦乐，缓慢推进')}
+                </label>
+                <label className="field">
+                  <span className="field-label">音效提示词</span>
+                  {field('sound_effect', '如：风雪声、脚步声、衣料摩擦声')}
+                </label>
+              </div>
+            </div>
 
-        <datalist id="shot-type-list">
-          {SHOT_TYPES.map(item => <option key={item} value={item} />)}
-        </datalist>
-        <datalist id="shot-angle-list">
-          {SHOT_ANGLES.map(item => <option key={item} value={item} />)}
-        </datalist>
-        <datalist id="shot-movement-list">
-          {SHOT_MOVEMENTS.map(item => <option key={item} value={item} />)}
-        </datalist>
+            <datalist id="shot-type-list">
+              {SHOT_TYPES.map(item => <option key={item} value={item} />)}
+            </datalist>
+            <datalist id="shot-angle-list">
+              {SHOT_ANGLES.map(item => <option key={item} value={item} />)}
+            </datalist>
+            <datalist id="shot-movement-list">
+              {SHOT_MOVEMENTS.map(item => <option key={item} value={item} />)}
+            </datalist>
+          </>
+        ) : null}
       </div>
     </>
   )

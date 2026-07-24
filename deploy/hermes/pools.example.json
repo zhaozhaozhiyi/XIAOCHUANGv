@@ -1,0 +1,74 @@
+{
+  "pools": [
+    {
+      "name": "drama-source-pool",
+      "toolProfile": "xiaochuang-drama-source",
+      "skillBundle": "xiaochuang-source@1.0.0",
+      "skillManifest": [
+        { "ref": "xiaochuang_runtime_policy@1.0.0", "sha256": "aa87759f2954a5a2c129a7c93c690d2f75e8edacabbaa13b2f88d6196700c65e" },
+        { "ref": "drama_source_understanding@1.0.0", "sha256": "402eda22f7a1882cd11989c550c0afe54597a268263823eee83470135f830071" }
+      ],
+      "allowedTools": ["get_task_context", "list_source_chunks", "get_source_chunk", "submit_source_chunk_analysis", "submit_source_analysis", "report_progress", "complete_execution", "fail_execution"],
+      "modelProfile": "xiaochuang-text-project",
+      "maxConcurrentRuns": 10,
+      "maxConcurrentRunsPerUser": 2,
+      "instances": [{ "name": "hermes-source-1", "baseUrl": "http://hermes-source:8642" }]
+    },
+    {
+      "name": "drama-plan-pool",
+      "toolProfile": "xiaochuang-drama-plan",
+      "skillBundle": "xiaochuang-plan@1.0.0",
+      "skillManifest": [
+        { "ref": "xiaochuang_runtime_policy@1.0.0", "sha256": "aa87759f2954a5a2c129a7c93c690d2f75e8edacabbaa13b2f88d6196700c65e" },
+        { "ref": "drama_episode_planning@1.0.0", "sha256": "65c8b15e8bf0bd96439c14519e989e04a7ea9154243d4af1bc2af9107cab9d04" }
+      ],
+      "allowedTools": ["get_task_context", "list_source_chunks", "get_source_chunk", "submit_blueprint_batch", "report_progress", "complete_execution", "fail_execution"],
+      "modelProfile": "xiaochuang-text-project",
+      "maxConcurrentRuns": 10,
+      "maxConcurrentRunsPerUser": 2,
+      "instances": [{ "name": "hermes-plan-1", "baseUrl": "http://hermes-plan:8642" }]
+    },
+    {
+      "name": "drama-script-pool",
+      "toolProfile": "xiaochuang-drama-script",
+      "skillBundle": "xiaochuang-script@1.0.0",
+      "skillManifest": [
+        { "ref": "xiaochuang_runtime_policy@1.0.0", "sha256": "aa87759f2954a5a2c129a7c93c690d2f75e8edacabbaa13b2f88d6196700c65e" },
+        { "ref": "drama_episode_script_writing@1.0.0", "sha256": "7daf386a43fc55405ff6c88344c39caa8e80555acf549499f816411f9bff2caf" }
+      ],
+      "allowedTools": ["get_task_context", "list_source_chunks", "get_source_chunk", "submit_episode_script", "report_progress", "complete_execution", "fail_execution"],
+      "modelProfile": "xiaochuang-text-project",
+      "maxConcurrentRuns": 10,
+      "maxConcurrentRunsPerUser": 2,
+      "instances": [{ "name": "hermes-script-1", "baseUrl": "http://hermes-script:8642" }]
+    },
+    {
+      "name": "drama-graph-pool",
+      "toolProfile": "xiaochuang-drama-graph",
+      "skillBundle": "xiaochuang-graph@1.0.0",
+      "skillManifest": [
+        { "ref": "xiaochuang_runtime_policy@1.0.0", "sha256": "aa87759f2954a5a2c129a7c93c690d2f75e8edacabbaa13b2f88d6196700c65e" },
+        { "ref": "drama_story_graph_build@1.0.0", "sha256": "8c4ed3842523b8b10b30080fd8d2567e0d6fcebb3ba13180f8ef777cc6e6c18c" }
+      ],
+      "allowedTools": ["get_task_context", "list_episode_scripts", "get_episode_script", "submit_story_graph_batch", "report_progress", "complete_execution", "fail_execution"],
+      "modelProfile": "xiaochuang-text-project",
+      "maxConcurrentRuns": 10,
+      "maxConcurrentRunsPerUser": 2,
+      "instances": [{ "name": "hermes-graph-1", "baseUrl": "http://hermes-graph:8642" }]
+    },
+    {
+      "name": "drama-storyboard-pool",
+      "toolProfile": "xiaochuang-drama-storyboard",
+      "skillBundle": "xiaochuang-storyboard@1.0.0",
+      "skillManifest": [
+        { "ref": "xiaochuang_runtime_policy@1.0.0", "sha256": "aa87759f2954a5a2c129a7c93c690d2f75e8edacabbaa13b2f88d6196700c65e" },
+        { "ref": "drama_storyboard_planning@1.0.0", "sha256": "f45e8a298021b438973d21759c991ce196a2152fa67d7f7d71ef4e16df9a9497" }
+      ],
+      "allowedTools": ["get_storyboard_task_context", "list_episode_script_segments", "get_episode_script_segment", "get_storyboard_assets", "submit_storyboard_batch", "report_progress", "complete_execution", "fail_execution"],
+      "modelProfile": "xiaochuang-text-project",
+      "maxConcurrentRuns": 10,
+      "maxConcurrentRunsPerUser": 2,
+      "instances": [{ "name": "hermes-storyboard-1", "baseUrl": "http://hermes-storyboard:8642" }]
+    }
+  ]
+}

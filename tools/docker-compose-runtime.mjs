@@ -14,7 +14,28 @@ if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
   process.exit(args.length === 0 ? 1 : 0)
 }
 
-const result = spawnSync('docker', ['compose', '-f', 'docker-compose.runtime.yml', ...args], {
+const requiresHermesSource = args.includes('build') || args.includes('up')
+if (requiresHermesSource) {
+  const prepare = spawnSync(process.execPath, ['tools/prepare-hermes-source.mjs'], {
+    cwd: repoRoot,
+    stdio: 'inherit',
+    windowsHide: true,
+  })
+  if (prepare.error) {
+    console.error(prepare.error.message)
+    process.exit(1)
+  }
+  if (prepare.status !== 0) {
+    process.exit(prepare.status ?? 1)
+  }
+}
+
+const profileArgs = []
+if (args[0] === 'down' && !args.includes('--profile')) {
+  profileArgs.push('--profile', 'app', '--profile', 'agent')
+}
+
+const result = spawnSync('docker', ['compose', '-f', 'docker-compose.runtime.yml', ...profileArgs, ...args], {
   cwd: repoRoot,
   stdio: 'inherit',
   windowsHide: true,

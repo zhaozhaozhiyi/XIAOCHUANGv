@@ -1,6 +1,7 @@
 {
   "name": "@xiaochuang/admin",
   "version": "0.22.0",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3002 -H 127.0.0.1",

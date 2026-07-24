@@ -7,6 +7,7 @@ import { toSnakeCaseArrayWithPublicMedia, toSnakeCaseWithPublicMedia } from '../
 import { DatabaseService } from '../../db/database.service'
 import { characters, dramas, episodeCharacters, episodes, scenes, storyboards, videoMerges } from '../../db/schema'
 import { DramaAiFirstService, markEpisodeGenerationModeStale } from '../dramas/drama-ai-first.service'
+import { DramaStoryboardBreakdownService } from '../dramas/drama-storyboard-breakdown.service'
 import { resolveProjectConfigId } from '../dramas/drama-metadata'
 import { CurrentUser } from '../auth/current-user.decorator'
 import type { CurrentUser as CurrentUserType } from '../auth/auth.types'
@@ -84,7 +85,10 @@ function stepStatus(done: boolean, partial?: boolean) {
 export class EpisodesController {
   constructor(
     @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @Inject(DramaAiFirstService)
     private readonly dramaAiFirstService: DramaAiFirstService,
+    @Inject(DramaStoryboardBreakdownService)
+    private readonly dramaStoryboardBreakdownService: DramaStoryboardBreakdownService,
   ) {}
 
   private async requireOwnedEpisode(episodeId: number, userId: number) {
@@ -108,6 +112,20 @@ export class EpisodesController {
     const episodeId = parseId(id)
     const episode = await this.requireOwnedEpisode(episodeId, currentUser.id)
     return toSnakeCaseWithPublicMedia(episode as unknown as Record<string, unknown>, episodeMediaFields)
+  }
+
+  @Post(':id/storyboard-breakdown')
+  async requestStoryboardBreakdown(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: CurrentUserType,
+  ) {
+    const episodeId = parseId(id)
+    const episode = await this.requireOwnedEpisode(episodeId, currentUser.id)
+    return this.dramaStoryboardBreakdownService.requestBreakdown({
+      userId: currentUser.id,
+      dramaId: episode.dramaId,
+      episodeId: episode.id,
+    })
   }
 
   @Get(':id/characters')
@@ -396,10 +414,11 @@ export class EpisodesController {
     @CurrentUser() currentUser: CurrentUserType,
   ) {
     const episodeId = parseId(id)
-    await this.requireOwnedEpisode(episodeId, currentUser.id)
+    const episode = await this.requireOwnedEpisode(episodeId, currentUser.id)
 
     const updates: Record<string, unknown> = { updatedAt: now() }
     let hasValidFields = false
+    let scriptContentChanged = false
 
     if (body.content !== undefined) {
       updates.content = body.content
@@ -407,6 +426,11 @@ export class EpisodesController {
     }
     if (body.script_content !== undefined) {
       updates.scriptContent = body.script_content
+      scriptContentChanged = String(episode.scriptContent || '').trim() !== String(body.script_content || '').trim()
+      if (scriptContentChanged && String(body.script_content || '').trim()) {
+        if (body.status === undefined) updates.status = 'script_ready'
+        if (body.generation_mode === undefined) updates.generationMode = 'manual_script'
+      }
       hasValidFields = true
     }
     if (body.title !== undefined) {
@@ -458,6 +482,19 @@ export class EpisodesController {
 
     if (!hasValidFields) {
       throw new BadRequestException('no valid fields')
+    }
+
+    if (scriptContentChanged) {
+      const existingStoryboards = await this.databaseService.db
+        .select({ id: storyboards.id })
+        .from(storyboards)
+        .where(and(
+          eq(storyboards.episodeId, episodeId),
+          eq(storyboards.userId, currentUser.id),
+          isNull(storyboards.deletedAt),
+        ))
+        .limit(1)
+      updates.reviewStatus = existingStoryboards.length ? 'storyboard_review_required' : 'pending'
     }
 
     await this.databaseService.db

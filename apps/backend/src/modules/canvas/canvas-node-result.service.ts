@@ -4,6 +4,12 @@ import { randomUUID } from 'crypto'
 
 import { DatabaseService } from '../../db/database.service'
 import { canvasNodes } from '../../db/schema'
+import {
+  AUDIO_RESULT_NODE_TYPES,
+  IMAGE_RESULT_NODE_TYPES,
+  TEXT_RESULT_NODE_TYPES,
+  VIDEO_RESULT_NODE_TYPES,
+} from './canvas-node-types'
 import { CANVAS_ASSET_SOURCE_TYPES, normalizeCanvasAssetSourceType } from './canvas-source-types'
 
 export type CanvasNodeResultKind = 'image' | 'video' | 'audio' | 'text' | 'file'
@@ -221,11 +227,20 @@ export class CanvasNodeResultService {
     if (result.kind === 'image') {
       const images = Array.isArray(next.images) ? [...(next.images as string[])] : []
       next.images = [url, ...images.filter((item) => item !== url)].slice(0, 20)
+      if (IMAGE_RESULT_NODE_TYPES.has(nodeDefId)) {
+        const generationBatch = Array.isArray(next.generationBatch)
+          ? (next.generationBatch as unknown[]).filter((item): item is string => typeof item === 'string')
+          : []
+        next.imageUrl = url
+        next.previewImageUrl = url
+        next.thumbnailUrl = url
+        next.generationBatch = [url, ...generationBatch.filter((item) => item !== url)].slice(0, 20)
+      }
       if (nodeDefId === 'character' || nodeDefId === 'scene') {
         next.avatar = url
         next.image = url
       }
-      if (nodeDefId === 'storyboard' || nodeDefId === 'image') {
+      if (nodeDefId === 'storyboard' || nodeDefId === 'image' || nodeDefId === 'storyboardNode' || nodeDefId === 'storyboardGenNode') {
         const history = Array.isArray(next.historyImages) ? [...(next.historyImages as unknown[])] : []
         next.historyImages = [
           { url, prompt: result.prompt ?? next.prompt ?? null, timestamp: result.created_at },
@@ -235,20 +250,49 @@ export class CanvasNodeResultService {
           }),
         ].slice(0, 20)
       }
+      if (nodeDefId === 'storyboardNode' || nodeDefId === 'storyboardGenNode') {
+        const frames = Array.isArray(next.frames) ? [...(next.frames as unknown[])] : []
+        next.frames = [
+          { imageUrl: url, url, prompt: result.prompt ?? next.prompt ?? null, created_at: result.created_at },
+          ...frames.filter((item) => {
+            if (!item || typeof item !== 'object') return true
+            const frame = item as { url?: unknown; imageUrl?: unknown }
+            return frame.url !== url && frame.imageUrl !== url
+          }),
+        ].slice(0, 20)
+      }
     }
 
     if (result.kind === 'video') {
       next.video = url
       next.videoUrl = url
+      if (VIDEO_RESULT_NODE_TYPES.has(nodeDefId)) {
+        next.resultVideoUrl = url
+        next.url = url
+        if (result.thumbnail_url) next.previewImageUrl = result.thumbnail_url
+      }
     }
 
     if (result.kind === 'audio') {
       next.audio = url
       next.audioUrl = url
+      if (AUDIO_RESULT_NODE_TYPES.has(nodeDefId)) {
+        next.url = url
+      }
+    }
+
+    if (result.kind === 'text' && TEXT_RESULT_NODE_TYPES.has(nodeDefId)) {
+      const text = typeof result.metadata?.text === 'string' ? result.metadata.text : url
+      next.text = text
+      next.content = text
     }
 
     next.previewUrl = url
     next.outputUrl = url
+    next.isGenerating = false
+    next.generationError = null
+    next.generationCompletedAt = result.created_at
+    if (next.status === 'generating' || next.status === 'running') next.status = 'completed'
     next.__lastRunResult = {
       url,
       at: result.created_at,

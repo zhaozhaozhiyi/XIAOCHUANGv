@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { and, desc, eq, gt, isNull } from 'drizzle-orm'
 import { Inject, Injectable } from '@nestjs/common'
 
+import { DEFAULT_SUBSCRIPTION_PLAN, getSubscriptionPlanSeed } from '../../config/subscription-plans'
 import { DatabaseService } from '../../db/database.service'
 import {
   organizationMembers,
@@ -16,7 +17,9 @@ import { generateRandomCode, hashPassword, verifyPassword } from './password'
 import { sendVerificationSms, type SmsPurpose } from './auth-sms'
 
 const VERIFICATION_CODE_TTL_MS = 5 * 60 * 1000
-const DEFAULT_SUBSCRIPTION_PLAN = 'free'
+const VERIFICATION_CODE_MIN_RESEND_MS = 60 * 1000
+const VERIFICATION_CODE_HOURLY_LIMIT = 5
+const VERIFICATION_CODE_MAX_ATTEMPTS = 5
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
@@ -110,7 +113,7 @@ export class AuthRegistrationService {
     if (!password || password.trim().length < 8) throw new Error('密码至少需要 8 位')
     if (email && !isValidEmail(email)) throw new Error('邮箱格式不正确')
 
-    await this.validateSmsCode(phone, code, 'register')
+    const verification = await this.validateSmsCode(phone, code, 'register')
 
     const [existingPhone] = await this.databaseService.db
       .select()
@@ -152,10 +155,7 @@ export class AuthRegistrationService {
       throw new Error('创建用户失败')
     }
 
-    const verification = await this.loadValidVerificationCode(phone, 'register', code)
-    if (verification) {
-      await this.markVerificationCodeUsed(verification.id)
-    }
+    await this.markVerificationCodeUsed(verification.id)
 
     const organization = await this.createPersonalOrganization(newUser.id, resolvedDisplayName)
 
@@ -198,10 +198,7 @@ export class AuthRegistrationService {
 
   async loginWithPhoneCode(phone: string, code: string, options?: { autoCreateIfMissing?: boolean }) {
     const normalizedPhone = normalizePhone(phone)
-    const verification = await this.loadValidVerificationCode(normalizedPhone, 'login', code)
-    if (!verification) {
-      throw new Error('验证码无效或已过期')
-    }
+    const verification = await this.validateSmsCode(normalizedPhone, code, 'login')
 
     let [user] = await this.databaseService.db
       .select()
@@ -258,6 +255,8 @@ export class AuthRegistrationService {
     const now = new Date()
     const expiresAt = new Date(now.getTime() + VERIFICATION_CODE_TTL_MS)
 
+    await this.enforceSmsSendRateLimit(phone, purpose, now)
+
     await this.databaseService.db.insert(phoneVerificationCodes).values({
       phone,
       purpose,
@@ -274,7 +273,40 @@ export class AuthRegistrationService {
     })
   }
 
-  private async loadValidVerificationCode(phone: string, purpose: SmsPurpose, code: string) {
+  private async enforceSmsSendRateLimit(phone: string, purpose: SmsPurpose, now: Date) {
+    const resendCutoff = new Date(now.getTime() - VERIFICATION_CODE_MIN_RESEND_MS)
+    const [recent] = await this.databaseService.db
+      .select({ id: phoneVerificationCodes.id, createdAt: phoneVerificationCodes.createdAt })
+      .from(phoneVerificationCodes)
+      .where(and(
+        eq(phoneVerificationCodes.phone, normalizePhone(phone)),
+        eq(phoneVerificationCodes.purpose, purpose),
+        gt(phoneVerificationCodes.createdAt, resendCutoff),
+      ))
+      .orderBy(desc(phoneVerificationCodes.id))
+      .limit(1)
+
+    if (recent) {
+      throw new Error('验证码发送过于频繁，请稍后再试')
+    }
+
+    const hourlyCutoff = new Date(now.getTime() - 60 * 60 * 1000)
+    const recentCodes = await this.databaseService.db
+      .select({ id: phoneVerificationCodes.id })
+      .from(phoneVerificationCodes)
+      .where(and(
+        eq(phoneVerificationCodes.phone, normalizePhone(phone)),
+        eq(phoneVerificationCodes.purpose, purpose),
+        gt(phoneVerificationCodes.createdAt, hourlyCutoff),
+      ))
+      .limit(VERIFICATION_CODE_HOURLY_LIMIT)
+
+    if (recentCodes.length >= VERIFICATION_CODE_HOURLY_LIMIT) {
+      throw new Error('验证码发送次数过多，请 1 小时后再试')
+    }
+  }
+
+  private async loadLatestActiveVerificationCode(phone: string, purpose: SmsPurpose) {
     const now = new Date()
     const [record] = await this.databaseService.db
       .select()
@@ -283,7 +315,6 @@ export class AuthRegistrationService {
         and(
           eq(phoneVerificationCodes.phone, normalizePhone(phone)),
           eq(phoneVerificationCodes.purpose, purpose),
-          eq(phoneVerificationCodes.code, code),
           isNull(phoneVerificationCodes.usedAt),
           gt(phoneVerificationCodes.expiresAt, now),
         ),
@@ -295,10 +326,29 @@ export class AuthRegistrationService {
   }
 
   private async validateSmsCode(phone: string, code: string, purpose: SmsPurpose) {
-    const record = await this.loadValidVerificationCode(phone, purpose, code)
+    const record = await this.loadLatestActiveVerificationCode(phone, purpose)
     if (!record) {
       throw new Error('验证码无效或已过期')
     }
+    if ((record.attemptCount ?? 0) >= VERIFICATION_CODE_MAX_ATTEMPTS) {
+      await this.markVerificationCodeUsed(record.id)
+      throw new Error('验证码尝试次数过多，请重新获取')
+    }
+    if (record.code !== code) {
+      const nextAttemptCount = (record.attemptCount ?? 0) + 1
+      await this.databaseService.db
+        .update(phoneVerificationCodes)
+        .set({
+          attemptCount: nextAttemptCount,
+          usedAt: nextAttemptCount >= VERIFICATION_CODE_MAX_ATTEMPTS ? new Date() : record.usedAt,
+          updatedAt: new Date(),
+        })
+        .where(eq(phoneVerificationCodes.id, record.id))
+      throw new Error(nextAttemptCount >= VERIFICATION_CODE_MAX_ATTEMPTS
+        ? '验证码尝试次数过多，请重新获取'
+        : '验证码无效或已过期')
+    }
+    return record
   }
 
   private async markVerificationCodeUsed(id: number) {
@@ -313,6 +363,11 @@ export class AuthRegistrationService {
   }
 
   private async ensureDefaultSubscriptionPlan() {
+    const defaultPlanSeed = getSubscriptionPlanSeed(DEFAULT_SUBSCRIPTION_PLAN)
+    if (!defaultPlanSeed) {
+      throw new Error(`Missing subscription plan seed for ${DEFAULT_SUBSCRIPTION_PLAN}`)
+    }
+
     const [existingPlan] = await this.databaseService.db
       .select()
       .from(subscriptionPlans)
@@ -324,18 +379,18 @@ export class AuthRegistrationService {
     await this.databaseService.db
       .insert(subscriptionPlans)
       .values({
-        name: DEFAULT_SUBSCRIPTION_PLAN,
-        displayName: '免费版',
-        description: '默认个人工作室方案',
-        price: 0,
-        priceUnit: 'month',
-        videoQuotaMonthly: 3000,
-        imageQuotaMonthly: 15000,
-        storageQuotaMb: 10240,
-        aiTokensQuotaMonthly: 3000000,
-        features: JSON.stringify(['workspace', 'basic-auth', 'default-quota']),
-        isActive: true,
-        sortOrder: 0,
+        name: defaultPlanSeed.name,
+        displayName: defaultPlanSeed.displayName,
+        description: defaultPlanSeed.description,
+        price: defaultPlanSeed.price,
+        priceUnit: defaultPlanSeed.priceUnit,
+        videoQuotaMonthly: defaultPlanSeed.videoQuotaMonthly,
+        imageQuotaMonthly: defaultPlanSeed.imageQuotaMonthly,
+        storageQuotaMb: defaultPlanSeed.storageQuotaMb,
+        aiTokensQuotaMonthly: defaultPlanSeed.aiTokensQuotaMonthly,
+        features: JSON.stringify(defaultPlanSeed.features),
+        isActive: defaultPlanSeed.isActive,
+        sortOrder: defaultPlanSeed.sortOrder,
       })
 
     const [plan] = await this.databaseService.db

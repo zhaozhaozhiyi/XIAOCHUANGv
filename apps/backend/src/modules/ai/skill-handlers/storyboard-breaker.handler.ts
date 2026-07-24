@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common'
 
 import { readStoryboardContext, saveStoryboardsForEpisode } from '../../agents/agents.storyboard'
+import { loadEpisodeCastGraphContext } from '../../dramas/drama-story-graph.context'
 import type { StoryboardSaveInput } from '../../agents/agents.types'
 import { requireOwnedDrama, requireOwnedEpisode } from '../../images/images.ownership'
 import {
@@ -33,6 +34,13 @@ interface StoryboardParams {
   episodeId: number
   userId: number
   message: string
+}
+
+type StoryGraphAudit = {
+  graph_id: number
+  episode_number: number
+  character_count: number
+  relation_count: number
 }
 
 function parseParams(payload: any, userId: number): StoryboardParams {
@@ -71,6 +79,45 @@ function buildStoryboardUserMessage(args: {
 ${JSON.stringify(compactContext)}`
 }
 
+function buildStoryGraphAudit(storyGraph: Record<string, unknown> | null): StoryGraphAudit | null {
+  if (!storyGraph) return null
+  const graphId = Number(storyGraph.graph_id)
+  if (!Number.isInteger(graphId) || graphId <= 0) return null
+
+  const episodeNumber = Number(storyGraph.episode_number)
+  const characters = Array.isArray(storyGraph.characters) ? storyGraph.characters : []
+  const relations = Array.isArray(storyGraph.relations) ? storyGraph.relations : []
+
+  return {
+    graph_id: graphId,
+    episode_number: Number.isInteger(episodeNumber) && episodeNumber > 0 ? episodeNumber : 0,
+    character_count: characters.length,
+    relation_count: relations.length,
+  }
+}
+
+function storyGraphReferences(audit: StoryGraphAudit | null) {
+  if (!audit) return []
+  return [{
+    kind: 'story_graph',
+    title: '故事地图',
+    reason: '分镜拆解已引用当前剧本故事地图中的角色与关系。',
+    ...audit,
+  }]
+}
+
+export function assertStoryboardGraphReady(summary: {
+  graph: { status: string } | null
+  is_stale: boolean
+}) {
+  if (!summary.graph || summary.graph.status !== 'ready') {
+    throw new BadRequestException('story_graph_required')
+  }
+  if (summary.is_stale) {
+    throw new BadRequestException('story_graph_stale')
+  }
+}
+
 export const storyboardBreakerHandler: SkillHandler = async (ctx) => {
   const params = parseParams(ctx.payload, ctx.currentUser.id)
   await requireOwnedDrama(ctx.databaseService, params.dramaId, params.userId)
@@ -78,19 +125,41 @@ export const storyboardBreakerHandler: SkillHandler = async (ctx) => {
   if (episode.dramaId !== params.dramaId) {
     throw new BadRequestException('episode_id 与 drama_id 不匹配')
   }
+  const storyGraphSummary = await ctx.services.dramaStoryGraphService.getStoryGraphSummary(
+    params.dramaId,
+    params.userId,
+  )
+  assertStoryboardGraphReady(storyGraphSummary)
 
   const context = await readStoryboardContext(ctx.databaseService, params.episodeId, params.dramaId)
   if ('error' in context) {
     throw new BadRequestException(String(context.error))
   }
 
+  const storyGraph = await loadEpisodeCastGraphContext(
+    ctx.databaseService,
+    params.dramaId,
+    episode.episodeNumber,
+  )
+  if (!storyGraph) {
+    throw new BadRequestException('story_graph_required')
+  }
+  const enrichedContext = { ...context, story_graph: storyGraph }
+  const graphAudit = buildStoryGraphAudit(storyGraph)
+  const referencesJson = JSON.stringify(storyGraphReferences(graphAudit))
+
   if (!ctx.stream) {
-    const result = await runBreakdown({ ctx, params, context })
+    const result = await runBreakdown({
+      ctx,
+      params,
+      context: enrichedContext,
+      referencesJson,
+    })
     return {
       response: {
         type: 'done' as const,
         text: result.statusText,
-        references: [],
+        references: storyGraphReferences(graphAudit),
         actions: [],
       },
     }
@@ -108,17 +177,27 @@ export const storyboardBreakerHandler: SkillHandler = async (ctx) => {
     episodeId: params.episodeId,
     userMessage: params.message || '拆解分镜',
     assistantMessage: '',
+    referencesJson,
   })
 
   void (async () => {
     try {
       await emitter.writeRaw(':ok\n\n')
-      const result = await runBreakdown({ ctx, params, context, emitter, skipPersist: true })
+      const result = await runBreakdown({
+        ctx,
+        params,
+        context: enrichedContext,
+        emitter,
+        skipPersist: true,
+        referencesJson,
+      })
       await completeAiRunTask(ctx.databaseService, taskHandle, {
         assistantMessage: result.statusText,
+        referencesJson,
         resultSummary: {
           skill_id: 'storyboard_breaker',
           count: result.count,
+          story_graph: graphAudit,
         },
       })
       await emitter.send({ type: 'status', text: result.statusText }, 'message').catch(() => undefined)
@@ -145,6 +224,7 @@ async function runBreakdown(args: {
   context: Record<string, unknown>
   emitter?: { send: (data: unknown, event?: string) => Promise<void> }
   skipPersist?: boolean
+  referencesJson?: string
 }) {
   const { ctx, params, context, emitter } = args
   await emitter?.send({ type: 'status', text: '正在读取剧本、角色和场景...' }, 'message')
@@ -180,6 +260,7 @@ async function runBreakdown(args: {
       targetId: params.episodeId,
       userMessage: params.message || '拆解分镜',
       assistantMessage: statusText,
+      referencesJson: args.referencesJson,
     })
   }
 

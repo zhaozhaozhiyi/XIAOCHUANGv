@@ -5,19 +5,23 @@ import { Button } from '@/components/ui/button'
 
 type EmptyStateProps = {
   icon: LucideIcon
+  title?: string
   description: string
   actionLabel?: string
   onAction?: () => void
   className?: string
+  action?: ReactNode
   children?: ReactNode
 }
 
 export function EmptyState({
   icon: Icon,
+  title,
   description,
   actionLabel,
   onAction,
   className,
+  action,
   children,
 }: EmptyStateProps) {
   return (
@@ -30,8 +34,12 @@ export function EmptyState({
       <div className="flex size-12 items-center justify-center rounded-[var(--radius-md)] border border-border bg-bg-0 text-text-3">
         <Icon size={22} aria-hidden />
       </div>
-      <p className="mt-4 max-w-md text-sm leading-7 text-text-2">{description}</p>
+      <div className="mt-4 flex max-w-md flex-col gap-2">
+        {title ? <p className="text-lg font-semibold tracking-[-0.01em] text-text-0">{title}</p> : null}
+        <p className="text-sm leading-7 text-text-2">{description}</p>
+      </div>
       {children}
+      {action ? <div className="mt-6">{action}</div> : null}
       {actionLabel && onAction ? (
         <Button type="button" variant="default" className="mt-6 rounded-[var(--radius-md)] px-5 shadow-none" onClick={onAction}>
           {actionLabel}

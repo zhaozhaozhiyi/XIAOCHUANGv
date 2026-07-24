@@ -1,5 +1,5 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common'
-import { and, desc, eq, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
 import { taskLogs, tasks } from '../../db/schema'
@@ -36,6 +36,7 @@ export class TasksService {
   async appendTaskLog(args: {
     taskId: number
     userId?: number
+    organizationId?: number
     level?: string
     message: string
     metadata?: Record<string, unknown>
@@ -43,6 +44,7 @@ export class TasksService {
     await this.databaseService.db.insert(taskLogs).values({
       taskId: args.taskId,
       userId: args.userId ?? null,
+      organizationId: args.organizationId ?? null,
       level: args.level ?? 'info',
       message: args.message,
       metadataJson: args.metadata ? JSON.stringify(args.metadata) : null,
@@ -78,6 +80,27 @@ export class TasksService {
       .from(tasks)
       .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId), isNull(tasks.deletedAt)))
 
+    return task || null
+  }
+
+  async findRetryableVideoGenerationTask(
+    videoGenerationId: number,
+    userId: number,
+  ) {
+    const [task] = await this.databaseService.db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.domainTable, 'video_generations'),
+          eq(tasks.domainId, videoGenerationId),
+          eq(tasks.userId, userId),
+          inArray(tasks.status, ['failed', 'canceled']),
+          isNull(tasks.deletedAt),
+        ),
+      )
+      .orderBy(desc(tasks.updatedAt))
+      .limit(1)
     return task || null
   }
 

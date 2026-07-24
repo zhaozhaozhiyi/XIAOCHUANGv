@@ -4,9 +4,9 @@ import { Readable } from 'node:stream'
 
 import type { DatabaseService } from '../../../db/database.service'
 import { aiRuns, tasks } from '../../../db/schema'
-import { getTextConfig, getTextProviderBaseUrl } from '../../agents/agents.ai'
+import { getTextConfig, getTextProviderBaseUrl, withTextProviderRequestOptions } from '../../agents/agents.ai'
 
-export { getTextConfig, getTextProviderBaseUrl }
+export { getTextConfig, getTextProviderBaseUrl, withTextProviderRequestOptions }
 
 // ──────────────────────────────────────────────────────────────────────────
 // SSE writer
@@ -177,6 +177,19 @@ function normalizeJsonSource(source: string) {
     .replace(/,\s*([}\]])/g, '$1')
 }
 
+export function parseJsonWithRepair(source: string): unknown {
+  try {
+    return JSON.parse(source) as unknown
+  } catch (firstError) {
+    try {
+      return JSON.parse(normalizeJsonSource(source)) as unknown
+    } catch {
+      if (firstError instanceof Error) throw firstError
+      throw new Error('invalid_json')
+    }
+  }
+}
+
 export function extractJsonObject(text: string): unknown {
   const trimmed = text.trim()
   if (!trimmed) throw new Error('AI 未返回 JSON')
@@ -191,12 +204,7 @@ export function extractJsonObject(text: string): unknown {
 
   const jsonSource = source.slice(first, last + 1)
 
-  try {
-    return JSON.parse(jsonSource) as unknown
-  } catch {
-    const normalized = normalizeJsonSource(jsonSource)
-    return JSON.parse(normalized) as unknown
-  }
+  return parseJsonWithRepair(jsonSource)
 }
 
 export function buildJsonRepairPrompt(args: { content: string; error: string; shape: string }) {
@@ -249,7 +257,7 @@ export async function requestChatCompletion(args: ChatRequestArgs): Promise<stri
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withTextProviderRequestOptions(config, payload)),
   })
 
   let response = await doFetch(body)

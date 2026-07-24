@@ -20,6 +20,13 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/cn'
 import { useCanvasStore, useHistoryStore, useNodesStore, useUiStore } from '@/lib/canvas/store'
 import { cryptoRandomId, findFreePosition } from './_utils'
+import { useCanvasRuntime } from './CanvasRuntimeContext'
+import {
+  DRAMACLAW_NODE_DEFINITIONS,
+  createDramaClawNode,
+  type DramaClawNodeDefinition,
+  type DramaClawNodeFamily,
+} from '@/components/canvas/dramaclaw'
 
 interface AddNodeSubmenuProps {
   /** 创建位置：'screen-center' 默认；或显式 flow 坐标 */
@@ -52,6 +59,7 @@ export function AddNodeSubmenu({
   onCreated,
   variant = 'menu',
 }: AddNodeSubmenuProps) {
+  const runtime = useCanvasRuntime()
   const reactFlow = useReactFlow()
   const addNode = useNodesStore((s) => s.addNode)
   const markEditing = useCanvasStore((s) => s.markEditing)
@@ -97,6 +105,16 @@ export function AddNodeSubmenu({
     [addNode, historyPush, markEditing, onCreated, position, reactFlow, setSelectedNodeId],
   )
 
+  if (runtime.chrome === 'freezone') {
+    return (
+      <DramaClawAddNodeSubmenu
+        position={position}
+        onCreated={onCreated}
+        variant={variant}
+      />
+    )
+  }
+
   const container =
     variant === 'menu'
       ? 'flex flex-col gap-0.5'
@@ -121,6 +139,105 @@ export function AddNodeSubmenu({
         ))}
       </Group>
     </div>
+  )
+}
+
+const DRAMACLAW_FAMILY_LABEL: Record<DramaClawNodeFamily, string> = {
+  media: '媒体节点',
+  generate: '生成节点',
+  story: '叙事节点',
+  compose: '合成节点',
+  advanced: '高级节点',
+}
+
+const DRAMACLAW_FAMILY_ORDER: DramaClawNodeFamily[] = ['media', 'generate', 'story', 'compose', 'advanced']
+
+function DramaClawAddNodeSubmenu({
+  position = 'screen-center',
+  onCreated,
+  variant = 'menu',
+}: AddNodeSubmenuProps) {
+  const reactFlow = useReactFlow()
+  const addNode = useNodesStore((s) => s.addNode)
+  const markEditing = useCanvasStore((s) => s.markEditing)
+  const historyPush = useHistoryStore((s) => s.push)
+  const setSelectedNodeId = useUiStore((s) => s.setSelectedNodeId)
+
+  const handleCreate = useCallback((definition: DramaClawNodeDefinition) => {
+    const flowPos: XYPosition =
+      position === 'screen-center'
+        ? reactFlow.screenToFlowPosition({
+            x: typeof window !== 'undefined' ? window.innerWidth / 2 : 600,
+            y: typeof window !== 'undefined' ? window.innerHeight / 2 : 400,
+          })
+        : position
+    historyPush()
+    const nodePosition = findFreePosition(
+      { x: flowPos.x - definition.defaultSize.width / 2, y: flowPos.y - 120 },
+      useNodesStore.getState().nodes,
+    )
+    const node = createDramaClawNode(definition.type, nodePosition)
+    addNode(node)
+    markEditing()
+    setSelectedNodeId(node.id)
+    onCreated?.()
+  }, [addNode, historyPush, markEditing, onCreated, position, reactFlow, setSelectedNodeId])
+
+  const container =
+    variant === 'menu'
+      ? 'flex max-h-[560px] flex-col gap-0.5 overflow-y-auto'
+      : 'flex max-h-[560px] w-64 flex-col gap-0.5 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-[var(--shadow-popover)]'
+
+  return (
+    <div className={container}>
+      {DRAMACLAW_FAMILY_ORDER.map((family, index) => {
+        const items = DRAMACLAW_NODE_DEFINITIONS.filter((definition) => definition.family === family)
+        if (items.length === 0) return null
+        return (
+          <div key={family}>
+            {index > 0 ? <div className="my-1 h-px bg-border" /> : null}
+            <Group label={DRAMACLAW_FAMILY_LABEL[family]}>
+              {items.map((definition) => (
+                <DramaClawRow
+                  key={definition.type}
+                  definition={definition}
+                  onClick={() => handleCreate(definition)}
+                />
+              ))}
+            </Group>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function DramaClawRow({
+  definition,
+  onClick,
+}: {
+  definition: DramaClawNodeDefinition
+  onClick: () => void
+}) {
+  const Icon = definition.icon
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-0 transition-colors hover:bg-bg-hover focus:bg-bg-hover focus:outline-none"
+      title={definition.description}
+    >
+      <span
+        className="flex size-7 shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[0.05]"
+        style={{ color: definition.accent }}
+      >
+        <Icon size={15} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{definition.label}</span>
+        <span className="block truncate text-[10px] text-text-3">{definition.description}</span>
+      </span>
+    </button>
   )
 }
 

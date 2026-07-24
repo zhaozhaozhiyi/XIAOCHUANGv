@@ -55,7 +55,7 @@ export function CanvasCard({ canvas, onDuplicate, onDelete }: Props) {
       data-testid={`canvas-card-${canvas.id}`}
       onClick={handleCardClick}
       className={cn(
-        'group relative flex cursor-pointer flex-col overflow-hidden bg-bg-0/80 shadow-[0_1px_0_rgba(15,23,42,0.03)] transition-[background,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-bg-0 hover:shadow-[0_18px_44px_rgba(40,28,18,0.08)]',
+        'group relative flex cursor-pointer flex-col overflow-hidden rounded-none bg-bg-0/80 shadow-[0_1px_0_rgba(15,23,42,0.03)] transition-[background,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-bg-0 hover:shadow-[0_18px_44px_rgba(40,28,18,0.08)]',
       )}
     >
       <Link href={href} className="block" aria-label={`打开画布：${canvas.title}`}>

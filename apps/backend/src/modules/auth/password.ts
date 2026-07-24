@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto'
 
 const KEY_LENGTH = 64
 
@@ -27,10 +27,12 @@ export function generateSessionToken() {
 }
 
 export function generateRandomCode(length: number = 6): string {
-  const digits = '0123456789'
-  let code = ''
-  for (let i = 0; i < length; i += 1) {
-    code += digits[Math.floor(Math.random() * digits.length)]
+  if (!Number.isInteger(length) || length <= 0) {
+    throw new Error('length must be a positive integer')
   }
-  return code
+
+  const maxExclusive = 10 ** length
+  const minInclusive = length === 1 ? 0 : 10 ** (length - 1)
+
+  return String(randomInt(minInclusive, maxExclusive)).padStart(length, '0')
 }

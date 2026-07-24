@@ -27,6 +27,7 @@ import { canvasApi } from '@/lib/canvas/api/canvas'
 import { useCanvasStore, useRuntimeStore } from '@/lib/canvas/store'
 import type { SaveStatus } from '@/lib/canvas/store'
 
+import { useCanvasRuntime } from './CanvasRuntimeContext'
 import { RunProgressIndicator } from './RunProgressIndicator'
 
 interface Props {
@@ -37,12 +38,13 @@ interface Props {
 export function TopBarSkeleton({ onOpenGenerate, onCancelRun }: Props) {
   const saveStatus = useCanvasStore((s) => s.saveStatus)
   const runState = useRuntimeStore((s) => s.runState)
+  const runtime = useCanvasRuntime()
 
   return (
     <header className="z-30 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-canvas-surface px-3 backdrop-blur-md">
       <Link
-        href="/canvas"
-        aria-label="返回画布列表"
+        href={runtime.backHref || '/canvas'}
+        aria-label={runtime.backLabel || '返回画布列表'}
         className="flex size-8 items-center justify-center rounded-md text-text-2 transition-colors hover:bg-bg-hover hover:text-text-0"
       >
         <ArrowLeft size={16} />
@@ -58,14 +60,17 @@ export function TopBarSkeleton({ onOpenGenerate, onCancelRun }: Props) {
       {runState === 'running' ? (
         <RunProgressIndicator onCancel={onCancelRun} />
       ) : (
-        <button
-          type="button"
-          onClick={onOpenGenerate}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1 text-xs font-medium text-on-accent shadow-primary-glow transition-colors hover:bg-accent-dark"
-        >
-          <Film className="size-3.5" />
-          <span>生成成片</span>
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {runtime.slots?.topbarExtra}
+          <button
+            type="button"
+            onClick={onOpenGenerate}
+            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1 text-xs font-medium text-on-accent shadow-primary-glow transition-colors hover:bg-accent-dark"
+          >
+            <Film className="size-3.5" />
+            <span>生成成片</span>
+          </button>
+        </div>
       )}
     </header>
   )

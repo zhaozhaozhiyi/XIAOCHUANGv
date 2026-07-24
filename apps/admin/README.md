@@ -10,7 +10,7 @@ cp .env.example .env.local
 
 关键变量：
 
-- `BACKEND_BASE_URL`：统一后端地址，默认 `http://127.0.0.1:3010`
+- `BACKEND_BASE_URL`：统一后端地址，需显式配置，例如 `http://127.0.0.1:3010`
 
 ## Getting Started
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { BadRequestException } from '@nestjs/common'
 import { CanvasSaveService } from '../canvas-save.service'
+import { VALID_CANVAS_NODE_TYPES } from '../canvas-node-types'
 
 function mockDb() {
   const chain = {
@@ -26,6 +27,14 @@ function mockDb() {
   return chain
 }
 
+function mockSelectRows(rows: any[] = []) {
+  return vi.fn().mockReturnValue({
+    from: vi.fn().mockReturnValue({
+      where: vi.fn().mockResolvedValue(rows),
+    }),
+  })
+}
+
 describe('CanvasSaveService', () => {
   let service: CanvasSaveService
   let db: ReturnType<typeof mockDb>
@@ -36,6 +45,7 @@ describe('CanvasSaveService', () => {
     // Mock transaction: 执行传入的回调
     db.transaction.mockImplementation(async (fn: any) => {
       const tx = {
+        select: mockSelectRows(),
         update: vi.fn().mockReturnThis(),
         set: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
@@ -101,12 +111,8 @@ describe('CanvasSaveService', () => {
     })).rejects.toThrow(/unknown node type/i)
   })
 
-  it('接受所有 10 种已知节点类型', async () => {
-    const allTypes = [
-      'storyboard', 'image', 'character', 'scene', 'note',
-      'text-to-image', 'image-to-video', 'text-to-speech', 'concat', 'export',
-    ]
-    for (const type of allTypes) {
+  it('接受所有已知节点类型', async () => {
+    for (const type of VALID_CANVAS_NODE_TYPES) {
       db.transaction.mockClear()
       const result = await service.save('cnv_1', {
         nodes: [{ id: `n_${type}`, type, position: { x: 0, y: 0 } }],
@@ -145,6 +151,7 @@ describe('CanvasSaveService', () => {
     // 捕获 insert 的 values
     db.transaction.mockImplementation(async (fn: any) => {
       const tx = {
+        select: mockSelectRows(),
         update: vi.fn().mockReturnThis(),
         set: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
@@ -211,6 +218,70 @@ describe('CanvasSaveService', () => {
     expect(capturedEdges[0].targetNodeId).toBe('node_b') // target → targetNodeId
     expect(capturedEdges[0].edgeKind).toBe('narrative')
     expect(capturedEdges[1].sourcePort).toBe('out:text')
+  })
+
+  it('保存可见画布时保留后端隐藏生成链路', async () => {
+    let capturedEdges: any[] = []
+    let selectCount = 0
+
+    db.transaction.mockImplementation(async (fn: any) => {
+      const tx = {
+        select: vi.fn().mockImplementation(() => {
+          selectCount += 1
+          const rows = selectCount === 1
+            ? [
+                { id: 'node_visible_old', isHidden: false },
+                { id: 'node_hidden_exec', isHidden: true },
+              ]
+            : [
+                {
+                  id: 'edge_hidden_to_result',
+                  sourceNodeId: 'node_hidden_exec',
+                  targetNodeId: 'node_result',
+                },
+                {
+                  id: 'edge_visible_old',
+                  sourceNodeId: 'node_visible_old',
+                  targetNodeId: 'node_result',
+                },
+              ]
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue(rows),
+            }),
+          }
+        }),
+        update: vi.fn().mockReturnThis(),
+        set: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        insert: vi.fn().mockImplementation(() => ({
+          values: (vals: any) => {
+            if (Array.isArray(vals) && vals[0]?.edgeKind !== undefined) capturedEdges = vals
+            return tx
+          },
+        })),
+        values: vi.fn().mockReturnThis(),
+        delete: vi.fn().mockReturnThis(),
+        returning: vi.fn(),
+      }
+      tx.update.mockReturnValue(tx)
+      tx.set.mockReturnValue(tx)
+      tx.where.mockReturnValue(tx)
+      tx.delete.mockReturnValue(tx)
+      return fn(tx)
+    })
+
+    await service.save('cnv_1', {
+      nodes: [
+        { id: 'node_result', type: 'imageNode', position: { x: 300, y: 120 }, data: { isGenerating: true } },
+      ],
+      edges: [
+        { id: 'edge_hidden_to_result', source: 'node_hidden_exec', target: 'node_result', edge_kind: 'dataflow' },
+        { id: 'edge_visible_new', source: 'node_result', target: 'node_result', edge_kind: 'narrative' },
+      ],
+    })
+
+    expect(capturedEdges.map((edge) => edge.id)).toEqual(['edge_visible_new'])
   })
 
   // ═══════════════════════════════════════════════

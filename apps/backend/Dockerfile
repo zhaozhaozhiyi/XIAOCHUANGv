@@ -24,7 +24,8 @@ FROM build-deps AS build
 COPY apps/backend apps/backend
 COPY packages/contracts packages/contracts
 
-RUN npm run build --workspace apps/backend
+RUN npm run build --workspace packages/contracts \
+  && npm run build --workspace apps/backend
 
 FROM manifests AS prod-deps
 
@@ -46,7 +47,8 @@ COPY --from=prod-deps /app/apps/backend/package.json ./apps/backend/package.json
 COPY --from=prod-deps /app/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=build /app/apps/backend/dist ./apps/backend/dist
 COPY --from=build /app/apps/backend/drizzle ./apps/backend/drizzle
-COPY --from=build /app/packages/contracts/src ./packages/contracts/src
+COPY --from=build /app/packages/contracts/dist ./packages/contracts/dist
+COPY skills ./skills
 
 EXPOSE 3010
 

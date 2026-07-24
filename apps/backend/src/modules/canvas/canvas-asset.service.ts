@@ -3,7 +3,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 
 import { toPublicMediaUrl } from '../../common/media-url'
 import { DatabaseService } from '../../db/database.service'
-import { assets, canvasNodes } from '../../db/schema'
+import { assets, canvases, canvasNodes } from '../../db/schema'
 import { CanvasService } from './canvas.service'
 import { CanvasNodeResult, CanvasNodeResultService } from './canvas-node-result.service'
 import { CANVAS_ASSET_SOURCE_TYPES, normalizeCanvasAssetSourceType } from './canvas-source-types'
@@ -25,6 +25,18 @@ function metadataMatchesCanvasResult(
 ) {
   const metadata = safeJsonParse<Record<string, unknown>>(metadataJson, {})
   return metadata.node_id === nodeId && metadata.result_id === resultId
+}
+
+function toOptionalInt(value: string | number | null | undefined) {
+  if (value == null || value === '') return null
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+function canvasSourcePath(canvas: typeof canvases.$inferSelect) {
+  const dramaId = toOptionalInt(canvas.sourceDramaId)
+  if (dramaId) return `/drama/${dramaId}/canvas/${canvas.id}`
+  return `/canvas/${canvas.id}`
 }
 
 @Injectable()
@@ -89,12 +101,16 @@ export class CanvasAssetService {
         mimeType: result.mime_type ?? null,
         sourceType,
         sourceRef: canvasId,
-        sourcePath: `/canvas/${canvasId}`,
+        sourcePath: canvasSourcePath(canvas),
+        dramaId: toOptionalInt(canvas.sourceDramaId),
+        episodeId: toOptionalInt(canvas.sourceEpisodeId),
         url: toPublicMediaUrl(result.url),
         thumbnailUrl: toPublicMediaUrl(result.thumbnail_url || result.url),
         metadataJson: JSON.stringify({
           canvas_id: canvasId,
           canvas_title: canvas.title,
+          source_drama_id: canvas.sourceDramaId ?? null,
+          source_episode_id: canvas.sourceEpisodeId ?? null,
           node_id: node.id,
           node_def_id: node.nodeDefId,
           result_id: result.id,
@@ -124,6 +140,9 @@ export class CanvasAssetService {
     resultId?: string | null
     canvasTitle?: string | null
     nodeDefId?: string | null
+    dramaId?: number | null
+    episodeId?: number | null
+    sourcePath?: string | null
   }) {
     const [asset] = await this.db.db
       .insert(assets)
@@ -134,12 +153,16 @@ export class CanvasAssetService {
         mimeType: args.mimeType ?? null,
         sourceType: CANVAS_ASSET_SOURCE_TYPES.UPLOAD,
         sourceRef: args.canvasId,
-        sourcePath: `/canvas/${args.canvasId}`,
+        sourcePath: args.sourcePath || `/canvas/${args.canvasId}`,
+        dramaId: args.dramaId ?? null,
+        episodeId: args.episodeId ?? null,
         url: toPublicMediaUrl(args.url),
         thumbnailUrl: toPublicMediaUrl(args.thumbnailUrl || args.url),
         metadataJson: JSON.stringify({
           canvas_id: args.canvasId,
           canvas_title: args.canvasTitle ?? null,
+          source_drama_id: args.dramaId ?? null,
+          source_episode_id: args.episodeId ?? null,
           node_id: args.nodeId ?? null,
           node_def_id: args.nodeDefId ?? null,
           result_id: args.resultId ?? null,

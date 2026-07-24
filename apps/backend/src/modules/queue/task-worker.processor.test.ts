@@ -116,6 +116,7 @@ describe('task queue worker integration', () => {
     const taskExecutionService = new TaskExecutionService({ db: memoryDb.db } as any, taskDomainRegistry as any)
     const taskQueueService = new TaskQueueService({
       get: vi.fn(() => 'redis://integration.test:6379'),
+      getOrThrow: vi.fn(() => 'redis://integration.test:6379'),
     } as any)
 
     let enqueuedJob: {

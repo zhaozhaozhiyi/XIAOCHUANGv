@@ -2,11 +2,12 @@ import "server-only";
 
 import { cookies } from "next/headers";
 
-const DEFAULT_BACKEND_URL = "http://127.0.0.1:3010";
 const SESSION_COOKIE_NAME = "xiaochuang_session";
 
 export function getBackendBaseUrl() {
-  return process.env.BACKEND_BASE_URL || DEFAULT_BACKEND_URL;
+  const baseUrl = process.env.BACKEND_BASE_URL?.trim();
+  if (baseUrl) return baseUrl;
+  throw new Error("BACKEND_BASE_URL is required for apps/admin backend requests");
 }
 
 function joinUrl(base: string, path: string) {

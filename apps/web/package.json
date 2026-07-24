@@ -1,6 +1,7 @@
 {
   "name": "@xiaochuang/web",
   "version": "0.22.0",
+  "license": "MIT",
   "description": "",
   "main": "index.js",
   "engines": {
@@ -21,6 +22,8 @@
     "validate:p2": "python3 scripts/validate_p2_links.py",
     "check:p2": "npm --prefix ../.. run verify:v2-boundaries && npm run validate:p2",
     "test:e2e": "playwright test",
+    "test:e2e:admin-guard": "playwright test --config=playwright.admin-guard.config.ts",
+    "test:e2e:drama-ai-first": "E2E_DRAMA_AI_FIRST=1 playwright test e2e/drama-ai-first-flow.spec.ts --project=chromium --workers=1",
     "test:e2e:workbench": "playwright test e2e/prd-workbench.spec.ts --project=chromium --workers=1",
     "test:e2e:workbench:real": "E2E_REAL_MEDIA=1 playwright test e2e/prd-workbench-real-media.spec.ts --project=chromium --workers=1",
     "test:e2e:ui": "playwright test --ui",
@@ -32,7 +35,6 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
   "dependencies": {
     "@ai-sdk/openai": "^3.0.52",
     "@mastra/core": "^1.24.1",

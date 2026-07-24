@@ -89,6 +89,18 @@ function toNumber(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function toOptionalInt(value: string | number | null | undefined) {
+  if (value == null || value === '') return null
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+function canvasSourcePath(canvas: { id: string; sourceDramaId?: string | null }) {
+  const dramaId = toOptionalInt(canvas.sourceDramaId)
+  if (dramaId) return `/drama/${dramaId}/canvas/${canvas.id}`
+  return `/canvas/${canvas.id}`
+}
+
 @Injectable()
 export class CanvasUploadService {
   constructor(
@@ -160,6 +172,9 @@ export class CanvasUploadService {
           resultId: appended.result.id,
           canvasTitle: canvas.title,
           nodeDefId: appended.node.type,
+          dramaId: toOptionalInt(canvas.sourceDramaId),
+          episodeId: toOptionalInt(canvas.sourceEpisodeId),
+          sourcePath: canvasSourcePath(canvas),
         })
         appendedResult = { ...appended.result, asset_id: asset.id }
         node = await this.nodeResultService.markAssetId(canvasId, fields.node_id, appended.result.id, asset.id)
@@ -195,6 +210,9 @@ export class CanvasUploadService {
         resultId,
         canvasTitle: canvas.title,
         nodeDefId: media.nodeType,
+        dramaId: toOptionalInt(canvas.sourceDramaId),
+        episodeId: toOptionalInt(canvas.sourceEpisodeId),
+        sourcePath: canvasSourcePath(canvas),
       })
       result.asset_id = asset.id
       data.results = [result]

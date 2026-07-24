@@ -35,12 +35,15 @@ describe('TaskDomainRegistry unsupported domains', () => {
       createHandler('image_generations') as any,
       createHandler('video_generations') as any,
       createHandler('storyboard_tts') as any,
+      createHandler('episode_dialogue_takes') as any,
       createHandler('storyboard_compose') as any,
+      createHandler('storyboard_breakdowns') as any,
       createHandler('video_merges') as any,
       createHandler('drama_sources') as any,
       createHandler('drama_adaptation_briefs') as any,
       createHandler('drama_episode_blueprints') as any,
       createHandler('drama_pilot_scripts') as any,
+      createHandler('drama_story_graphs') as any,
     )
 
     const result = await registry.execute({
@@ -72,12 +75,15 @@ describe('TaskDomainRegistry unsupported domains', () => {
       createHandler('image_generations') as any,
       createHandler('video_generations') as any,
       createHandler('storyboard_tts') as any,
+      createHandler('episode_dialogue_takes') as any,
       createHandler('storyboard_compose') as any,
+      createHandler('storyboard_breakdowns') as any,
       createHandler('video_merges') as any,
       createHandler('drama_sources') as any,
       createHandler('drama_adaptation_briefs') as any,
       createHandler('drama_episode_blueprints') as any,
       createHandler('drama_pilot_scripts') as any,
+      createHandler('drama_story_graphs') as any,
     )
 
     await expect(registry.markCanceled({

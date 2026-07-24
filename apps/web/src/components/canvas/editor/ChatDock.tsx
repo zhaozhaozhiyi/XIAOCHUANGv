@@ -20,8 +20,11 @@ import { useCanvasChat } from '@/lib/canvas/hooks/useCanvasChat'
 import type { CanvasChatMessage } from '@/lib/canvas/store'
 import { ChatPlanPreview } from './ChatPlanPreview'
 import { ChatSkillStatus } from './ChatSkillStatus'
+import { useCanvasRuntime } from './CanvasRuntimeContext'
 
 export function ChatDock() {
+  const runtime = useCanvasRuntime()
+  const freezoneChrome = runtime.chrome === 'freezone'
   const chatOpen = usePipelineStore((s) => s.chatOpen)
   const toggleChat = usePipelineStore((s) => s.toggleChat)
   const { messages, pendingPlan, running, send, confirmPlan, cancelPlan } = useCanvasChat()
@@ -42,22 +45,38 @@ export function ChatDock() {
 
   if (!chatOpen) {
     return (
-      <div className="pointer-events-none absolute bottom-3 left-3 z-30">
+      <div className={cn(
+        'pointer-events-none absolute z-30',
+        freezoneChrome ? 'drama-freezone-chat-toggle-wrap z-50' : 'bottom-3 left-3',
+      )}>
         <button
           type="button"
           onClick={toggleChat}
-          className="pointer-events-auto flex items-center gap-2 rounded-full border border-border bg-accent px-4 py-2.5 text-sm font-medium text-on-accent shadow-primary-glow transition-colors hover:bg-accent-dark"
+          className={cn(
+            'pointer-events-auto flex items-center gap-2 rounded-full text-sm font-medium transition-colors',
+            freezoneChrome
+              ? 'drama-freezone-chat-toggle'
+              : 'border border-border bg-accent px-4 py-2.5 text-on-accent shadow-primary-glow hover:bg-accent-dark',
+          )}
         >
           <MessageSquare className="size-4" />
-          对话创作
+          {freezoneChrome ? '虾导' : '对话创作'}
         </button>
       </div>
     )
   }
 
   return (
-    <div className="pointer-events-none absolute bottom-3 left-3 top-4 z-30 flex w-[360px] max-w-[calc(100%-1.5rem)]">
-      <div className="pointer-events-auto flex w-full flex-col overflow-hidden rounded-2xl canvas-chrome">
+    <div className={cn(
+      'pointer-events-none absolute top-4 z-30 flex max-w-[calc(100%-1.5rem)]',
+      freezoneChrome
+        ? 'bottom-4 right-4 z-50 w-[clamp(500px,34vw,540px)]'
+        : 'bottom-3 left-3 w-[360px]',
+    )}>
+      <div className={cn(
+        'pointer-events-auto flex w-full flex-col overflow-hidden rounded-2xl canvas-chrome',
+        freezoneChrome && 'drama-freezone-chat-panel',
+      )}>
         {/* 头部 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
           <span className="flex size-7 items-center justify-center rounded-lg bg-accent/15 text-base">

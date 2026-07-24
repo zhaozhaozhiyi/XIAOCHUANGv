@@ -2,38 +2,82 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { loginAsConsumer } from './helpers/auth'
 
+const AI_FIRST_TIMEOUT_MS = Number(process.env.E2E_AI_FIRST_POLL_TIMEOUT_MS || 8 * 60_000)
+const AI_FIRST_POLL_INTERVAL_MS = Number(process.env.E2E_AI_FIRST_POLL_INTERVAL_MS || 2_500)
+const AI_SKILL_TIMEOUT_MS = Number(process.env.E2E_AI_SKILL_TIMEOUT_MS || 4 * 60_000)
+const SKIP_STORYBOARD_BREAKDOWN = process.env.E2E_SKIP_STORYBOARD_BREAKDOWN === '1'
+
 type ApiEnvelope<T> = { code?: number; message?: string; data?: T }
+type TaskSummary = {
+  status: string
+  error_message: string | null
+}
+
 type AiFirstPayload = {
-  adaptation_briefs: Array<{ id: string; name: string }>
   episodes: Array<{
     id: number
     episode_number: number
     has_blueprint: boolean
     has_script: boolean
-    status: string | null
     script_ai_run_id: string | null
-    script_remote_run_id: string | null
     generation_mode: string | null
-    failure_reason: string | null
   }>
-  brief_task?: {
-    status: string
-    error_message: string | null
-  } | null
-  blueprint_task?: {
-    status: string
-    error_message: string | null
-  } | null
-  pilot_script_task?: {
-    status: string
-    error_message: string | null
-  } | null
-  selected_brief_id: string
   source_analysis: unknown | null
+  source_analysis_task?: TaskSummary | null
+  blueprint_task?: TaskSummary | null
+  pilot_script_task?: TaskSummary | null
+  story_graph_task?: TaskSummary | null
 }
-type DramaDetailPayload = {
-  episodes?: Array<{ id: number }>
+
+type StoryGraphPayload = {
+  graph: {
+    id: number
+    status: string
+    is_stale: boolean
+  } | null
+  is_stale: boolean
+  scripted_episode_count: number
+  planned_episode_count: number
+  current_scripted_episode_count: number
+  scripts_complete: boolean
+  story_graph_task: TaskSummary | null
 }
+
+type StoryGraphListPayload = {
+  items: Array<{ id: number; entity_type?: string }>
+}
+
+type WorkspacePayload = {
+  counts: {
+    scripted_episodes: number
+    storyboard_episodes: number
+    storyboards: number
+  }
+  production: {
+    gaps: Array<{ key: string }>
+  }
+}
+
+type ProjectTaskPayload = {
+  items: Array<{
+    type: string
+    status: string
+    result_summary: {
+      story_graph?: {
+        graph_id?: number
+        character_count?: number
+        relation_count?: number
+      } | null
+    } | null
+  }>
+}
+
+type AiRunPayload = Array<{
+  references: Array<{
+    kind?: string
+    graph_id?: number
+  }>
+}>
 
 function unwrap<T>(payload: unknown): T {
   if (payload && typeof payload === 'object' && 'data' in payload) {
@@ -43,9 +87,13 @@ function unwrap<T>(payload: unknown): T {
 }
 
 async function api<T>(page: Page, method: string, path: string, data?: Record<string, unknown>) {
-  const response = await page.request.fetch(path, { method, data })
+  const response = await page.request.fetch(path, {
+    method,
+    data,
+    timeout: Math.min(AI_FIRST_TIMEOUT_MS, 90_000),
+  })
   const payload = await response.json().catch(() => ({})) as ApiEnvelope<T> | T
-  expect(response.ok(), `${method} ${path}: ${JSON.stringify(payload).slice(0, 400)}`).toBeTruthy()
+  expect(response.ok(), `${method} ${path}: ${JSON.stringify(payload).slice(0, 500)}`).toBeTruthy()
   if (payload && typeof payload === 'object' && 'code' in payload && typeof (payload as ApiEnvelope<T>).code === 'number') {
     const envelope = payload as ApiEnvelope<T>
     expect(envelope.code, `API error ${path}: ${envelope.message}`).toBeLessThan(400)
@@ -55,38 +103,87 @@ async function api<T>(page: Page, method: string, path: string, data?: Record<st
 }
 
 async function maybeAiFirst<T>(page: Page, method: string, path: string, data?: Record<string, unknown>) {
-  const response = await page.request.fetch(path, { method, data })
+  const response = await page.request.fetch(path, {
+    method,
+    data,
+    timeout: Math.min(AI_FIRST_TIMEOUT_MS, 90_000),
+  })
   const payload = await response.json().catch(() => ({})) as ApiEnvelope<T> | T
   const message = typeof (payload as ApiEnvelope<T>)?.message === 'string' ? (payload as ApiEnvelope<T>).message || '' : ''
   if (!response.ok() && message.includes('drama_ai_first_agent_required')) {
-    test.skip(true, 'AI-first runtime is not configured; set remote agent or DRAMA_AI_FIRST_LOCAL_RULE_FALLBACK=1 for this smoke')
+    test.skip(true, 'AI-first runtime is not configured; configure a text provider before running this release smoke')
   }
-  expect(response.ok(), `${method} ${path}: ${JSON.stringify(payload).slice(0, 400)}`).toBeTruthy()
+  expect(response.ok(), `${method} ${path}: ${JSON.stringify(payload).slice(0, 500)}`).toBeTruthy()
   return unwrap<T>((payload as ApiEnvelope<T>).data !== undefined ? (payload as ApiEnvelope<T>).data : payload)
 }
 
+function assertTaskDidNotFail(label: string, task: TaskSummary | null | undefined) {
+  if (task && ['failed', 'dead_letter', 'canceled'].includes(task.status)) {
+    throw new Error(`${label} task failed: ${task.error_message || task.status}`)
+  }
+}
+
 async function pollAiFirst(page: Page, dramaId: number, predicate: (payload: AiFirstPayload) => boolean) {
-  const timeoutMs = Number(process.env.E2E_AI_FIRST_POLL_TIMEOUT_MS || 180_000)
-  const deadline = Date.now() + (Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 180_000)
+  const deadline = Date.now() + AI_FIRST_TIMEOUT_MS
   let latest: AiFirstPayload | null = null
   while (Date.now() < deadline) {
     latest = await api<AiFirstPayload>(page, 'GET', `/api/v1/dramas/${dramaId}/ai-first`)
-    const briefTask = latest.brief_task
-    if (briefTask && ['failed', 'dead_letter', 'canceled'].includes(briefTask.status)) {
-      throw new Error(`adaptation brief task failed: ${briefTask.error_message || briefTask.status}`)
-    }
-    const blueprintTask = latest.blueprint_task
-    if (blueprintTask && ['failed', 'dead_letter', 'canceled'].includes(blueprintTask.status)) {
-      throw new Error(`blueprint task failed: ${blueprintTask.error_message || blueprintTask.status}`)
-    }
-    const pilotTask = latest.pilot_script_task
-    if (pilotTask && ['failed', 'dead_letter', 'canceled'].includes(pilotTask.status)) {
-      throw new Error(`pilot script task failed: ${pilotTask.error_message || pilotTask.status}`)
-    }
+    assertTaskDidNotFail('source analysis', latest.source_analysis_task)
+    assertTaskDidNotFail('blueprint', latest.blueprint_task)
+    assertTaskDidNotFail('pilot script', latest.pilot_script_task)
+    assertTaskDidNotFail('story graph', latest.story_graph_task)
     if (predicate(latest)) return latest
-    await page.waitForTimeout(2500)
+    await page.waitForTimeout(AI_FIRST_POLL_INTERVAL_MS)
   }
-  throw new Error(`AI-first poll timed out: ${JSON.stringify(latest).slice(0, 600)}`)
+  throw new Error(`AI-first poll timed out: ${JSON.stringify(latest).slice(0, 700)}`)
+}
+
+async function pollStoryGraph(page: Page, dramaId: number) {
+  const deadline = Date.now() + AI_FIRST_TIMEOUT_MS
+  let latest: StoryGraphPayload | null = null
+  while (Date.now() < deadline) {
+    latest = await api<StoryGraphPayload>(page, 'GET', `/api/v1/dramas/${dramaId}/story-graph`)
+    assertTaskDidNotFail('story graph', latest.story_graph_task)
+    if (latest.graph?.status === 'ready' && !latest.is_stale) return latest
+    await page.waitForTimeout(AI_FIRST_POLL_INTERVAL_MS)
+  }
+  throw new Error(`story graph poll timed out: ${JSON.stringify(latest).slice(0, 700)}`)
+}
+
+async function runStoryboardBreakdown(page: Page, dramaId: number, episodeId: number) {
+  const response = await page.request.post('/api/v1/ai/runs?stream=1', {
+    data: {
+      skill_id: 'storyboard_breaker',
+      mode: 'breakdown',
+      scene: 'workspace-smoke',
+      target: {
+        type: 'episode',
+        drama_id: dramaId,
+        episode_id: episodeId,
+      },
+      input: {
+        message: '根据故事地图拆解分镜',
+      },
+      options: {
+        stream: true,
+      },
+    },
+    timeout: AI_SKILL_TIMEOUT_MS,
+  })
+  const payload = await response.text()
+  expect(response.ok(), `storyboard breakdown: ${payload.slice(0, 700)}`).toBeTruthy()
+  expect(payload).toContain('"type":"done"')
+}
+
+async function pollStoryboards(page: Page, episodeId: number) {
+  const deadline = Date.now() + AI_FIRST_TIMEOUT_MS
+  let latest: Array<{ id: number }> = []
+  while (Date.now() < deadline) {
+    latest = await api<Array<{ id: number }>>(page, 'GET', `/api/v1/episodes/${episodeId}/storyboards`)
+    if (latest.length) return latest
+    await page.waitForTimeout(AI_FIRST_POLL_INTERVAL_MS)
+  }
+  throw new Error('storyboard breakdown timed out')
 }
 
 function buildSource() {
@@ -100,155 +197,173 @@ function buildSource() {
     .join('\n\n')
 }
 
-function buildLegacyMetadata() {
-  const sourceContent = [
-    '第一章 旧宅风暴',
-    '林夏在旧宅发现遗嘱被替换，顾沉把录音笔交给她，所有亲戚都开始逼她让步。',
-    '第二章 医院对峙',
-    '顾沉被困在医院走廊，林夏必须用手里的证据换他的安全，同时守住真正继承人的秘密。',
-  ].join('\n')
+test.describe('0.24 drama AI-first flow', () => {
+  test.skip(process.env.E2E_DRAMA_AI_FIRST !== '1', 'Set E2E_DRAMA_AI_FIRST=1 to run the AI-first release smoke')
 
-  return {
-    novel_source: {
-      type: 'paste',
-      title: '旧方案兼容源稿',
-      content: sourceContent,
-      word_count: sourceContent.replace(/\s/g, '').length,
-      chapter_count: 2,
-      imported_at: new Date().toISOString(),
-      summary: '林夏围绕遗嘱和继承权反击旧宅家族。',
-      chapter_index: [
-        { chapter_no: 1, title: '旧宅风暴', word_count: 38, brief: '遗嘱被替换，林夏拿到录音证据。' },
-        { chapter_no: 2, title: '医院对峙', word_count: 42, brief: '林夏保护顾沉并守住继承人秘密。' },
-      ],
-    },
-    adaptation_plan: {
-      status: 'draft',
-      target_episode_count: 3,
-      episode_duration: '60-90 秒',
-      logline: '女主用遗嘱证据反击豪门围剿。',
-      tone: '都市反转爽剧',
-      main_plot: '林夏从被迫让步到掌握遗嘱真相，逐步夺回继承权。',
-      visual_style: '冷静都市质感',
-      aspect_rhythm: '16:9 · 高密度钩子',
-      character_bible: [
-        { name: '林夏', role: '女主', description: '隐忍但果断的继承人。' },
-        { name: '顾沉', role: '盟友', description: '掌握关键证据的医生。' },
-      ],
-      scene_bible: [
-        { name: '旧宅客厅', location: '林家旧宅', reuse_level: 'core' },
-      ],
-      episode_outlines: [
-        {
-          episode_number: 1,
-          title: '遗嘱被换',
-          source_range: '第 1 章',
-          hook: '林夏发现遗嘱不对劲。',
-          key_beats: ['亲戚逼宫', '顾沉递出录音笔'],
-          ending_hook: '录音里出现真正继承人的名字。',
-          characters: ['林夏', '顾沉'],
-          scenes: ['旧宅客厅'],
-        },
-      ],
-      generated_at: new Date().toISOString(),
-    },
-  }
-}
-
-test.describe('0.23.1 drama AI-first flow', () => {
-  test.skip(process.env.E2E_DRAMA_AI_FIRST !== '1', 'Set E2E_DRAMA_AI_FIRST=1 to run the AI-first flow smoke')
-
-  test('runs source to pilot and opens workbench with blueprint scope evidence', async ({ page }) => {
+  test('runs the explicit five-step source, plan, script, graph, and storyboard flow', async ({ page }) => {
+    test.setTimeout(AI_FIRST_TIMEOUT_MS + AI_SKILL_TIMEOUT_MS + 60_000)
     await loginAsConsumer(page, { next: '/drama' })
+
     const title = `e2e-ai-first-${Date.now()}`
     const drama = await api<{ id: number }>(page, 'POST', '/api/v1/dramas', {
       title,
-      total_episodes: 3,
       style: 'realistic',
     })
     const dramaId = Number(drama.id)
     expect(Number.isInteger(dramaId) && dramaId > 0).toBeTruthy()
 
-    await api(page, 'POST', `/api/v1/dramas/${dramaId}/source`, {
-      title: '遗嘱风暴源稿',
-      source_type: 'paste',
-      content: buildSource(),
+    await page.goto(`/drama/${dramaId}/episodes?stage=source`)
+    await page.getByLabel('原稿名称').fill('遗嘱风暴源稿')
+    await page.getByLabel('小说正文').fill(buildSource())
+    const analysisRequests: string[] = []
+    page.on('request', (request) => {
+      if (
+        request.method() === 'POST'
+        && request.url().includes(`/api/v1/dramas/${dramaId}/source/analyze`)
+      ) {
+        analysisRequests.push(request.url())
+      }
     })
-    const analysis = await maybeAiFirst<AiFirstPayload>(page, 'POST', `/api/v1/dramas/${dramaId}/source/analyze`)
+    const sourceSaveResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST'
+        && response.url().includes(`/api/v1/dramas/${dramaId}/source`)
+        && !response.url().includes('/source/analyze'),
+    )
+    await page.getByRole('button', { name: '保存源稿' }).click()
+    const sourceSaveResponse = await sourceSaveResponsePromise
+    expect(sourceSaveResponse.ok(), `save source: ${await sourceSaveResponse.text()}`).toBeTruthy()
+    await expect(page.getByRole('button', { name: '开始理解源稿' })).toBeVisible()
+    expect(analysisRequests).toHaveLength(0)
+
+    const analysisResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST'
+        && response.url().includes(`/api/v1/dramas/${dramaId}/source/analyze`),
+    )
+    await page.getByRole('button', { name: '开始理解源稿' }).click()
+    const analysisResponse = await analysisResponsePromise
+    const analysisStartPayload = await analysisResponse.json().catch(() => ({})) as ApiEnvelope<AiFirstPayload>
+    if (
+      !analysisResponse.ok()
+      && String(analysisStartPayload.message || '').includes('drama_ai_first_agent_required')
+    ) {
+      test.skip(
+        true,
+        'AI-first runtime is not configured; configure a text provider before running this release smoke',
+      )
+    }
+    expect(
+      analysisResponse.ok(),
+      `automatic source analysis: ${JSON.stringify(analysisStartPayload).slice(0, 500)}`,
+    ).toBeTruthy()
+    await expect(page).toHaveURL(
+      new RegExp(`/drama/${dramaId}/episodes\\?stage=source`),
+    )
+    const analysis = await pollAiFirst(
+      page,
+      dramaId,
+      (payload) => Boolean(payload.source_analysis),
+    )
     expect(analysis.source_analysis).toBeTruthy()
 
-    const briefStart = await maybeAiFirst<AiFirstPayload>(page, 'POST', `/api/v1/dramas/${dramaId}/adaptation-briefs`, {
-      count: 2,
-      target_episode_count: 3,
-      episode_duration: '60-90 秒',
-      style_direction: '都市爽剧',
-    })
-    if (briefStart.adaptation_briefs.length < 2) {
-      expect(briefStart.brief_task?.status).toMatch(/queued|running|completed/)
-    }
-    const briefs = briefStart.adaptation_briefs.length >= 2
-      ? briefStart
-      : await pollAiFirst(page, dramaId, (payload) => payload.adaptation_briefs.length >= 2)
-    expect(briefs.adaptation_briefs.length).toBeGreaterThanOrEqual(2)
-
-    const selected = await api<AiFirstPayload>(
-      page,
-      'POST',
-      `/api/v1/dramas/${dramaId}/adaptation-briefs/${encodeURIComponent(briefs.adaptation_briefs[0].id)}/select`,
-    )
-    expect(selected.selected_brief_id).toBe(briefs.adaptation_briefs[0].id)
-
     const blueprintStart = await maybeAiFirst<AiFirstPayload>(page, 'POST', `/api/v1/dramas/${dramaId}/episode-blueprints`)
-    if (!blueprintStart.episodes.some((episode) => episode.has_blueprint)) {
-      expect(blueprintStart.blueprint_task?.status).toMatch(/queued|running|completed/)
-    }
     const blueprints = blueprintStart.episodes.some((episode) => episode.has_blueprint)
       ? blueprintStart
       : await pollAiFirst(page, dramaId, (payload) => payload.episodes.some((episode) => episode.has_blueprint))
-    expect(blueprints.episodes.some((episode) => episode.has_blueprint)).toBeTruthy()
+    const plannedEpisodeIds = blueprints.episodes
+      .filter((episode) => episode.has_blueprint)
+      .map((episode) => episode.id)
+    expect(plannedEpisodeIds.length).toBeGreaterThan(0)
 
-    await maybeAiFirst<AiFirstPayload>(page, 'POST', `/api/v1/dramas/${dramaId}/pilot-scripts`, { limit: 1 })
-    const ready = await pollAiFirst(page, dramaId, (payload) => payload.episodes.some((episode) => episode.has_script))
+    await maybeAiFirst<AiFirstPayload>(page, 'POST', `/api/v1/dramas/${dramaId}/pilot-scripts`, {
+      episode_ids: plannedEpisodeIds,
+    })
+    const ready = await pollAiFirst(
+      page,
+      dramaId,
+      (payload) =>
+        plannedEpisodeIds.every((episodeId) =>
+          payload.episodes.some(
+            (episode) => episode.id === episodeId && episode.has_script,
+          ),
+        ),
+    )
     const firstReady = ready.episodes.find((episode) => episode.has_script)
-    expect(firstReady?.episode_number).toBeTruthy()
+    expect(firstReady?.id).toBeTruthy()
     expect(firstReady?.script_ai_run_id).toBeTruthy()
     expect(firstReady?.generation_mode).toMatch(/_script$/)
 
-    await page.goto(`/drama/${dramaId}`)
-    await expect(page.getByText('试播正文', { exact: true })).toBeVisible({ timeout: 45_000 })
-    await expect(page.getByText(/已生成/).first()).toBeVisible()
+    const beforeBuild = await api<StoryGraphPayload>(page, 'GET', `/api/v1/dramas/${dramaId}/story-graph`)
+    expect(beforeBuild.graph).toBeNull()
+    expect(beforeBuild.scripts_complete).toBe(true)
+    expect(beforeBuild.current_scripted_episode_count).toBe(beforeBuild.planned_episode_count)
 
-    await page.goto(`/drama/${dramaId}/episode/${firstReady!.episode_number}`)
-    await expect(page.locator('header.studio-topbar')).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByLabel('分集蓝图输入')).toContainText('分集蓝图')
-    await expect(page.getByLabel('资产作用域边界')).toContainText('公共主档')
-    await expect(page.getByLabel('资产作用域边界')).toContainText('单集引用')
-    await expect(page.getByLabel('资产作用域边界')).toContainText('镜头私有')
-  })
-})
+    await page.goto(`/drama/${dramaId}/episodes?stage=storyboard`)
+    await expect(page).toHaveURL(new RegExp(`/drama/${dramaId}/episodes\\?stage=graph`))
+    await expect(page.getByText('正式故事地图尚未就绪，已回到故事地图步骤。')).toBeVisible({ timeout: 45_000 })
 
-test.describe('0.23.1 legacy adaptation plan compatibility', () => {
-  test('opens old adaptationPlan projects as legacy drafts without creating episodes', async ({ page }) => {
-    await loginAsConsumer(page, { next: '/drama' })
-    const title = `e2e-legacy-plan-${Date.now()}`
-    const drama = await api<{ id: number }>(page, 'POST', '/api/v1/dramas', {
-      title,
-      total_episodes: 3,
-      style: 'realistic',
-      metadata: buildLegacyMetadata(),
-    })
-    const dramaId = Number(drama.id)
-    expect(Number.isInteger(dramaId) && dramaId > 0).toBeTruthy()
+    await page.goto(`/drama/${dramaId}/episodes/${firstReady!.episode_number}?step=script-storyboard`)
+    await expect(page.getByText('故事地图尚未就绪', { exact: true })).toBeVisible({ timeout: 45_000 })
+    await expect(page.getByRole('link', { name: '前往故事地图' }))
+      .toHaveAttribute('href', `/drama/${dramaId}/episodes?stage=graph`)
+    await expect(page.getByRole('button', { name: 'AI 拆解分镜' })).toHaveCount(0)
 
-    await page.goto(`/drama/${dramaId}`)
-    await expect(page.getByRole('heading', { name: title })).toBeVisible({ timeout: 45_000 })
-    await expect(page.getByText('旧方案草稿')).toBeVisible()
-    await expect(page.getByText('旧数据待迁移')).toBeVisible()
-    await expect(page.getByRole('button', { name: '重新生成策略' })).toBeVisible()
-    await expect(page.getByRole('button', { name: '生成分集蓝图' })).toHaveCount(0)
-    await expect(page.getByText('策略已选择，可以生成分集蓝图')).toHaveCount(0)
+    await page.goto(`/drama/${dramaId}/episodes/${firstReady!.episode_number}?step=prod-shots`)
+    await expect(page).toHaveURL(
+      new RegExp(`/drama/${dramaId}/episodes/${firstReady!.episode_number}\\?step=script-storyboard`),
+    )
+    await expect(page.getByText('故事地图尚未就绪', { exact: true })).toBeVisible({ timeout: 45_000 })
 
-    const detail = await api<DramaDetailPayload>(page, 'GET', `/api/v1/dramas/${dramaId}`)
-    expect(detail.episodes || []).toHaveLength(0)
+    await maybeAiFirst<StoryGraphPayload>(page, 'POST', `/api/v1/dramas/${dramaId}/story-graph/build`)
+    const storyGraph = await pollStoryGraph(page, dramaId)
+    expect(storyGraph.graph?.id).toBeTruthy()
+    expect(storyGraph.scripted_episode_count).toBeGreaterThan(0)
+    expect(storyGraph.graph?.is_stale).toBe(false)
+
+    const [entities, relations] = await Promise.all([
+      api<StoryGraphListPayload>(page, 'GET', `/api/v1/dramas/${dramaId}/story-graph/entities`),
+      api<StoryGraphListPayload>(page, 'GET', `/api/v1/dramas/${dramaId}/story-graph/relations`),
+    ])
+    expect(entities.items.some((item) => item.entity_type === 'character')).toBeTruthy()
+    expect(relations.items.length).toBeGreaterThan(0)
+
+    await page.goto(`/drama/${dramaId}/episodes?stage=source`)
+    await expect(page.getByLabel('源稿关系概览')).toBeVisible({ timeout: 45_000 })
+    await page.goto(`/drama/${dramaId}/episodes?stage=graph`)
+    await expect(page.getByText('故事地图已就绪', { exact: true })).toBeVisible({ timeout: 45_000 })
+    await page.goto(`/drama/${dramaId}/episodes?stage=storyboard`)
+    await expect(page).toHaveURL(new RegExp(`/drama/${dramaId}/episodes\\?stage=storyboard`))
+    await expect(page.getByText('步骤 5/5 · 分镜制作').first()).toBeVisible({ timeout: 45_000 })
+    await expect(page.getByRole('link', { name: /开始第 1 集分镜|继续第 1 集分镜/ })).toBeVisible()
+    await page.goto(`/drama/${dramaId}/episodes/${firstReady!.episode_number}?step=script-storyboard`)
+    await expect(page.getByRole('button', { name: 'AI 拆解分镜' })).toBeVisible({ timeout: 45_000 })
+
+    if (!SKIP_STORYBOARD_BREAKDOWN) {
+      await runStoryboardBreakdown(page, dramaId, firstReady!.id)
+      const storyboards = await pollStoryboards(page, firstReady!.id)
+      expect(storyboards.length).toBeGreaterThan(0)
+
+      const workspace = await api<WorkspacePayload>(page, 'GET', `/api/v1/dramas/${dramaId}/workspace`)
+      expect(workspace.counts.scripted_episodes).toBeGreaterThan(0)
+      expect(workspace.counts.storyboard_episodes).toBeGreaterThan(0)
+      expect(workspace.counts.storyboards).toBeGreaterThan(0)
+      expect(workspace.production.gaps.some((gap) => gap.key === 'shots_without_first_frame')).toBeTruthy()
+
+      const tasks = await api<ProjectTaskPayload>(page, 'GET', `/api/v1/dramas/${dramaId}/tasks?status=completed`)
+      const storyboardTask = tasks.items.find((item) =>
+        item.type === 'ai' && item.result_summary?.story_graph?.graph_id === storyGraph.graph?.id,
+      )
+      expect(storyboardTask?.result_summary?.story_graph?.character_count).toBeGreaterThan(0)
+
+      const runs = await api<AiRunPayload>(
+        page,
+        'GET',
+        `/api/v1/ai/runs?target_type=episode&target_id=${firstReady!.id}&mode=breakdown`,
+      )
+      expect(runs.some((run) => run.references.some((reference) =>
+        reference.kind === 'story_graph' && reference.graph_id === storyGraph.graph?.id,
+      ))).toBeTruthy()
+    }
   })
 })

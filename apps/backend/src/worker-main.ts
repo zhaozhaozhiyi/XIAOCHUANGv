@@ -57,7 +57,7 @@ async function main() {
   const dramaExecutor = app.get(TaskExecutionService)
   const canvasExecutor = app.get(CanvasExecutionService)
   const canvasOrchestrator = app.get(CanvasRunOrchestratorService)
-  const redisUrl = configService.get<string>('REDIS_URL', 'redis://127.0.0.1:6379')
+  const redisUrl = configService.getOrThrow<string>('REDIS_URL')
   const connection = createTaskQueueConnection(redisUrl, 'worker')
   const workerId = `bullmq-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
 

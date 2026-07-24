@@ -23,6 +23,7 @@ const createWritingSchema = z.object({
   title: z.string(),
   kind: z.enum(['novel', 'screenplay', 'outline']),
   synopsis: z.string().nullable().optional(),
+  cover_url: z.string().nullable().optional(),
   brief_json: z.string().nullable().optional(),
 })
 
@@ -43,6 +44,7 @@ const patchWritingSchema = z.object({
   kind: z.enum(['novel', 'screenplay', 'outline']).optional(),
   status: z.enum(['draft', 'active', 'archived']).optional(),
   synopsis: z.string().nullable().optional(),
+  cover_url: z.string().nullable().optional(),
   outline_json: z.string().nullable().optional(),
   brief_json: z.string().nullable().optional(),
   current_document_id: z.number().int().positive().nullable().optional(),
@@ -359,6 +361,7 @@ export class WritingsController {
         kind: row.kind,
         status: row.status,
         synopsis: row.synopsis,
+        cover_url: row.coverUrl,
         updated_at: row.updatedAt,
         document_count: documentCount,
         current_document_id: row.currentDocumentId,
@@ -407,6 +410,7 @@ export class WritingsController {
       kind: writing.kind,
       status: writing.status,
       synopsis: writing.synopsis,
+      cover_url: writing.coverUrl,
       outline_json: writing.outlineJson,
       brief_json: writing.briefJson,
       current_document_id: writing.currentDocumentId,
@@ -501,6 +505,7 @@ export class WritingsController {
         kind: payload.kind,
         status: 'draft',
         synopsis: payload.synopsis?.trim() || null,
+        coverUrl: payload.cover_url?.trim() || null,
         outlineJson: null,
         briefJson: payload.brief_json?.trim() || null,
         currentDocumentId: null,
@@ -1765,6 +1770,7 @@ export class WritingsController {
     if (payload.kind !== undefined) updates.kind = payload.kind
     if (payload.status !== undefined) updates.status = payload.status
     if (payload.synopsis !== undefined) updates.synopsis = payload.synopsis?.trim() || null
+    if (payload.cover_url !== undefined) updates.coverUrl = payload.cover_url?.trim() || null
     if (payload.outline_json !== undefined) {
       await createObjectHistory({ databaseService: this.databaseService, writingId, userId: currentUser.id, objectKind: 'outline', content: writing.outlineJson, snapshotTitle: '????' })
       updates.outlineJson = payload.outline_json

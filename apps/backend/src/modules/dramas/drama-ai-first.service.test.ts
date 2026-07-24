@@ -8,6 +8,7 @@ import {
   DramaAiFirstService,
   markEpisodeGenerationModeSourceStale,
   markEpisodeGenerationModeStale,
+  resolveWholePlanBlueprintState,
 } from './drama-ai-first.service'
 
 function makeService() {
@@ -71,6 +72,64 @@ describe('DramaAiFirstService source health', () => {
     expect(health.over_context_limit).toBe(true)
     expect(health.recommended_mode).toBe('long_source_async')
     expect(health.chunk_count).toBeGreaterThan(1)
+  })
+
+  it('builds long-source chunks on chapter boundaries when chapters fit', () => {
+    const service = makeService()
+    const chapterBody = `${'林夏发现遗嘱被调包，顾沉递来证据，旧宅里的秘密被重新翻出。\n'.repeat(85)}`
+    const source = Array.from({ length: 24 }, (_, index) => [
+      `第${index + 1}章 线索${index + 1}`,
+      chapterBody,
+    ].join('\n')).join('\n\n')
+    const health = service.buildSourceHealth(source)
+    const chunks = service.buildSourceChunks(source, 77, health)
+
+    expect(health.over_context_limit).toBe(true)
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.length).toBe(health.chunk_count)
+    expect(chunks.length).toBeLessThan(health.chapter_count)
+    expect(chunks.every((chunk) => source.slice(chunk.contentStart, chunk.contentStart + 12).trimStart().startsWith('第'))).toBe(true)
+
+    for (const chunk of chunks) {
+      const trace = JSON.parse(chunk.sourceTrace) as Array<Record<string, unknown>>
+      expect(chunk.estimatedTokens).toBeLessThanOrEqual(12_000)
+      expect(trace[0]).toMatchObject({
+        source_id: 77,
+        chapter_no: expect.any(Number),
+      })
+    }
+  })
+
+  it('splits oversized chapters on readable boundaries and keeps chapter trace', () => {
+    const service = makeService()
+    const paragraph = '林夏在雨夜里反复核对证据，顾沉守在门外，旧宅灯火像一条逼近的线索。'.repeat(150)
+    const firstChapter = Array.from({ length: 12 }, (_, index) => `${paragraph}${index}`).join('\n\n')
+    const source = [
+      '第一章 长夜',
+      firstChapter,
+      '',
+      '第二章 破晓',
+      '顾沉带来新的证词，林夏决定公开遗嘱真相。'.repeat(400),
+    ].join('\n')
+    const health = service.buildSourceHealth(source)
+    const chunks = service.buildSourceChunks(source, 88, health)
+    const firstChapterChunks = chunks.filter((chunk) => {
+      const [trace] = JSON.parse(chunk.sourceTrace) as Array<Record<string, unknown>>
+      return trace?.chapter_no === 1
+    })
+
+    expect(health.over_context_limit).toBe(true)
+    expect(firstChapterChunks.length).toBeGreaterThan(1)
+    expect(firstChapterChunks[0]?.title).toContain('第一章 长夜')
+    for (const chunk of firstChapterChunks.slice(0, -1)) {
+      const [trace] = JSON.parse(chunk.sourceTrace) as Array<Record<string, unknown>>
+      expect(source[chunk.contentEnd]).toBe('\n')
+      expect(trace).toMatchObject({
+        source_id: 88,
+        chapter_no: 1,
+        chapter_title: '第一章 长夜',
+      })
+    }
   })
 
   it('creates selectable local-rule briefs and episode blueprints', () => {
@@ -211,6 +270,26 @@ describe('DramaAiFirstService source health', () => {
     expect(markEpisodeGenerationModeStale('remote_agent_script', true, 'blueprint')).toBe('remote_agent_script_blueprint_stale')
     expect(markEpisodeGenerationModeStale('remote_agent_script_strategy_stale', true, 'strategy')).toBe('remote_agent_script_strategy_stale')
   })
+
+  it('replaces a whole-plan blueprint without discarding existing script text', () => {
+    const scripted = resolveWholePlanBlueprintState({
+      scriptContent: '# 第1集\n旧剧本正文',
+      generationMode: 'remote_agent_script_source_stale',
+    } as any, 'remote_agent')
+    const blueprintOnly = resolveWholePlanBlueprintState({
+      scriptContent: null,
+      generationMode: 'local_rule_blueprint',
+    } as any, 'local_rule_seed')
+
+    expect(scripted).toEqual({
+      generationMode: 'remote_agent_script_blueprint_stale',
+      status: 'script_ready',
+    })
+    expect(blueprintOnly).toEqual({
+      generationMode: 'local_rule_blueprint',
+      status: 'blueprint',
+    })
+  })
 })
 
 describe('RemoteDramaAgentAdapter capability detection', () => {
@@ -243,6 +322,39 @@ describe('RemoteDramaAgentAdapter capability detection', () => {
       await expect(adapter.canExecute(1)).resolves.toBe(true)
       expect(resolver.resolveConfig).toHaveBeenCalledWith('text', null, 1)
     })
+  })
+
+  it('leaves duration and completion length to the configured model service', async () => {
+    const resolver = {
+      resolveConfig: vi.fn().mockResolvedValue(makeResolvedTextConfig()),
+    }
+    const adapter = new RemoteDramaAgentAdapter(resolver as any)
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn().mockResolvedValue(JSON.stringify({
+        id: 'run-free-output',
+        choices: [{ message: { content: '{"result":{"ok":true}}' } }],
+      })),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      await adapter.executeJson({
+        userId: 1,
+        taskType: 'episode_blueprint_generate',
+        idempotencyKey: 'test-free-output',
+        systemPrompt: 'system',
+        userPrompt: 'user',
+        outputSchemaName: 'EpisodeBlueprint[]',
+      })
+
+      const [, options] = fetchMock.mock.calls[0] || []
+      const body = JSON.parse(String(options?.body || '{}'))
+      expect(options?.signal).toBeUndefined()
+      expect(body).not.toHaveProperty('max_tokens')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('wires adapter dependencies through Nest providers', async () => {
@@ -300,6 +412,23 @@ describe('DramaAiFirstService AI-first gates', () => {
     expect(dramaAgentService.canExecute).toHaveBeenCalledWith(1)
   })
 
+  it('honors an explicit disabled legacy remote provider even when a text config exists', async () => {
+    const dramaAgentService = {
+      canExecute: vi.fn().mockResolvedValue(true),
+    }
+    const service = new DramaAiFirstService(
+      {} as DatabaseService,
+      dramaAgentService as unknown as DramaAgentService,
+    ) as unknown as {
+      shouldUseRemoteAgent(userId: number): Promise<boolean>
+    }
+
+    await withEnv({ DRAMA_AGENT_PROVIDER: 'disabled' }, async () => {
+      await expect(service.shouldUseRemoteAgent(1)).resolves.toBe(false)
+    })
+    expect(dramaAgentService.canExecute).not.toHaveBeenCalled()
+  })
+
   it('wires DramaAiFirstService to DramaAgentService through Nest providers', async () => {
     const dramaAgentService = {
       canExecute: vi.fn().mockResolvedValue(true),
@@ -321,6 +450,125 @@ describe('DramaAiFirstService AI-first gates', () => {
     } finally {
       await moduleRef.close()
     }
+  })
+
+  it('queues source analysis for direct sources so saving and understanding stay separate', async () => {
+    const updates: Array<Record<string, unknown>> = []
+    const insertedTasks: Array<Record<string, unknown>> = []
+    const drama = {
+      id: 8,
+      userId: 2,
+      title: '旧宅灯火',
+      metadata: JSON.stringify({
+        ai_first: {
+          source_id: 11,
+          source_health: {
+            status: 'ok',
+            word_count: 3009,
+            chapter_count: 1,
+            estimated_tokens: 4815,
+            over_context_limit: false,
+            chunk_count: 0,
+            recommended_mode: 'direct',
+          },
+        },
+      }),
+      deletedAt: null,
+    }
+    const source = {
+      id: 11,
+      userId: 2,
+      dramaId: 8,
+      title: '旧宅灯火源稿',
+      contentHash: 'hash-direct',
+      content: '第一章 归来\n她推开门，看见旧宅灯火未灭。',
+      deletedAt: null,
+    }
+    const task = {
+      id: 101,
+      status: 'queued',
+      domainTable: 'drama_sources',
+      domainId: 11,
+    }
+    let whereCall = 0
+    const whereResults = [
+      [drama],
+      { limit: vi.fn(() => Promise.resolve([source])) },
+      { limit: vi.fn(() => Promise.resolve([])) },
+      [drama],
+      { limit: vi.fn(() => Promise.resolve([source])) },
+      { orderBy: vi.fn(() => Promise.resolve([])) },
+      { limit: vi.fn(() => Promise.resolve([task])) },
+      { limit: vi.fn(() => Promise.resolve([])) },
+      { limit: vi.fn(() => Promise.resolve([])) },
+      { limit: vi.fn(() => Promise.resolve([])) },
+      { orderBy: vi.fn(() => ({ limit: vi.fn(() => Promise.resolve([])) })) },
+      { orderBy: vi.fn(() => Promise.resolve([])) },
+    ]
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => {
+            const result = whereResults[whereCall]
+            whereCall += 1
+            return result ?? { limit: vi.fn(() => Promise.resolve([])) }
+          }),
+          orderBy: vi.fn(() => ({
+            limit: vi.fn(() => Promise.resolve([])),
+          })),
+        })),
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn((payload: Record<string, unknown>) => {
+          insertedTasks.push(payload)
+          return {
+            returning: vi.fn(() => Promise.resolve([task])),
+          }
+        }),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn((payload: Record<string, unknown>) => {
+          updates.push(payload)
+          if (typeof payload.metadata === 'string') drama.metadata = payload.metadata
+          return {
+            where: vi.fn(() => Promise.resolve()),
+          }
+        }),
+      })),
+    }
+    const taskQueueService = {
+      enqueueTask: vi.fn(() => Promise.resolve('job-101')),
+    }
+    const dramaAgentService = {
+      canExecute: vi.fn(() => Promise.resolve(true)),
+    }
+    const service = new DramaAiFirstService(
+      { db } as unknown as DatabaseService,
+      dramaAgentService as unknown as DramaAgentService,
+      taskQueueService as any,
+    )
+
+    const payload = await service.analyzeSource({ userId: 2, dramaId: 8 })
+
+    expect(insertedTasks[0]).toMatchObject({
+      type: 'source_analysis',
+      status: 'queued',
+      domainTable: 'drama_sources',
+      domainId: 11,
+    })
+    expect(taskQueueService.enqueueTask).toHaveBeenCalledWith(101)
+    const queuedMetadata = updates
+      .map((item) => typeof item.metadata === 'string' ? JSON.parse(item.metadata) : null)
+      .find(Boolean)
+    expect(queuedMetadata).toMatchObject({
+      ai_first: {
+        source_analysis_task_status: 'queued',
+      },
+    })
+    expect(payload.source_analysis_task).toMatchObject({
+      id: 101,
+      status: 'queued',
+    })
   })
 })
 
@@ -431,6 +679,8 @@ describe('DramaAgentSchemaValidator', () => {
 
     expect(chunk.source_trace[0]?.chunk_id).toBe(2)
     expect(analysis.relationship_map).toEqual([])
+    expect(analysis.target_episode_count).toBe(0)
+    expect(analysis.episode_duration).toBe('60-90 秒')
     expect(briefs).toHaveLength(2)
     expect(blueprints[0]?.source_trace?.[0]?.chapter_no).toBe(1)
     expect(script).toContain('旧宅客厅')
@@ -444,6 +694,8 @@ describe('DramaAgentSchemaValidator', () => {
           核心冲突: '主角想守住家庭真实情感，但家人长期误解彼此。',
           主角: '小陈',
           主角目标: '重新凝聚家庭',
+          目标集数: '16集',
+          单集时长: '45秒',
           人物关系: {
             father: { from: '小陈', to: '父亲', relation: '父子' },
           },
@@ -459,6 +711,8 @@ describe('DramaAgentSchemaValidator', () => {
 
     expect(analysis.theme).toContain('家族关系')
     expect(analysis.core_conflict).toContain('误解')
+    expect(analysis.target_episode_count).toBe(16)
+    expect(analysis.episode_duration).toBe('45秒')
     expect(analysis.relationship_map).toHaveLength(1)
     expect(analysis.evidence).toHaveLength(1)
     expect(analysis.evidence[0]?.source_trace[0]?.source_id).toBe(1)
@@ -512,6 +766,83 @@ describe('DramaAgentSchemaValidator', () => {
     expect(briefs[1]?.production_cost).toBe('中')
   })
 
+  it('normalizes AI-first failure samples with wrappers, arrays, and Chinese fields', () => {
+    const analysis = validator.validateSourceAnalysis({
+      result: {
+        data: [{
+          源稿分析: {
+            主题: '身份反转与继承权争夺',
+            主要冲突: '林夏想夺回被调包的遗嘱，但家族对手不断制造伪证。',
+            主人公: '林夏',
+            人物目标: '公开真遗嘱并夺回继承权',
+            人物关系: [{ from: '林夏', to: '顾沉', relation: '盟友' }],
+          },
+          证据: [{ 结论: '第一章出现遗嘱调包', 来源: ['旧宅客厅里，遗嘱被调包的事实曝光。'] }],
+        }],
+      },
+    })
+    const briefs = validator.validateAdaptationBriefs({
+      result: {
+        data: {
+          方案: [
+            {
+              方案名称: '强冲突版',
+              策略主张: '把遗嘱调包作为前三集连续钩子。',
+              节奏: '三集一反转',
+              集数: '24集',
+              时长: '60秒',
+              风格: '都市爽剧',
+              保留内容: '遗嘱调包',
+              风险: '避免家族成员动机混乱',
+            },
+            {
+              名称: '情绪反击版',
+              简介: '以林夏被误解后的反击推动剧情。',
+              叙事节奏: '每4集一个证据反转',
+              目标集数: 18,
+              单集时长: '90秒',
+              风格方向: '情绪爽剧',
+            },
+          ],
+        },
+      },
+    })
+    const blueprints = validator.validateEpisodeBlueprints({
+      data: {
+        分集蓝图: [{
+          第几集: '第1集',
+          标题: '第1集：遗嘱调包',
+          本集定位: '试播钩子',
+          开篇钩子: '林夏发现遗嘱被人替换。',
+          本集梗概: '旧宅客厅里，林夏和顾沉确认遗嘱调包的第一条证据。',
+          来源: ['第一章旧宅客厅，遗嘱被调包。'],
+          角色: '林夏',
+          地点: '旧宅客厅',
+          结尾悬念: '真正的遗嘱保管人出现在门口。',
+        }],
+      },
+    })
+
+    expect(analysis.theme).toContain('身份反转')
+    expect(analysis.relationship_map).toHaveLength(1)
+    expect(analysis.evidence[0]?.source_trace[0]).toMatchObject({ excerpt: '旧宅客厅里，遗嘱被调包的事实曝光。' })
+    expect(briefs[0]).toMatchObject({
+      id: 'brief_1',
+      name: '强冲突版',
+      target_episode_count: 24,
+      hook_density: '中',
+    })
+    expect(briefs[0]?.retained_points).toEqual(['遗嘱调包'])
+    expect(blueprints[0]).toMatchObject({
+      episode_number: 1,
+      title: '第1集：遗嘱调包',
+      opening_hook: '林夏发现遗嘱被人替换。',
+      characters: ['林夏'],
+      scenes: ['旧宅客厅'],
+    })
+    expect(blueprints[0]?.source_trace[0]).toMatchObject({ excerpt: '第一章旧宅客厅，遗嘱被调包。' })
+  })
+
   it('rejects empty remote brief output', () => {
     expect(() => validator.validateAdaptationBriefs({
       adaptation_briefs: [],
@@ -520,7 +851,7 @@ describe('DramaAgentSchemaValidator', () => {
 })
 
 describe('DramaAgentService prompt context', () => {
-  it('passes selected brief and source trace into pilot script generation', async () => {
+  it('binds the adaptation skill and passes selected brief and source trace as runtime context', async () => {
     const executeJson = vi.fn(async (input) => ({
       result: { script_content: '# 第1集\n场景：旧宅客厅' },
       remoteRunId: 'remote-script-1',
@@ -528,7 +859,14 @@ describe('DramaAgentService prompt context', () => {
       warnings: [],
       input,
     }))
-    const service = new DramaAgentService({ executeJson } as any, new DramaAgentSchemaValidator())
+    const skillsService = {
+      getSkillContent: vi.fn(() => '# 短剧项目级改编 Skill\n\n规则由 Skill 驱动。'),
+    }
+    const service = new DramaAgentService(
+      { executeJson } as any,
+      new DramaAgentSchemaValidator(),
+      skillsService as any,
+    )
 
     await service.generateEpisodeScript({
       userId: 1,
@@ -565,11 +903,18 @@ describe('DramaAgentService prompt context', () => {
       sourceTrace: [{ source_id: 7, chapter_no: 1, excerpt: '遗嘱被调包' }],
     })
 
-    const prompt = String(executeJson.mock.calls[0]?.[0]?.userPrompt || '')
-    expect(prompt).toContain('选中策略')
-    expect(prompt).toContain('强钩子版')
-    expect(prompt).toContain('原文追溯')
-    expect(prompt).toContain('"source_id":7')
-    expect(prompt).toContain('不要编造未出现的主线事实')
+    const input = executeJson.mock.calls[0]?.[0]
+    const runtimeContext = JSON.parse(String(input?.userPrompt || '{}'))
+    expect(skillsService.getSkillContent).toHaveBeenCalledWith(['drama_adaptation_copilot'])
+    expect(String(input?.systemPrompt || '')).toContain('# 短剧项目级改编 Skill')
+    expect(String(input?.systemPrompt || '')).toContain('mode: episode_script_generate')
+    expect(runtimeContext).toMatchObject({
+      selected_brief: {
+        name: '强钩子版',
+      },
+      source_trace: [{
+        source_id: 7,
+      }],
+    })
   })
 })
