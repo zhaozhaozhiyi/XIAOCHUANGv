@@ -14,6 +14,8 @@ import {
   type CanvasQueueJobData,
 } from './task-queue.shared'
 
+const TERMINAL_REQUEUEABLE_STATES = new Set(['completed', 'failed'])
+
 @Injectable()
 export class TaskQueueService implements OnApplicationShutdown {
   private queue: Queue<any, any, string> | null = null
@@ -21,7 +23,7 @@ export class TaskQueueService implements OnApplicationShutdown {
   constructor(@Inject(ConfigService) private readonly configService: ConfigService) {}
 
   private getRedisUrl() {
-    return this.configService.get<string>('REDIS_URL', 'redis://127.0.0.1:6379')
+    return this.configService.getOrThrow<string>('REDIS_URL')
   }
 
   private getQueue(): Queue<any, any, string> {
@@ -35,15 +37,31 @@ export class TaskQueueService implements OnApplicationShutdown {
     return this.queue
   }
 
+  private async removeIfRequeueable(
+    existing: NonNullable<Awaited<ReturnType<Queue['getJob']>>>,
+    replaceExisting: boolean,
+  ) {
+    if (!replaceExisting) {
+      const state = await existing.getState().catch(() => null)
+      if (!state || !TERMINAL_REQUEUEABLE_STATES.has(state)) return false
+    }
+
+    try {
+      await existing.remove()
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async enqueueTask(taskId: number, options: { replaceExisting?: boolean } = {}) {
     const queue = this.getQueue()
     const jobId = buildTaskJobId(taskId)
     const existing = await queue.getJob(jobId)
 
-    if (existing && options.replaceExisting) {
-      await existing.remove().catch(() => undefined)
-    } else if (existing) {
-      return existing.id
+    if (existing) {
+      const removed = await this.removeIfRequeueable(existing, Boolean(options.replaceExisting))
+      if (!removed) return existing.id
     }
 
     const job = await queue.add(DRAMA_TASK_JOB_NAME, { taskId }, buildTaskQueueJobOptions(jobId))
@@ -55,10 +73,9 @@ export class TaskQueueService implements OnApplicationShutdown {
     const jobId = buildCanvasTaskJobId(data.canvasTaskId)
     const existing = await queue.getJob(jobId)
 
-    if (existing && options.replaceExisting) {
-      await existing.remove().catch(() => undefined)
-    } else if (existing) {
-      return existing.id
+    if (existing) {
+      const removed = await this.removeIfRequeueable(existing, Boolean(options.replaceExisting))
+      if (!removed) return existing.id
     }
 
     const job = await queue.add(CANVAS_TASK_JOB_NAME, data, buildTaskQueueJobOptions(jobId))

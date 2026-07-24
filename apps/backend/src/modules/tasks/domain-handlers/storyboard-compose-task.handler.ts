@@ -5,6 +5,7 @@ import { toPublicMediaUrl } from '../../../common/media-url'
 import { DatabaseService } from '../../../db/database.service'
 import { storyboards } from '../../../db/schema'
 import { ComposeService } from '../../compose/compose.service'
+import { assertLegacyEpisodeProductionAllowed } from '../../drama-workspace/continuity-production-gate'
 import { BaseTaskDomainHandler } from './base-task-domain.handler'
 import type { TaskDomainHandler, TaskRecord } from './task-domain-handler'
 import { sanitizePayload } from './task-domain-utils'
@@ -28,6 +29,11 @@ export class StoryboardComposeTaskHandler extends BaseTaskDomainHandler implemen
 
     if (!storyboard) throw new NotFoundException('storyboard_not_found')
     if (!storyboard.videoUrl) throw new ConflictException('当前分镜缺少可合成视频')
+    await assertLegacyEpisodeProductionAllowed(
+      this.databaseService,
+      storyboard.episodeId,
+      storyboard.userId ?? task.userId,
+    )
 
     await this.databaseService.db
       .update(storyboards)

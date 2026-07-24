@@ -45,3 +45,25 @@ jobs:
 
       - name: Release gates
         run: npm run release:verify:no-runtime -- --skip-diff-check
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Admin guard smoke
+        run: npm run test:e2e:admin-guard --workspace apps/web
+
+  hermes-runtime:
+    name: Hermes Runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build and verify Hermes runtime
+        run: npm run hermes:verify-runtime

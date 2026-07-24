@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
-  ArrowUpDown,
   Clapperboard,
   Clock3,
   Film,
@@ -18,11 +17,18 @@ import {
 } from 'lucide-react'
 
 import { dramaAPI } from '@/lib/api'
-import { getDramaEpisodeCount, getNovelSourceHealthByDrama } from '@/lib/drama-product-state'
+import { getDramaAiFirstState, getDramaEpisodeCount } from '@/lib/drama-product-state'
 import { dramaStyleLabel, dramaStyleSelectOptions } from '@/lib/drama-style'
-import { cn, formatDate, staticUrl } from '@/lib/utils'
+import { formatDate, staticUrl } from '@/lib/utils'
 import { BaseSelect } from '@/components/shared/base-select'
 import { ConfirmDialog } from '@/components/shared/confirm-dialog'
+import {
+  ContentGridSkeleton,
+  ContentPageHeader,
+  ContentSummary,
+  ContentSurface,
+  ContentToolbar,
+} from '@/components/shared/content-kit'
 import { EmptyState } from '@/components/shared/empty-state'
 import {
   Dialog,
@@ -58,12 +64,22 @@ function DramaCard({
   const characters = getCharacterCount(drama)
   const styleLabel = drama.style ? dramaStyleLabel(drama.style) : null
   const updatedAt = formatDate(drama.updated_at)
-  const sourceHealth = getNovelSourceHealthByDrama(drama)
-  const hasSourceIssue = sourceHealth.kind !== 'missing' && !sourceHealth.ok
+  const aiFirstState = getDramaAiFirstState(drama)
+  const hasSourceIssue = aiFirstState.sourceHealth.kind !== 'missing' && !aiFirstState.sourceHealth.ok
+  const hasLongSource = aiFirstState.sourceHealth.over_context_limit
   const thumbnailSrc = thumbnail && failedThumbnail !== thumbnail ? thumbnail : null
 
   return (
-    <article className="group relative flex flex-col overflow-hidden bg-bg-0/80 shadow-[0_1px_0_rgba(15,23,42,0.03)] transition-[background,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:bg-bg-0 hover:shadow-[0_18px_44px_rgba(40,28,18,0.08)]">
+    <article className="content-card group relative">
+      <button
+        type="button"
+        onClick={onDelete}
+        className="absolute right-2 top-2 z-10 flex size-8 items-center justify-center rounded-full border border-border/45 bg-bg-surface-glass/85 text-text-2 opacity-0 shadow-[0_1px_4px_rgba(40,28,18,0.05)] backdrop-blur-md transition-all hover:bg-bg-0 hover:text-text-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"
+        aria-label={`删除项目：${drama.title}`}
+        title="删除项目"
+      >
+        <Trash2 size={15} />
+      </button>
       {/* Thumbnail */}
       <button
         type="button"
@@ -84,7 +100,7 @@ function DramaCard({
           </div>
         )}
         {styleLabel && (
-          <span className="absolute left-2 top-2 rounded-full border border-white/65 bg-bg-0/65 px-2.5 py-1 text-[11px] font-semibold text-accent shadow-[0_8px_20px_rgba(40,28,18,0.10)] ring-1 ring-black/[0.03] backdrop-blur-md">
+          <span className="absolute left-2 top-2 rounded-full border border-white/55 bg-bg-surface-glass/78 px-2.5 py-1 text-[11px] font-semibold text-accent shadow-[0_1px_4px_rgba(40,28,18,0.045)] backdrop-blur-md">
             {styleLabel}
           </span>
         )}
@@ -95,12 +111,29 @@ function DramaCard({
         <button
           type="button"
           onClick={onOpen}
-          className="text-left focus-visible:outline-none"
+          className="rounded-[6px] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-page"
         >
           <h3 className="font-display text-base font-semibold text-text-0 line-clamp-2 hover:text-accent">
             {drama.title}
           </h3>
         </button>
+
+        <div className="rounded-[13px] border border-border/50 bg-bg-0/72 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.42)]">
+          <div className="flex items-center justify-between gap-3">
+            <span className="min-w-0 truncate text-xs font-semibold text-text-0">
+              {aiFirstState.label}
+            </span>
+            <span className="shrink-0 rounded-full bg-accent-bg px-2 py-0.5 text-[11px] font-semibold text-accent">
+              {aiFirstState.nextActionLabel}
+            </span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-3">
+            <div
+              className="h-full rounded-full bg-accent transition-[width] duration-300"
+              style={{ width: `${aiFirstState.progress}%` }}
+            />
+          </div>
+        </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-2">
           {hasSourceIssue ? (
@@ -109,9 +142,14 @@ function DramaCard({
               源稿异常
             </span>
           ) : null}
+          {hasLongSource ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-bg-1 px-2 py-0.5 text-[11px] font-medium text-text-1">
+              长篇分块
+            </span>
+          ) : null}
           <span className="inline-flex items-center gap-1">
             <LayoutGrid size={13} aria-hidden />
-            {episodes} 集
+            {aiFirstState.blueprintCount || episodes} 集
           </span>
           <span className="inline-flex items-center gap-1">
             <Users size={13} aria-hidden />
@@ -121,29 +159,6 @@ function DramaCard({
             <Clock3 size={13} aria-hidden />
             {updatedAt}
           </span>
-        </div>
-
-        <div className="mt-auto flex items-center justify-between gap-2 pt-2">
-          <div className="flex gap-1.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={onOpen}
-              className="h-8 rounded-full bg-bg-2/80 px-3 shadow-none hover:bg-bg-hover"
-            >
-              打开项目
-            </Button>
-          </div>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="flex size-8 items-center justify-center rounded-full bg-bg-2/80 text-text-2 opacity-0 transition-all hover:bg-bg-hover hover:text-text-0 group-hover:opacity-100 focus-visible:opacity-100"
-            aria-label={`删除项目：${drama.title}`}
-            title="删除项目"
-          >
-            <Trash2 size={15} />
-          </button>
         </div>
       </div>
     </article>
@@ -261,45 +276,45 @@ function DramaListPageContent() {
   return (
     <div className="page-shell animate-fade-up">
       <div className="mx-auto w-full">
-        {/* Header */}
-        <div className="mb-7 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="flex flex-col gap-2">
-            <h1 className="page-title">短剧项目</h1>
-          </div>
-          <Button
-            type="button"
-            onClick={() => {
-              setShowCreate(true)
-            }}
-            className="h-10 gap-2"
-          >
-            <Plus size={16} />
-            新建短剧
-          </Button>
-        </div>
+        <ContentPageHeader
+          title="短剧"
+          description="统一管理项目、风格、源稿健康度和最近更新状态。"
+          actions={(
+            <Button
+              type="button"
+              onClick={() => {
+                setShowCreate(true)
+              }}
+              className="h-10 gap-2"
+            >
+              <Plus size={16} />
+              新建短剧
+            </Button>
+          )}
+        />
 
-        <div className="flex flex-col gap-5 bg-bg-0 p-0">
+        <ContentSurface>
           {/* Filters */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <ContentToolbar>
             <label className="relative flex min-w-0 flex-1 items-center sm:max-w-xl">
               <Search className="pointer-events-none absolute left-3 size-4 text-text-3" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="搜索标题..."
-                className="h-11 pl-10"
+                className="h-11 rounded-[11px] border-border/60 pl-10 shadow-none"
               />
             </label>
             <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:shrink-0">
               <BaseSelect
-                className="min-w-0 sm:w-[120px] [&_button]:h-11"
+                className="min-w-0 sm:w-[120px] [&_button]:h-11 [&_button]:rounded-[11px] [&_button]:border-border/60"
                 value={styleFilter}
                 onValueChange={(v) => setStyleFilter(String(v))}
                 options={[{ label: '全部风格', value: '' }, ...dramaStyleSelectOptions]}
                 placeholder="风格筛选"
               />
               <BaseSelect
-                className="min-w-0 sm:w-[140px] [&_button]:h-11"
+                className="min-w-0 sm:w-[140px] [&_button]:h-11 [&_button]:rounded-[11px] [&_button]:border-border/60"
                 value={sortBy}
                 onValueChange={(v) => setSortBy(v as SortOption)}
                 options={[
@@ -309,27 +324,24 @@ function DramaListPageContent() {
                 ]}
               />
             </div>
-          </div>
+          </ContentToolbar>
 
           {/* Stats */}
-          <p className="text-xs text-text-3">
+          <ContentSummary>
             共 {filteredDramas.length} 个项目
             {query.trim() || styleFilter ? '（已筛选）' : ''}
-          </p>
+          </ContentSummary>
 
           {/* Grid */}
           {loading ? (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="aspect-[16/9] bg-gradient-to-r from-bg-0/80 via-bg-hover to-bg-0/80 bg-[length:200%_100%] animate-shimmer"
-                />
-              ))}
-            </div>
+            <ContentGridSkeleton
+              count={6}
+              className="sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+            />
           ) : filteredDramas.length === 0 ? (
             <EmptyState
               icon={Clapperboard}
+              title={query.trim() || styleFilter ? '没有符合条件的项目' : '还没有短剧项目'}
               className="min-h-[320px] justify-center border-0 bg-bg-0/70"
               description={query.trim() || styleFilter ? '没有符合筛选条件的项目' : '还没有短剧项目'}
               actionLabel="新建短剧"
@@ -347,7 +359,7 @@ function DramaListPageContent() {
               ))}
             </div>
           )}
-        </div>
+        </ContentSurface>
       </div>
 
       {/* Create Dialog */}
@@ -358,11 +370,11 @@ function DramaListPageContent() {
           setShowCreate(open)
         }}
       >
-        <DialogContent layout="panel" size="compact" className="animate-scale-in">
+        <DialogContent variant="form" size="compact" className="animate-scale-in">
           <DialogDescription className="sr-only">
             创建一个新的短剧项目，需要填写项目名称，可选择视觉风格。
           </DialogDescription>
-          <DialogHeaderBar density="compact" className="border-0 bg-transparent">
+          <DialogHeaderBar variant="form">
             <div className="flex gap-3 sm:gap-3.5">
               <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-accent-glow bg-accent-bg text-accent shadow-shadow-xs sm:size-10">
                 <Plus className="size-[18px] sm:size-5" strokeWidth={2} />
@@ -382,7 +394,7 @@ function DramaListPageContent() {
             }}
             className="flex min-h-0 flex-1 flex-col"
           >
-            <DialogMain density="compact" className="min-h-0 flex-1 border-t border-border/70">
+            <DialogMain variant="form">
               {createError ? (
                 <div
                   role="alert"
@@ -425,7 +437,7 @@ function DramaListPageContent() {
               </div>
             </DialogMain>
 
-            <DialogActions density="compact" className="sm:items-center sm:justify-end">
+            <DialogActions variant="form" className="sm:items-center sm:justify-end">
               <Button
                 type="button"
                 variant="ghost"

@@ -41,6 +41,7 @@ import {
 } from '@/lib/canvas/store'
 import type { StoryboardData } from '@/lib/canvas/types'
 import { cryptoRandomId } from './_utils'
+import { useCanvasRuntime } from './CanvasRuntimeContext'
 import { NodeResultHistoryPanel } from './NodeResultHistoryPanel'
 import { QuickGenerateDialog } from './QuickGenerateDialog'
 
@@ -59,6 +60,7 @@ export function NodeContextMenu() {
   const historyUndo = useHistoryStore((s) => s.undo)
   const openDurationPopover = useUiStore((s) => s.openDurationPopover)
   const canvasId = useCanvasStore((s) => s.canvasId)
+  const runtime = useCanvasRuntime()
   const [historyNodeId, setHistoryNodeId] = useState<string | null>(null)
   const [quickNodeId, setQuickNodeId] = useState<string | null>(null)
 
@@ -91,6 +93,26 @@ export function NodeContextMenu() {
     if (!pos) return []
     return resolve(pos.nodeType)
   }, [pos, resolve])
+
+  const currentResultSaved = useMemo(() => {
+    if (!node) return false
+    const data = (node.data ?? {}) as { current_result_id?: string; results?: Array<{ id: string; asset_id?: number | null }> }
+    const results = Array.isArray(data.results) ? data.results : []
+    const current = data.current_result_id
+      ? results.find((item) => item.id === data.current_result_id)
+      : results[0]
+    return Boolean(current?.asset_id)
+  }, [node])
+
+  const currentResult = useMemo(() => {
+    if (!node) return null
+    const data = (node.data ?? {}) as { current_result_id?: string; results?: Array<{ id: string }> }
+    const results = Array.isArray(data.results) ? data.results : []
+    const current = data.current_result_id
+      ? results.find((item) => item.id === data.current_result_id)
+      : results[0]
+    return current ?? null
+  }, [node])
 
   // 关联类入口（不属 BusinessAction schema，纯前端交互）
   const associateActions = useMemo(() => {
@@ -145,14 +167,15 @@ export function NodeContextMenu() {
   const handleSaveAsset = useCallback(async () => {
     if (!canvasId || !node) return
     try {
-      await canvasApi.saveNodeResultToAsset(canvasId, { node_id: node.id })
+      const data = await canvasApi.saveNodeResultToAsset(canvasId, { node_id: node.id })
+      updateNodeData(node.id, data.node.data)
       toast.success('已保存到资产库')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '保存资产失败')
     } finally {
       close()
     }
-  }, [canvasId, close, node])
+  }, [canvasId, close, node, updateNodeData])
 
   if (!pos || !node) return renderDialogs(historyNodeId, setHistoryNodeId, quickNodeId, setQuickNodeId)
 
@@ -217,7 +240,14 @@ export function NodeContextMenu() {
           </>
         )}
         <MenuItem icon={History} label="查看生成历史" onClick={() => { setHistoryNodeId(node.id); close() }} />
-        <MenuItem icon={FolderHeart} label="保存当前结果到资产" onClick={() => void handleSaveAsset()} />
+        <MenuItem icon={FolderHeart} label={currentResultSaved ? '当前结果已入资产' : '保存当前结果到资产'} onClick={() => void handleSaveAsset()} disabled={currentResultSaved} />
+        {runtime.slots?.nodeActionsExtra?.({
+          nodeId: node.id,
+          nodeType: pos.nodeType,
+          nodeData: (node.data ?? {}) as Record<string, unknown>,
+          currentResult: currentResult as never,
+          close,
+        })}
         <MenuItem icon={Sparkles} label="基于此节点快速生成" onClick={() => { setQuickNodeId(node.id); close() }} />
         <MenuItem icon={Copy} label="复制" shortcut="⌘D" onClick={handleDuplicate} />
         <MenuItem
@@ -274,19 +304,23 @@ function MenuItem({
   shortcut,
   variant = 'default',
   onClick,
+  disabled = false,
 }: {
   icon: React.ElementType
   label: string
   shortcut?: string
   variant?: 'default' | 'destructive'
   onClick: () => void
+  disabled?: boolean
 }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       className={cn(
         'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+        disabled && 'cursor-not-allowed opacity-55',
         variant === 'destructive'
           ? 'text-error hover:bg-error-bg focus:bg-error-bg'
           : 'text-text-0 hover:bg-bg-hover focus:bg-bg-hover',

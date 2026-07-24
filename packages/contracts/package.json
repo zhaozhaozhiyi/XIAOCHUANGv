@@ -1,12 +1,14 @@
 {
   "name": "@xiaochuang/contracts",
   "version": "0.22.0",
+  "license": "MIT",
   "private": true,
-  "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "scripts": {

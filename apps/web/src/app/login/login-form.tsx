@@ -23,12 +23,12 @@ type LoginFormProps = {
 
 export function LoginForm({ loginError, next, initialPhone = '', devAuth }: LoginFormProps) {
   const devEnabled = devAuth?.enabled === true
-  const defaultPhone = devEnabled ? devAuth.phone : initialPhone
+  const defaultPhone = devEnabled && devAuth.phone ? devAuth.phone : initialPhone
   const [activeTab, setActiveTab] = useState<'sms' | 'password'>('sms')
 
   // 短信验证码登录状态
   const [phone, setPhone] = useState(defaultPhone.replace(/\D/g, '').slice(0, 11))
-  const [smsCode, setSmsCode] = useState(devEnabled ? devAuth.code : '')
+  const [smsCode, setSmsCode] = useState(devEnabled && devAuth.code ? devAuth.code : '')
   const [smsError, setSmsError] = useState(loginError)
   const [smsSuccessMessage, setSmsSuccessMessage] = useState('')
   const [isSendingSmsCode, setIsSendingSmsCode] = useState(false)

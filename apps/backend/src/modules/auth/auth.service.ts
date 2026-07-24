@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, gt, isNull } from 'drizzle-orm'
 import type { FastifyReply } from 'fastify'
 
 import { DatabaseService } from '../../db/database.service'
@@ -43,6 +43,7 @@ export class AuthService {
     await this.databaseService.db.insert(authSessions).values({
       userId: result.user.id,
       sessionTokenHash: tokenHash,
+      expiresAt,
       createdAt: now,
       updatedAt: now,
       lastSeenAt: now,
@@ -65,6 +66,7 @@ export class AuthService {
     await this.databaseService.db.insert(authSessions).values({
       userId,
       sessionTokenHash: tokenHash,
+      expiresAt,
       createdAt: now,
       updatedAt: now,
       lastSeenAt: now,
@@ -81,6 +83,7 @@ export class AuthService {
     }
 
     const tokenHash = this.hashToken(token)
+    const now = new Date()
     const [row] = await this.databaseService.db
       .select({
         sessionId: authSessions.id,
@@ -96,7 +99,11 @@ export class AuthService {
       })
       .from(authSessions)
       .innerJoin(users, eq(users.id, authSessions.userId))
-      .where(and(eq(authSessions.sessionTokenHash, tokenHash), isNull(authSessions.revokedAt)))
+      .where(and(
+        eq(authSessions.sessionTokenHash, tokenHash),
+        isNull(authSessions.revokedAt),
+        gt(authSessions.expiresAt, now),
+      ))
 
     if (!row) {
       return null
@@ -104,7 +111,6 @@ export class AuthService {
 
     const lastSeenAt = row.lastSeenAt ? new Date(row.lastSeenAt).getTime() : 0
     if (Date.now() - lastSeenAt > 60_000) {
-      const now = new Date()
       await this.databaseService.db
         .update(authSessions)
         .set({

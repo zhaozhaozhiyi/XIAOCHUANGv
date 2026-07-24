@@ -7,6 +7,7 @@ export const MOCK_AI_CONFIG_PRESETS = [
     name: 'Mock Text Service',
     model: 'mock-text-v1',
     apiKey: 'mock-text-key',
+    settings: {},
   },
   {
     serviceType: 'image',
@@ -14,6 +15,7 @@ export const MOCK_AI_CONFIG_PRESETS = [
     name: 'Mock Image Service',
     model: 'mock-image-v1',
     apiKey: 'mock-image-key',
+    settings: {},
   },
   {
     serviceType: 'video',
@@ -21,6 +23,7 @@ export const MOCK_AI_CONFIG_PRESETS = [
     name: 'Mock Video Service',
     model: 'mock-video-v1',
     apiKey: 'mock-video-key',
+    settings: {},
   },
   {
     serviceType: 'audio',
@@ -28,6 +31,9 @@ export const MOCK_AI_CONFIG_PRESETS = [
     name: 'Mock Audio Service',
     model: 'mock-audio-v1',
     apiKey: 'mock-audio-key',
+    settings: {
+      supportedLanguageTags: ['zh-CN'],
+    },
   },
 ] as const
 

@@ -1,4 +1,5 @@
 import { backendJson } from "@/lib/backend";
+import { AdminAvatar, AdminCard, AdminCardHeader, AdminPageHeader, AdminStatCard } from "@/components/admin-kit";
 
 interface OverviewResponse {
   stats: {
@@ -20,68 +21,66 @@ export default async function DashboardPage() {
 
   const stats = [
     {
-      name: "活跃用户",
+      name: "注册用户",
       value: overview.stats.userCount || 0,
-      change: "+12%",
-      changeType: "positive" as const,
+      meta: "当前累计注册用户数",
     },
     {
       name: "短剧总数",
       value: overview.stats.dramaCount || 0,
-      change: "+8%",
-      changeType: "positive" as const,
+      meta: "当前累计短剧条目",
     },
     {
-      name: "订阅用户",
+      name: "生效订阅",
       value: overview.stats.activeSubscriptionCount || 0,
-      change: "+5%",
-      changeType: "positive" as const,
+      meta: "当前处于生效状态的订阅",
     },
   ];
 
   return (
-    <div className="space-y-8">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div className="space-y-6">
+      <AdminPageHeader
+        title="平台概览"
+        description="聚合查看当前用户规模、内容体量与订阅活跃度。"
+      />
+
+      <div className="admin-stat-grid">
         {stats.map((stat) => (
-          <div key={stat.name} className="bg-white rounded-xl shadow-sm p-6 border">
-            <p className="text-sm text-slate-500">{stat.name}</p>
-            <p className="text-3xl font-bold text-slate-900 mt-2">{stat.value.toLocaleString()}</p>
-            <p className={`text-sm mt-2 ${stat.changeType === "positive" ? "text-green-600" : "text-red-600"}`}>
-              {stat.change} 较上月
-            </p>
-          </div>
+          <AdminStatCard
+            key={stat.name}
+            label={stat.name}
+            value={stat.value.toLocaleString()}
+            meta={stat.meta}
+          />
         ))}
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border">
-        <div className="p-6 border-b">
-          <h3 className="text-lg font-semibold text-slate-900">最近注册用户</h3>
-        </div>
-        <div className="divide-y">
+      <AdminCard>
+        <AdminCardHeader
+          title="最近注册用户"
+          description="帮助运营快速感知新增用户的来源与增长节奏。"
+        />
+        <div className="divide-y divide-[rgba(70,52,41,0.08)]">
           {overview.recentUsers.length === 0 ? (
-            <p className="p-6 text-center text-slate-500">暂无数据</p>
+            <p className="admin-empty">暂无数据</p>
           ) : (
             overview.recentUsers.map((user) => (
-              <div key={user.id} className="p-4 flex items-center justify-between">
+              <div key={user.id} className="flex items-center justify-between gap-4 px-6 py-4">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                    <span className="text-blue-600 font-medium">
-                      {user.displayName?.charAt(0) || user.email?.charAt(0) || "U"}
-                    </span>
-                  </div>
+                  <AdminAvatar label={user.displayName || user.email || "U"} />
                   <div>
-                    <p className="font-medium text-slate-900">{user.displayName}</p>
-                    <p className="text-sm text-slate-500">{user.email || user.phone || "-"}</p>
+                    <p className="admin-cell-main">{user.displayName}</p>
+                    <p className="admin-cell-sub">{user.email || user.phone || "-"}</p>
                   </div>
                 </div>
-                <div className="text-sm text-slate-500">
+                <div className="text-sm text-[color:var(--admin-text-2)]">
                   {new Date(user.createdAt).toLocaleDateString("zh-CN")}
                 </div>
               </div>
             ))
           )}
         </div>
-      </div>
+      </AdminCard>
     </div>
   );
 }

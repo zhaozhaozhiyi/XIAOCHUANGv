@@ -205,7 +205,11 @@ export async function saveStoryboardsForEpisode(
     throw new Error('Episode not found')
   }
 
-  const [sceneLinks, characterLinks, existing] = await Promise.all([
+  if (episode.dramaId !== dramaId) {
+    throw new Error('episode_id 与 drama_id 不匹配')
+  }
+
+  const [sceneLinks, characterLinks, existing, projectCharacters, projectScenes] = await Promise.all([
     databaseService.db
       .select()
       .from(episodeScenes)
@@ -218,23 +222,48 @@ export async function saveStoryboardsForEpisode(
       .select()
       .from(storyboards)
       .where(eq(storyboards.episodeId, episodeId)),
+    databaseService.db
+      .select()
+      .from(characters)
+      .where(eq(characters.dramaId, dramaId)),
+    databaseService.db
+      .select()
+      .from(scenes)
+      .where(eq(scenes.dramaId, dramaId)),
   ])
 
   const episodeSceneIds = getEpisodeSceneIds(sceneLinks)
   const episodeCharacterIds = getEpisodeCharacterIds(characterLinks)
+  const projectSceneIds = new Set(
+    projectScenes.filter((scene) => !scene.deletedAt).map((scene) => scene.id),
+  )
+  const projectCharacterIds = new Set(
+    projectCharacters.filter((character) => !character.deletedAt).map((character) => character.id),
+  )
+  const requestedSceneIds = new Set(
+    storyboardsInput
+      .map((storyboard) => storyboard.scene_id)
+      .filter((sceneId): sceneId is number =>
+        typeof sceneId === 'number' && Number.isInteger(sceneId) && sceneId > 0,
+      ),
+  )
+  const requestedCharacterIds = new Set(
+    storyboardsInput.flatMap((storyboard) => storyboard.character_ids || [])
+      .filter((characterId) => Number.isInteger(characterId) && characterId > 0),
+  )
+  const invalidSceneIds = Array.from(requestedSceneIds).filter((sceneId) => !projectSceneIds.has(sceneId))
+  if (invalidSceneIds.length) {
+    throw new Error(`scene_id 不属于当前项目: ${invalidSceneIds.join(', ')}`)
+  }
+  const invalidCharacterIds = Array.from(requestedCharacterIds)
+    .filter((characterId) => !projectCharacterIds.has(characterId))
+  if (invalidCharacterIds.length) {
+    throw new Error(`character_ids 不属于当前项目: ${invalidCharacterIds.join(', ')}`)
+  }
 
   const validatedStoryboards = storyboardsInput.map((storyboard) => {
     const filled = autoFillStoryboardDefaults(storyboard)
     validateStoryboardContent(filled)
-
-    if (filled.scene_id != null && !episodeSceneIds.has(filled.scene_id)) {
-      throw new Error(`scene_id ${filled.scene_id} 不属于当前集`)
-    }
-
-    const invalidCharacterIds = (filled.character_ids || []).filter((id) => !episodeCharacterIds.has(id))
-    if (invalidCharacterIds.length) {
-      throw new Error(`character_ids 不属于当前集: ${invalidCharacterIds.join(', ')}`)
-    }
 
     return {
       ...filled,
@@ -256,6 +285,23 @@ export async function saveStoryboardsForEpisode(
     }
   })
 
+  // The model receives project assets from the graph-backed context. Any
+  // valid asset it actually uses becomes an explicit episode association
+  // before the storyboard rows are written.
+  const ts = now()
+  const missingSceneLinks = Array.from(requestedSceneIds)
+    .filter((sceneId) => !episodeSceneIds.has(sceneId))
+    .map((sceneId) => ({ episodeId, sceneId, createdAt: ts }))
+  const missingCharacterLinks = Array.from(requestedCharacterIds)
+    .filter((characterId) => !episodeCharacterIds.has(characterId))
+    .map((characterId) => ({ episodeId, characterId, createdAt: ts }))
+  if (missingSceneLinks.length) {
+    await databaseService.db.insert(episodeScenes).values(missingSceneLinks)
+  }
+  if (missingCharacterLinks.length) {
+    await databaseService.db.insert(episodeCharacters).values(missingCharacterLinks)
+  }
+
   for (const storyboard of existing) {
     await databaseService.db
       .delete(storyboardCharacters)
@@ -266,7 +312,6 @@ export async function saveStoryboardsForEpisode(
     .delete(storyboards)
     .where(eq(storyboards.episodeId, episodeId))
 
-  const ts = now()
   let totalDuration = 0
 
   for (const storyboard of validatedStoryboards) {
@@ -304,7 +349,11 @@ export async function saveStoryboardsForEpisode(
 
   await databaseService.db
     .update(episodes)
-    .set({ duration: Math.ceil(totalDuration / 60), updatedAt: ts })
+    .set({
+      duration: Math.ceil(totalDuration / 60),
+      reviewStatus: 'storyboard_ready',
+      updatedAt: ts,
+    })
     .where(eq(episodes.id, episodeId))
 
   return {

@@ -1,22 +1,49 @@
 'use client'
 
-import { AlertTriangle, Download, Loader2, Merge, RefreshCw } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { AlertTriangle, Download, GitBranch, Loader2, Merge, RefreshCw } from 'lucide-react'
 import { isActiveWorkbenchTask, useWorkbench } from '@/hooks/use-workbench'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
 import { getAiErrorCopy } from '@/lib/ai-error-copy'
+import { episodeContinuityAPI } from '@/lib/api'
 
 export function ExportPanel() {
   const wb = useWorkbench()
   const composedCount = wb.storyboards.filter(s => s.composed_video_url).length
   const totalShots = wb.storyboards.length
-  const canMerge = totalShots > 0 && composedCount === totalShots
+  const episodeId = wb.episode?.id
+  const [requiresEditRevision, setRequiresEditRevision] = useState<boolean | null>(null)
+  const isCheckingProductionMode = Boolean(episodeId) && requiresEditRevision == null
+  const canMerge = !requiresEditRevision && !isCheckingProductionMode && totalShots > 0 && composedCount === totalShots
   const mergeTask = wb.episode ? wb.entityTasks[`episode-merge:${wb.episode.id}`] : null
   const failedMergeTask = mergeTask && ['failed', 'canceled'].includes(String(mergeTask.status || '')) ? mergeTask : null
   const isMergePending = isActiveWorkbenchTask(mergeTask) || (wb.mergeStatus as { status?: string } | null)?.status === 'pending'
-  const fallbackAction = totalShots === 0
+  const fallbackAction = requiresEditRevision
+    ? { label: '前往连续性', step: 'prod-continuity' }
+    : totalShots === 0
     ? { label: '前往分镜', step: 'script-storyboard' }
     : { label: '前往视频合成', step: 'prod-compose' }
+
+  useEffect(() => {
+    let canceled = false
+    if (!episodeId) return
+
+    void episodeContinuityAPI.get(episodeId)
+      .then((continuity) => {
+        if (canceled) return
+        setRequiresEditRevision(
+          continuity.storyboard_set_id != null && continuity.boundaries.length > 0,
+        )
+      })
+      .catch(() => {
+        if (!canceled) setRequiresEditRevision(true)
+      })
+
+    return () => {
+      canceled = true
+    }
+  }, [episodeId])
 
   return (
     <div className="export-main">
@@ -57,14 +84,24 @@ export function ExportPanel() {
                 variant="ghost"
                 className="panel-btn"
                 disabled={isMergePending}
-                onClick={wb.mergeEpisode}
+                onClick={
+                  requiresEditRevision
+                    ? () => wb.goSubStep('prod-continuity')
+                    : wb.mergeEpisode
+                }
               >
-                {isMergePending ? (
+                {requiresEditRevision ? (
+                  <GitBranch size={13} />
+                ) : isMergePending ? (
                   <Loader2 size={13} className="animate-spin" />
                 ) : (
                   <RefreshCw size={13} />
                 )}
-                {isMergePending ? '合并中' : '重新合并'}
+                {requiresEditRevision
+                  ? '查看剪辑版本'
+                  : isMergePending
+                    ? '合并中'
+                    : '重新合并'}
               </Button>
             </div>
           </>
@@ -81,7 +118,9 @@ export function ExportPanel() {
               </div>
             )}
             <div className="empty-desc">
-              将所有合成的镜头合并为完整成片
+              {requiresEditRevision
+                ? '请先确认连续性剪辑版本，再渲染成片'
+                : '将所有合成的镜头合并为完整成片'}
             </div>
           </div>
         )}
@@ -93,27 +132,35 @@ export function ExportPanel() {
                 ? '合并任务已取消，可以重新提交。'
                 : getAiErrorCopy(new Error(failedMergeTask.error_message || '合并失败'))}
             </span>
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              className="panel-btn entity-task-retry"
-              onClick={() => wb.retryEntityTask(failedMergeTask.id)}
-            >
-              <RefreshCw size={10} />
-              重试
-            </Button>
+            {!requiresEditRevision ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                className="panel-btn entity-task-retry"
+                onClick={() => wb.retryEntityTask(failedMergeTask.id)}
+              >
+                <RefreshCw size={10} />
+                重试
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>
       {!wb.mergeUrl && (
         <div className="step-bubble">
           <button
-            className={cn('bubble-btn primary', isMergePending && 'pending')}
-            disabled={isMergePending}
+            className={cn('bubble-btn primary', (isMergePending || isCheckingProductionMode) && 'pending')}
+            disabled={isMergePending || isCheckingProductionMode}
             onClick={canMerge ? wb.mergeEpisode : () => wb.goSubStep(fallbackAction.step)}
           >
-            {isMergePending ? '合并中' : canMerge ? '开始合并' : fallbackAction.label}
+            {isCheckingProductionMode
+              ? '确认成片方式...'
+              : isMergePending
+                ? '合并中'
+                : canMerge
+                  ? '开始合并'
+                  : fallbackAction.label}
           </button>
         </div>
       )}

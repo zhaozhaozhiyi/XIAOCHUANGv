@@ -8,6 +8,9 @@ import {
   canvasNodes,
   canvasEdges,
   canvasViewports,
+  dramas,
+  episodes,
+  storyboards,
 } from '../../db/schema'
 
 function now() {
@@ -74,6 +77,27 @@ function safeJsonParse<T>(json: string | null | undefined, fallback: T): T {
 
 function uid(prefix: string) {
   return `${prefix}_${randomUUID().slice(0, 8)}`
+}
+
+function normalizeSourceId(value: string | number | null | undefined) {
+  if (value == null || value === '') return null
+  const raw = String(value).trim()
+  if (!raw) return null
+  const parsed = Number(raw)
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new BadRequestException('invalid_canvas_source_id')
+  }
+  return String(parsed)
+}
+
+type CreateCanvasOptions = {
+  source?: string | null
+  profile?: string | null
+  sourceDramaId?: string | number | null
+  sourceEpisodeId?: string | number | null
+  sourceStoryboardId?: string | number | null
+  sourceDramaTitle?: string | null
+  productionContext?: Record<string, unknown> | null
 }
 
 @Injectable()
@@ -165,10 +189,13 @@ export class CanvasService {
       compositeSettingsJson: '{"resolution":"1080p","fps":24,"transition":"none"}',
       currentVersionId: null,
       thumbnail: null,
+      profile: 'general',
       sourceDramaId: null,
       sourceEpisodeId: null,
+      sourceStoryboardId: null,
       sourceDramaTitle: null,
       sourceDramaSnapshotAt: null,
+      productionContextJson: '{}',
       createdAt: now(),
       updatedAt: now(),
       deletedAt: null,
@@ -179,24 +206,68 @@ export class CanvasService {
   // 创建空白画布
   // ═══════════════════════════════════════════════════════════
 
-  async createCanvas(userId: number, title?: string) {
+  async createCanvas(userId: number, title?: string, options: CreateCanvasOptions = {}) {
     const id = uid('cnv')
     const nowStr = now().toISOString()
+    const sourceDramaId = normalizeSourceId(options.sourceDramaId)
+    const sourceEpisodeId = normalizeSourceId(options.sourceEpisodeId)
+    const sourceStoryboardId = normalizeSourceId(options.sourceStoryboardId)
+    let sourceDramaTitle = options.sourceDramaTitle?.trim() || null
+
+    if (sourceDramaId) {
+      const dramaId = Number(sourceDramaId)
+      const [drama] = await this.db.db
+        .select()
+        .from(dramas)
+        .where(and(eq(dramas.id, dramaId), eq(dramas.userId, userId), isNull(dramas.deletedAt)))
+      if (!drama) throw new NotFoundException('canvas_source_drama_not_found')
+      sourceDramaTitle = sourceDramaTitle || drama.title
+
+      if (sourceEpisodeId) {
+        const [episode] = await this.db.db
+          .select()
+          .from(episodes)
+          .where(and(eq(episodes.id, Number(sourceEpisodeId)), eq(episodes.dramaId, dramaId), eq(episodes.userId, userId), isNull(episodes.deletedAt)))
+        if (!episode) throw new NotFoundException('canvas_source_episode_not_found')
+      }
+
+      if (sourceStoryboardId) {
+        const [storyboard] = await this.db.db
+          .select({ id: storyboards.id, episodeId: storyboards.episodeId })
+          .from(storyboards)
+          .where(and(eq(storyboards.id, Number(sourceStoryboardId)), eq(storyboards.userId, userId), isNull(storyboards.deletedAt)))
+
+        if (!storyboard) throw new NotFoundException('canvas_source_storyboard_not_found')
+
+        const [episode] = await this.db.db
+          .select({ id: episodes.id })
+          .from(episodes)
+          .where(and(eq(episodes.id, storyboard.episodeId), eq(episodes.dramaId, dramaId), eq(episodes.userId, userId), isNull(episodes.deletedAt)))
+
+        if (!episode) throw new NotFoundException('canvas_source_storyboard_not_found')
+      }
+    }
+
+    const source = sourceDramaId || options.source === 'from-drama' ? 'from-drama' : 'blank'
+    const profile = options.profile?.trim() || (sourceDramaId ? 'drama' : 'general')
     const row = {
       id,
       userId,
       title: title?.trim() || '未命名画布',
-      source: 'blank' as const,
+      source,
+      profile,
       isPinned: false,
       sortOrder: 0,
       colorPaletteJson: '[]',
       compositeSettingsJson: '{"resolution":"1080p","fps":24,"transition":"none"}',
       currentVersionId: null as string | null,
       thumbnail: null as string | null,
-      sourceDramaId: null as string | null,
-      sourceEpisodeId: null as string | null,
-      sourceDramaTitle: null as string | null,
-      sourceDramaSnapshotAt: null as string | null,
+      sourceDramaId,
+      sourceEpisodeId,
+      sourceStoryboardId,
+      sourceDramaTitle,
+      sourceDramaSnapshotAt: sourceDramaId ? nowStr : null,
+      productionContextJson: JSON.stringify(options.productionContext ?? {}),
       createdAt: now(),
       updatedAt: now(),
       deletedAt: null as Date | null,
@@ -279,6 +350,13 @@ export class CanvasService {
       colorPaletteJson: canvas.colorPaletteJson,
       compositeSettingsJson: canvas.compositeSettingsJson,
       currentVersionId: uid('ver'),
+      profile: canvas.profile,
+      sourceDramaId: canvas.sourceDramaId,
+      sourceEpisodeId: canvas.sourceEpisodeId,
+      sourceStoryboardId: canvas.sourceStoryboardId,
+      sourceDramaTitle: canvas.sourceDramaTitle,
+      sourceDramaSnapshotAt: canvas.sourceDramaSnapshotAt,
+      productionContextJson: canvas.productionContextJson,
       createdAt: now(),
       updatedAt: now(),
     })
@@ -416,9 +494,13 @@ function toSummary(row: typeof canvases.$inferSelect) {
     title: row.title,
     thumbnail: row.thumbnail ?? null,
     source: row.source,
+    profile: row.profile,
     source_drama_id: row.sourceDramaId ?? null,
+    source_episode_id: row.sourceEpisodeId ?? null,
+    source_storyboard_id: row.sourceStoryboardId ?? null,
     source_drama_title: row.sourceDramaTitle ?? null,
     source_drama_snapshot_at: row.sourceDramaSnapshotAt ?? null,
+    production_context: safeJsonParse(row.productionContextJson, {}),
     is_pinned: row.isPinned,
     created_at: row.createdAt?.toISOString() ?? '',
     updated_at: row.updatedAt?.toISOString() ?? '',

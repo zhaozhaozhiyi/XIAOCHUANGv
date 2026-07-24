@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 
 import { QUICK_CREATE_PENDING_KEY } from '@/components/create/quick-create-pending'
+import { preloadQuickCreateRouteModule } from '@/components/create/quick-create-route-warmup'
 import type { ComposerSubmitPayload, ModelSelectOption } from '@/components/create/input-composer-types'
+import { prefetchNavData } from '@/lib/nav-prefetch'
 
 const HOME_COMPOSER_FALLBACK = (
   <div className="h-24 animate-pulse rounded-[var(--radius-lg)] bg-bg-2" />
@@ -34,9 +36,15 @@ export function HomeInputComposer({
   const [submitting, setSubmitting] = useState(false)
   const [composerReady, setComposerReady] = useState(false)
 
-  useEffect(() => {
+  const warmCreateVideoRoute = useCallback(() => {
     router.prefetch('/create/video')
+    prefetchNavData('/create/video')
+    void preloadQuickCreateRouteModule()
   }, [router])
+
+  useEffect(() => {
+    warmCreateVideoRoute()
+  }, [warmCreateVideoRoute])
 
   useEffect(() => {
     if (composerReady) return
@@ -75,9 +83,11 @@ export function HomeInputComposer({
   }, [composerReady])
 
   const primeComposer = useCallback(() => {
-    if (composerReady) return
-    void loadInputComposer()
-  }, [composerReady])
+    if (!composerReady) {
+      void loadInputComposer()
+    }
+    warmCreateVideoRoute()
+  }, [composerReady, warmCreateVideoRoute])
 
   function handleComposerSubmit(payload: ComposerSubmitPayload) {
     // 不在首页等待创建接口返回，立刻把参数交接给“快速成片”对话页，
@@ -86,6 +96,7 @@ export function HomeInputComposer({
       sessionStorage.setItem(QUICK_CREATE_PENDING_KEY, JSON.stringify(payload))
     } catch {}
     setSubmitting(true)
+    warmCreateVideoRoute()
     router.push('/create/video')
     return true
   }

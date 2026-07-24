@@ -1,9 +1,10 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common'
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
 import { canvases, canvasNodes, canvasEdges, canvasViewports } from '../../db/schema'
 import { canvasAdvisoryLockSql } from './canvas-lock.util'
+import { VALID_CANVAS_NODE_TYPE_SET } from './canvas-node-types'
 
 function now() {
   return new Date()
@@ -37,12 +38,6 @@ interface SaveEdgeInput {
   label?: string
 }
 
-const VALID_NODE_TYPES = [
-  'storyboard', 'image', 'character', 'scene', 'note',
-  'audio', 'video-asset',
-  'text-to-image', 'image-to-video', 'text-to-speech', 'concat', 'export',
-]
-
 @Injectable()
 export class CanvasSaveService {
   constructor(
@@ -64,7 +59,7 @@ export class CanvasSaveService {
     for (const node of nodes) {
       if (!node.id) throw new BadRequestException('node.id is required')
       if (!node.type) throw new BadRequestException('node.type is required')
-      if (!VALID_NODE_TYPES.includes(node.type)) {
+      if (!VALID_CANVAS_NODE_TYPE_SET.has(node.type)) {
         throw new BadRequestException(`unknown node type: ${node.type}`)
       }
     }
@@ -74,10 +69,12 @@ export class CanvasSaveService {
     }
 
     const nodesToSave = this.applyStoryboardPortContext(nodes, edges)
+    const payloadNodeIds = new Set(nodesToSave.map((node) => node.id))
+    const edgesToSave = edges.filter((edge) => payloadNodeIds.has(edge.source) && payloadNodeIds.has(edge.target))
 
     await this.db.db.transaction(async (tx) => {
-      // 0. canvas-level advisory lock：与 canvas-result-backfill 的 appendResult 用同一把锁，
-      //    保证全量删插期间不会有 backfill 往即将被删除/覆盖的节点写 results（丢失竞态）。
+      // 0. canvas-level advisory lock：与 appendResult 用同一把锁，
+      //    保证全量删插期间不会有 backfill 往即将被删除/覆盖的节点写 results。
       await tx.execute(canvasAdvisoryLockSql(canvasId))
 
       // 1. 视口
@@ -87,9 +84,33 @@ export class CanvasSaveService {
           .where(eq(canvasViewports.canvasId, canvasId))
       }
 
-      // 2. 删除非隐藏节点 + 旧连线
-      await tx.delete(canvasNodes).where(eq(canvasNodes.canvasId, canvasId))
-      await tx.delete(canvasEdges).where(eq(canvasEdges.canvasId, canvasId))
+      // 2. 保存是前端可见图的全量覆盖；隐藏执行节点/边由后端生成链路持有，不能被草稿保存误删。
+      const existingNodes = await tx
+        .select({ id: canvasNodes.id, isHidden: canvasNodes.isHidden })
+        .from(canvasNodes)
+        .where(eq(canvasNodes.canvasId, canvasId))
+      const hiddenNodeIds = new Set(existingNodes.filter((node) => node.isHidden).map((node) => node.id))
+
+      await tx.delete(canvasNodes).where(and(eq(canvasNodes.canvasId, canvasId), eq(canvasNodes.isHidden, false)))
+
+      if (hiddenNodeIds.size > 0) {
+        const existingEdges = await tx
+          .select({
+            id: canvasEdges.id,
+            sourceNodeId: canvasEdges.sourceNodeId,
+            targetNodeId: canvasEdges.targetNodeId,
+          })
+          .from(canvasEdges)
+          .where(eq(canvasEdges.canvasId, canvasId))
+        const replaceableEdgeIds = existingEdges
+          .filter((edge) => !hiddenNodeIds.has(edge.sourceNodeId) && !hiddenNodeIds.has(edge.targetNodeId))
+          .map((edge) => edge.id)
+        if (replaceableEdgeIds.length > 0) {
+          await tx.delete(canvasEdges).where(and(eq(canvasEdges.canvasId, canvasId), inArray(canvasEdges.id, replaceableEdgeIds)))
+        }
+      } else {
+        await tx.delete(canvasEdges).where(eq(canvasEdges.canvasId, canvasId))
+      }
 
       // 3. 插入节点（React Flow format → DB format）
       if (nodesToSave.length > 0) {
@@ -113,9 +134,9 @@ export class CanvasSaveService {
       }
 
       // 4. 插入连线（React Flow format → DB format）
-      if (edges.length > 0) {
+      if (edgesToSave.length > 0) {
         await tx.insert(canvasEdges).values(
-          edges.map((e) => ({
+          edgesToSave.map((e) => ({
             id: e.id,
             canvasId,
             sourceNodeId: e.source,

@@ -9,6 +9,7 @@ import path from 'node:path'
 
 import { Worker } from 'bullmq'
 import { and, eq, inArray } from 'drizzle-orm'
+import { prepareAiConfigSecretForStorage } from './modules/ai-configs/ai-configs.crypto'
 
 type SmokeOptions = {
   requireObjectStorage: boolean
@@ -311,7 +312,7 @@ async function main() {
 
     const storageDriver = configService.get<'local' | 's3'>('STORAGE_DRIVER', 'local')
     const publicBaseUrl = configService.get<string>('STORAGE_PUBLIC_BASE_URL') || null
-    const redisUrl = configService.get<string>('REDIS_URL', 'redis://127.0.0.1:6379')
+    const redisUrl = configService.getOrThrow<string>('REDIS_URL')
     const connection = queueShared.createTaskQueueConnection(redisUrl, 'worker')
     const workerId = `smoke-ai-worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
 
@@ -338,7 +339,7 @@ async function main() {
           provider: 'openai',
           name: 'Queue Smoke Image Stub',
           baseUrl: stubBaseUrl,
-          apiKey: 'stub-image-key',
+          apiKey: prepareAiConfigSecretForStorage('stub-image-key'),
           model: JSON.stringify(['gpt-image-1']),
           priority: 1_000_000,
           isDefault: false,
@@ -350,7 +351,7 @@ async function main() {
           provider: 'minimax',
           name: 'Queue Smoke Video Stub',
           baseUrl: stubBaseUrl,
-          apiKey: 'stub-video-key',
+          apiKey: prepareAiConfigSecretForStorage('stub-video-key'),
           model: JSON.stringify(['stub-video-model']),
           priority: 1_000_000,
           isDefault: false,
@@ -362,7 +363,7 @@ async function main() {
           provider: 'minimax',
           name: 'Queue Smoke Audio Stub',
           baseUrl: stubBaseUrl,
-          apiKey: 'stub-audio-key',
+          apiKey: prepareAiConfigSecretForStorage('stub-audio-key'),
           model: JSON.stringify(['stub-audio-model']),
           priority: 1_000_000,
           isDefault: false,

@@ -3,9 +3,9 @@ import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 
 import { normalizeAuthSession, type RawAuthSessionPayload } from '@/lib/auth-session'
+import { isLocalAuthBypassEnabled, readDevAuthPhone } from '@/lib/dev-auth'
 import type { AuthSession, CurrentUser } from '@/types/auth'
 
-const DEFAULT_BACKEND_BASE_URL = 'http://127.0.0.1:3010'
 const SESSION_COOKIE_NAME = 'xiaochuang_session'
 
 type BackendPayload = {
@@ -21,7 +21,9 @@ function isBackendEnvelope(payload: BackendPayload): payload is BackendPayload &
 }
 
 export function getBackendBaseUrl() {
-  return process.env.BACKEND_BASE_URL || DEFAULT_BACKEND_BASE_URL
+  const baseUrl = String(process.env.BACKEND_BASE_URL || '').trim()
+  if (baseUrl) return baseUrl
+  throw new Error('BACKEND_BASE_URL is required for apps/web server-side backend requests')
 }
 
 function joinUrl(base: string, path: string) {
@@ -153,7 +155,7 @@ export async function hasSessionCookie() {
 }
 
 /**
- * 开发期短路：当 NODE_ENV !== 'production' 且 DEV_AUTH_BYPASS=1 时，
+ * 开发期短路：当 NODE_ENV !== 'production' 且 DEV_AUTH_BYPASS=1 / E2E_AUTH_MOCK=1 时，
  * 跳过 backend /api/v1/auth/session 调用，返回一个 mock user。
  *
  * 动机：画布 PR1 验收只跑前端 + MSW，无需 backend；但 (protected) layout
@@ -162,8 +164,7 @@ export async function hasSessionCookie() {
  * 生产环境（NODE_ENV=production）无论 env 怎么设都不生效，避免误开。
  */
 function getDevBypassUser(): CurrentUser | null {
-  if (process.env.NODE_ENV === 'production') return null
-  if (process.env.DEV_AUTH_BYPASS !== '1') return null
+  if (!isLocalAuthBypassEnabled(process.env)) return null
   return {
     id: 1,
     admin_user_id: null,
@@ -171,7 +172,7 @@ function getDevBypassUser(): CurrentUser | null {
     role: 'user',
     display_name: process.env.DEV_AUTH_DISPLAY_NAME || '本地开发用户',
     email: null,
-    phone: process.env.DEV_AUTH_PHONE || '13800138000',
+    phone: readDevAuthPhone(process.env) || null,
     status: 'active',
   }
 }

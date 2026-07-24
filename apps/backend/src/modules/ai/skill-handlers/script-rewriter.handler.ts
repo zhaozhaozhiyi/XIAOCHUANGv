@@ -15,6 +15,7 @@ import {
   persistAiRun,
   sendSseReply,
   startAiRunTask,
+  withTextProviderRequestOptions,
 } from './_shared'
 import type { SkillHandler } from './types'
 
@@ -134,7 +135,7 @@ async function runStream(args: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.apiKey}`,
         },
-        body: JSON.stringify({
+        body: JSON.stringify(withTextProviderRequestOptions(config, {
           model: config.model,
           temperature: 0.7,
           stream: true,
@@ -142,7 +143,7 @@ async function runStream(args: {
             { role: 'system', content: ctx.skillPrompt },
             { role: 'user', content: userMessage },
           ],
-        }),
+        })),
       })
 
       if (!response.ok) {
@@ -245,14 +246,14 @@ async function runNonStream(args: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify({
+    body: JSON.stringify(withTextProviderRequestOptions(config, {
       model: config.model,
       temperature: 0.7,
       messages: [
         { role: 'system', content: ctx.skillPrompt },
         { role: 'user', content: userMessage },
       ],
-    }),
+    })),
   })
   if (!response.ok) {
     const message = await response.text().catch(() => '')

@@ -14,6 +14,7 @@ import { useInputComposerModeState } from '@/components/create/use-input-compose
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { audioAPI } from '@/lib/api'
+import { cn } from '@/lib/cn'
 
 const COMPOSER_CHIP_BTN =
   'inline-flex items-center gap-1.5 rounded-[8px] border border-border/45 bg-bg-0 px-2.5 py-1.5 text-text-1 transition-colors hover:bg-bg-hover'
@@ -38,6 +39,7 @@ interface InputComposerProps {
   defaultPrompt?: string
   prefill?: ComposerPrefill | null
   initialImageModelOptions?: ModelSelectOption[]
+  autoCompact?: boolean
   onSubmit: (payload: ComposerSubmitPayload) => Promise<boolean | void> | boolean | void
 }
 
@@ -90,6 +92,7 @@ export function InputComposer({
   defaultPrompt = '',
   prefill = null,
   initialImageModelOptions,
+  autoCompact = false,
   onSubmit,
 }: InputComposerProps) {
   const [pages, setPages] = useState([defaultPrompt, '', ''])
@@ -117,6 +120,8 @@ export function InputComposer({
   const [mentionQuery, setMentionQuery] = useState('')
   const [mentionFromIndex, setMentionFromIndex] = useState<number | null>(null)
   const [activeMentionIndex, setActiveMentionIndex] = useState(0)
+  const [isComposerHovered, setIsComposerHovered] = useState(false)
+  const [isComposerFocusWithin, setIsComposerFocusWithin] = useState(false)
   const [mentionAnchor, setMentionAnchor] = useState({ left: 12, top: 26 })
   const mentionMenuRef = useRef<HTMLDivElement | null>(null)
   const mentionUpdateRafRef = useRef<number | null>(null)
@@ -658,12 +663,41 @@ export function InputComposer({
   }
 
   const canSubmit = Boolean(prompt.trim()) && !submitting
+  const canAutoCompact = autoCompact && !isCoarsePointer
+  const composerExpanded = !canAutoCompact || isComposerHovered || isComposerFocusWithin
+  const composerCompact = canAutoCompact && !composerExpanded
 
   return (
     <>
       <section className="mb-6 flex flex-col items-center gap-4">
-        <div className="w-full max-w-[1160px] rounded-[20px] border border-border/45 bg-bg-0 p-3 shadow-[0_4px_14px_rgba(40,28,18,0.028),0_1px_2px_rgba(40,28,18,0.018)] sm:p-3.5">
-          <div className="mb-3 min-h-[112px] rounded-[14px] bg-bg-input px-3 py-2.5 sm:min-h-[128px] sm:px-3.5 sm:py-3">
+        <div
+          className={cn(
+            'w-full max-w-[1160px] rounded-[20px] border border-border/45 bg-bg-0 shadow-[0_4px_14px_rgba(40,28,18,0.028),0_1px_2px_rgba(40,28,18,0.018)] transition-[padding,box-shadow] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]',
+            composerCompact ? 'p-2.5 shadow-[0_3px_10px_rgba(40,28,18,0.02),0_1px_2px_rgba(40,28,18,0.016)] sm:p-3' : 'p-3 sm:p-3.5',
+          )}
+          onPointerEnter={() => {
+            if (!canAutoCompact) return
+            setIsComposerHovered(true)
+          }}
+          onPointerLeave={() => {
+            setIsComposerHovered(false)
+          }}
+          onFocusCapture={() => {
+            if (!canAutoCompact) return
+            setIsComposerFocusWithin(true)
+          }}
+          onBlurCapture={(event) => {
+            const nextTarget = event.relatedTarget as Node | null
+            if (event.currentTarget.contains(nextTarget)) return
+            setIsComposerFocusWithin(false)
+          }}
+        >
+          <div
+            className={cn(
+              'rounded-[14px] bg-bg-input transition-[min-height,padding,margin] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]',
+              composerCompact ? 'mb-2 min-h-[80px] px-3 py-2 sm:min-h-[84px] sm:px-3 sm:py-2.5' : 'mb-3 min-h-[112px] px-3 py-2.5 sm:min-h-[128px] sm:px-3.5 sm:py-3',
+            )}
+          >
             <div className="relative flex items-start">
               <InputComposerAssetPanel
                 toolbarMode={toolbarMode}
@@ -758,7 +792,10 @@ export function InputComposer({
                     }
                   }}
                   placeholder={promptPlaceholder}
-                  className="relative z-0 h-[92px] min-h-[92px] resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-7 text-transparent shadow-none placeholder:text-text-3 caret-text-2 focus-visible:ring-0 sm:h-[112px] sm:min-h-[112px]"
+                  className={cn(
+                    'relative z-0 resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-7 text-transparent shadow-none placeholder:text-text-3 caret-text-2 focus-visible:ring-0',
+                    composerCompact ? 'h-[60px] min-h-[60px] sm:h-[64px] sm:min-h-[64px]' : 'h-[92px] min-h-[92px] sm:h-[112px] sm:min-h-[112px]',
+                  )}
                   style={{ paddingLeft: `${promptLeftPadding}px` }}
                 />
               </div>
@@ -781,7 +818,7 @@ export function InputComposer({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className={cn('flex flex-wrap items-center justify-between transition-[gap] duration-200', composerCompact ? 'gap-2.5' : 'gap-3')}>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

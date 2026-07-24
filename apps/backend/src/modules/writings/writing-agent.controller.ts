@@ -7,7 +7,7 @@ import type { CurrentUser as CurrentUserType } from '../auth/auth.types'
 import { CurrentUser } from '../auth/current-user.decorator'
 import { SessionAuthGuard } from '../auth/session-auth.guard'
 import { sendSseReply } from '../ai/skill-handlers/_shared'
-import { getTextConfig, getTextProviderBaseUrl } from '../agents/agents.ai'
+import { getTextConfig, getTextProviderBaseUrl, withTextProviderRequestOptions } from '../agents/agents.ai'
 
 function extractStreamingText(payload: any) {
   const choice = payload?.choices?.[0]
@@ -71,7 +71,7 @@ export class WritingAgentController {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${config.apiKey}`,
             },
-            body: JSON.stringify({
+            body: JSON.stringify(withTextProviderRequestOptions(config, {
               model: config.model,
               temperature: 0.7,
               stream: true,
@@ -85,7 +85,7 @@ export class WritingAgentController {
                   content: message,
                 },
               ],
-            }),
+            })),
           })
 
           if (!response.ok) {
@@ -157,7 +157,7 @@ export class WritingAgentController {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${config.apiKey}`,
       },
-      body: JSON.stringify({
+      body: JSON.stringify(withTextProviderRequestOptions(config, {
         model: config.model,
         temperature: 0.7,
         messages: [
@@ -170,7 +170,7 @@ export class WritingAgentController {
             content: message,
           },
         ],
-      }),
+      })),
     })
 
     if (!response.ok) {

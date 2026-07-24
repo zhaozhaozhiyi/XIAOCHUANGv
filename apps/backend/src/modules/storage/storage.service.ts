@@ -1,5 +1,7 @@
 import crypto from 'node:crypto'
+import { lookup } from 'node:dns/promises'
 import fs from 'node:fs'
+import { isIP } from 'node:net'
 import path from 'node:path'
 
 import { Inject, Injectable } from '@nestjs/common'
@@ -10,6 +12,7 @@ import { toPublicMediaUrl } from '../../common/media-url'
 import type { StorageDownloadResult, StorageSaveBufferParams, StorageWriteResult } from './storage.types'
 
 const LOCAL_STORAGE_PREFIX = 'static/'
+const MAX_REMOTE_REDIRECTS = 3
 
 function ensureLeadingDot(extension: string | null | undefined) {
   if (!extension) return ''
@@ -48,6 +51,50 @@ function sanitizeFileName(rawName: string | null | undefined) {
   return normalized.replace(/[^a-zA-Z0-9._() -]/g, '_')
 }
 
+function normalizeHostname(hostname: string) {
+  return hostname.trim().toLowerCase().replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '')
+}
+
+function isLocalhostName(hostname: string) {
+  const normalized = normalizeHostname(hostname)
+  return normalized === 'localhost' || normalized.endsWith('.localhost')
+}
+
+function isPrivateIpAddress(address: string) {
+  const normalized = normalizeHostname(address)
+  const ipVersion = isIP(normalized)
+  if (ipVersion === 4) {
+    const parts = normalized.split('.').map((part) => Number(part))
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true
+    const [a, b] = parts
+    return a === 0
+      || a === 10
+      || a === 127
+      || a === 169 && b === 254
+      || a === 172 && b >= 16 && b <= 31
+      || a === 192 && b === 168
+      || a === 100 && b >= 64 && b <= 127
+      || a === 198 && (b === 18 || b === 19)
+      || a >= 224
+  }
+  if (ipVersion === 6) {
+    if (normalized === '::' || normalized === '::1') return true
+    if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true
+    if (normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) return true
+    if (normalized.startsWith('ff')) return true
+    const mappedIpv4 = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1]
+    if (mappedIpv4) return isPrivateIpAddress(mappedIpv4)
+  }
+  return ipVersion === 0
+}
+
+function parseAllowlist(value: string | null | undefined) {
+  return String(value || '')
+    .split(',')
+    .map((item) => normalizeHostname(item))
+    .filter(Boolean)
+}
+
 @Injectable()
 export class StorageService {
   private readonly driver: 'local' | 's3'
@@ -60,6 +107,7 @@ export class StorageService {
   private readonly s3SecretAccessKey: string | null
   private readonly s3ForcePathStyle: boolean
   private readonly objectAcl: string | null
+  private readonly remoteUrlAllowlist: string[]
 
   constructor(@Inject(ConfigService) private readonly configService: ConfigService) {
     this.driver = this.configService.get<'local' | 's3'>('STORAGE_DRIVER', 'local')
@@ -72,6 +120,7 @@ export class StorageService {
     this.s3SecretAccessKey = String(this.configService.get<string>('S3_SECRET_ACCESS_KEY') || '').trim() || null
     this.s3ForcePathStyle = this.configService.get<boolean>('STORAGE_S3_FORCE_PATH_STYLE', true)
     this.objectAcl = String(this.configService.get<string>('STORAGE_OBJECT_ACL') || '').trim() || null
+    this.remoteUrlAllowlist = parseAllowlist(this.configService.get<string>('STORAGE_REMOTE_URL_ALLOWLIST'))
   }
 
   getAbsolutePath(relativePath: string) {
@@ -132,7 +181,7 @@ export class StorageService {
   }
 
   async downloadToStorage(url: string, subDir: string, options?: { headers?: Record<string, string> }) {
-    const response = await fetch(url, {
+    const response = await this.fetchRemoteUrl(url, {
       headers: options?.headers,
       signal: AbortSignal.timeout(120_000),
     })
@@ -183,7 +232,7 @@ export class StorageService {
         return cachedAbsolute
       }
 
-      const response = await fetch(raw, {
+      const response = await this.fetchRemoteUrl(raw, {
         signal: AbortSignal.timeout(120_000),
       })
       if (!response.ok) {
@@ -237,6 +286,62 @@ export class StorageService {
     const ext = getExtFromUrl(url) || '.bin'
     const hash = crypto.createHash('sha256').update(url).digest('hex')
     return `remote-cache/${hash}${ext.startsWith('.') ? ext : `.${ext}`}`
+  }
+
+  private isAllowlistedRemoteHost(hostname: string) {
+    if (!this.remoteUrlAllowlist.length) return true
+    const normalized = normalizeHostname(hostname)
+    return this.remoteUrlAllowlist.some((entry) => normalized === entry || normalized.endsWith(`.${entry}`))
+  }
+
+  private async assertRemoteUrlAllowed(rawUrl: string) {
+    let parsed: URL
+    try {
+      parsed = new URL(rawUrl)
+    } catch {
+      throw new Error('Remote URL is invalid')
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Remote URL protocol is not allowed')
+    }
+
+    const hostname = normalizeHostname(parsed.hostname)
+    if (!hostname || isLocalhostName(hostname)) {
+      throw new Error('Remote URL host is not allowed')
+    }
+    if (!this.isAllowlistedRemoteHost(hostname)) {
+      throw new Error('Remote URL host is not allowlisted')
+    }
+    if (isIP(hostname) && isPrivateIpAddress(hostname)) {
+      throw new Error('Remote URL resolves to a private address')
+    }
+
+    const addresses = await lookup(hostname, { all: true, verbatim: true })
+    if (!addresses.length) {
+      throw new Error('Remote URL host could not be resolved')
+    }
+    if (addresses.some((entry) => isPrivateIpAddress(entry.address))) {
+      throw new Error('Remote URL resolves to a private address')
+    }
+  }
+
+  private async fetchRemoteUrl(url: string, init: RequestInit = {}) {
+    let currentUrl = url
+    for (let redirects = 0; redirects <= MAX_REMOTE_REDIRECTS; redirects += 1) {
+      await this.assertRemoteUrlAllowed(currentUrl)
+      const response = await fetch(currentUrl, {
+        ...init,
+        redirect: 'manual',
+      })
+      if (response.status < 300 || response.status >= 400) return response
+
+      const location = response.headers.get('location')
+      if (!location) return response
+      currentUrl = new URL(location, currentUrl).toString()
+    }
+
+    throw new Error('Remote URL redirected too many times')
   }
 
   private async putObjectToS3(key: string, buffer: Buffer, mimeType: string | null | undefined) {

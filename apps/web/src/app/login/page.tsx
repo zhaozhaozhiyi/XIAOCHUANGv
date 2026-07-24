@@ -1,37 +1,10 @@
 import Image from 'next/image'
 import Link from 'next/link'
 
+import { getDevAuthPublicConfig } from '@/lib/dev-auth'
 import { LoginForm } from './login-form'
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>
-
-function isLocalAuthMockEnabled(): boolean {
-  if (process.env.NODE_ENV === 'production') return false
-  if (process.env.E2E_AUTH_MOCK === '1') return true
-  return process.env.DEV_AUTH_BYPASS !== '0'
-}
-
-function getDevAuthCode(): string {
-  const code = process.env.DEV_AUTH_CODE?.trim()
-  return /^\d{6}$/.test(code || '') ? code! : '123456'
-}
-
-function getDevAuthPhone(): string {
-  const phone = process.env.DEV_AUTH_PHONE?.trim()
-  return /^1\d{10}$/.test(phone || '') ? phone! : '13800138000'
-}
-
-function getDevAuthPublicConfig() {
-  const enabled = isLocalAuthMockEnabled()
-  return {
-    enabled,
-    phone: getDevAuthPhone(),
-    code: getDevAuthCode(),
-    hint: enabled
-      ? `本地开发模式：任意大陆手机号可使用验证码 ${getDevAuthCode()} 登录（无需短信）`
-      : '',
-  }
-}
 
 function getErrorMessage(error: string | null) {
   switch (error) {

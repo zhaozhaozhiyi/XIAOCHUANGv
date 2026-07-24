@@ -38,43 +38,37 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
-      <div className="w-full max-w-md p-8 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">XIAOCHUANG</h1>
-          <p className="text-slate-500 mt-2">管理后台</p>
+    <div className="admin-auth-shell">
+      <div className="admin-auth-card">
+        <div className="admin-auth-brand">
+          <h1>XIAOCHUANG</h1>
+          <p>登录管理后台，统一处理用户、内容与订阅运营。</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="admin-auth-form">
           {error && (
-            <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
-              {error}
-            </div>
+            <div className="admin-error-banner">{error}</div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-              邮箱
-            </label>
+          <div className="admin-field">
+            <label className="admin-label">邮箱</label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-slate-800 dark:text-white"
+              className="admin-input"
               placeholder="admin@example.com"
               required
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-              密码
-            </label>
+          <div className="admin-field">
+            <label className="admin-label">密码</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-slate-800 dark:text-white"
+              className="admin-input"
               placeholder="••••••••"
               required
             />
@@ -83,7 +77,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="admin-button admin-button--primary w-full"
           >
             {loading ? "登录中..." : "登录"}
           </button>

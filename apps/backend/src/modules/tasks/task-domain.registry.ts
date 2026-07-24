@@ -7,8 +7,11 @@ import { DramaAdaptationBriefsTaskHandler } from './domain-handlers/drama-adapta
 import { DramaEpisodeBlueprintsTaskHandler } from './domain-handlers/drama-episode-blueprints-task.handler'
 import { DramaPilotScriptsTaskHandler } from './domain-handlers/drama-pilot-scripts-task.handler'
 import { DramaSourceAnalysisTaskHandler } from './domain-handlers/drama-source-analysis-task.handler'
+import { DramaStoryGraphBuildTaskHandler } from './domain-handlers/drama-story-graph-build-task.handler'
+import { EpisodeDialogueTakeTaskHandler } from './domain-handlers/episode-dialogue-take-task.handler'
 import { ImageGenerationTaskHandler } from './domain-handlers/image-generation-task.handler'
 import { StoryboardComposeTaskHandler } from './domain-handlers/storyboard-compose-task.handler'
+import { StoryboardBreakdownTaskHandler } from './domain-handlers/storyboard-breakdown-task.handler'
 import { StoryboardTtsTaskHandler } from './domain-handlers/storyboard-tts-task.handler'
 import type { TaskDomainHandler, TaskRecord } from './domain-handlers/task-domain-handler'
 import { VideoGenerationTaskHandler } from './domain-handlers/video-generation-task.handler'
@@ -24,23 +27,29 @@ export class TaskDomainRegistry {
     @Inject(ImageGenerationTaskHandler) imageGenerationHandler: ImageGenerationTaskHandler,
     @Inject(VideoGenerationTaskHandler) videoGenerationHandler: VideoGenerationTaskHandler,
     @Inject(StoryboardTtsTaskHandler) storyboardTtsHandler: StoryboardTtsTaskHandler,
+    @Inject(EpisodeDialogueTakeTaskHandler) episodeDialogueTakeHandler: EpisodeDialogueTakeTaskHandler,
     @Inject(StoryboardComposeTaskHandler) storyboardComposeHandler: StoryboardComposeTaskHandler,
+    @Inject(StoryboardBreakdownTaskHandler) storyboardBreakdownHandler: StoryboardBreakdownTaskHandler,
     @Inject(VideoMergeTaskHandler) videoMergeHandler: VideoMergeTaskHandler,
     @Inject(DramaSourceAnalysisTaskHandler) dramaSourceAnalysisHandler: DramaSourceAnalysisTaskHandler,
     @Inject(DramaAdaptationBriefsTaskHandler) dramaAdaptationBriefsHandler: DramaAdaptationBriefsTaskHandler,
     @Inject(DramaEpisodeBlueprintsTaskHandler) dramaEpisodeBlueprintsHandler: DramaEpisodeBlueprintsTaskHandler,
     @Inject(DramaPilotScriptsTaskHandler) dramaPilotScriptsHandler: DramaPilotScriptsTaskHandler,
+    @Inject(DramaStoryGraphBuildTaskHandler) dramaStoryGraphBuildHandler: DramaStoryGraphBuildTaskHandler,
   ) {
     const handlers = [
       imageGenerationHandler,
       videoGenerationHandler,
       storyboardTtsHandler,
+      episodeDialogueTakeHandler,
       storyboardComposeHandler,
+      storyboardBreakdownHandler,
       videoMergeHandler,
       dramaSourceAnalysisHandler,
       dramaAdaptationBriefsHandler,
       dramaEpisodeBlueprintsHandler,
       dramaPilotScriptsHandler,
+      dramaStoryGraphBuildHandler,
     ]
     this.handlers = new Map(handlers.map((handler) => [handler.domainTable, handler]))
   }

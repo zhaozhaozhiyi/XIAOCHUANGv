@@ -4,6 +4,7 @@ import 'reflect-metadata'
 import 'dotenv/config'
 
 import { and, eq } from 'drizzle-orm'
+import { prepareAiConfigSecretForStorage } from './modules/ai-configs/ai-configs.crypto'
 
 function getSetupUserId() {
   const id = Number(process.env.AI_SETUP_USER_ID || '1')
@@ -127,7 +128,7 @@ async function main() {
           name: preset.name,
           description: preset.description,
           baseUrl,
-          apiKey,
+          apiKey: prepareAiConfigSecretForStorage(apiKey),
           model: JSON.stringify([String(preset.model).trim()]),
           priority: preset.priority,
           isDefault: false,

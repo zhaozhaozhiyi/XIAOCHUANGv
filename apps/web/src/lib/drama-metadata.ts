@@ -42,10 +42,19 @@ export type NovelSource = {
 export type DramaAiFirstMetadata = {
   source_health: SourceHealth | null
   source_analysis: SourceAnalysis | null
+  adaptation_config: AdaptationConfig | null
   adaptation_briefs: AdaptationBrief[]
   selected_brief_id: string
   ai_first_stage: DramaAiFirstStage | null
   ai_first_updated_at: string
+}
+
+export type AdaptationConfig = {
+  target_episode_count: number
+  episode_duration: string
+  style_direction: string
+  visual_style: string
+  aspect_rhythm: string
 }
 
 export type AdaptationPlan = {
@@ -173,6 +182,9 @@ function normalizeAiFirstStage(value: unknown): DramaAiFirstStage | null {
     stage === 'blueprint_generating' ||
     stage === 'blueprint_ready' ||
     stage === 'script_generating' ||
+    stage === 'script_ready' ||
+    stage === 'graph_building' ||
+    stage === 'graph_ready' ||
     stage === 'in_production' ||
     stage === 'deliverable_ready'
   ) {
@@ -260,6 +272,8 @@ function normalizeSourceAnalysis(value: unknown): SourceAnalysis | null {
     protagonist: toStringValue(raw.protagonist),
     antagonist: toStringValue(raw.antagonist),
     protagonist_goal: toStringValue(raw.protagonist_goal),
+    target_episode_count: toOptionalNumber(raw.target_episode_count),
+    episode_duration: toStringValue(raw.episode_duration),
     relationship_map: parseMaybeJsonArray(raw.relationship_map).map((item) => toRecord(item) ?? {}),
     world_rules: toStringArray(raw.world_rules),
     emotional_curve: parseMaybeJsonArray(raw.emotional_curve).map((item) => toRecord(item) ?? {}),
@@ -302,6 +316,27 @@ function normalizeAdaptationBriefs(value: unknown): AdaptationBrief[] {
       generated_at: toStringValue(brief.generated_at),
     }
   }).filter((item) => item.id && (item.claim || item.name))
+}
+
+function normalizeAdaptationConfig(value: unknown): AdaptationConfig | null {
+  const raw = parseMaybeJsonObject(value)
+  if (!raw) return null
+
+  const targetEpisodeCount = toOptionalNumber(raw.target_episode_count) ?? 0
+  const episodeDuration = toStringValue(raw.episode_duration)
+  const styleDirection = toStringValue(raw.style_direction)
+  const visualStyle = toStringValue(raw.visual_style)
+  const aspectRhythm = toStringValue(raw.aspect_rhythm)
+
+  if (!targetEpisodeCount && !episodeDuration && !styleDirection && !visualStyle && !aspectRhythm) return null
+
+  return {
+    target_episode_count: targetEpisodeCount,
+    episode_duration: episodeDuration,
+    style_direction: styleDirection,
+    visual_style: visualStyle,
+    aspect_rhythm: aspectRhythm,
+  }
 }
 
 export function normalizeEpisodeBlueprintPayload(value: unknown): EpisodeBlueprintPayload | null {
@@ -467,6 +502,7 @@ export function getDramaAiFirstMetadata(
   return {
     source_health: normalizeSourceHealth(carrier.source_health ?? aiFirst.source_health ?? metadata.source_health),
     source_analysis: normalizeSourceAnalysis(carrier.source_analysis ?? aiFirst.source_analysis ?? metadata.source_analysis),
+    adaptation_config: normalizeAdaptationConfig(aiFirst.adaptation_config ?? metadata.adaptation_config),
     adaptation_briefs: normalizeAdaptationBriefs(carrier.adaptation_briefs ?? aiFirst.adaptation_briefs ?? metadata.adaptation_briefs),
     selected_brief_id: toStringValue(carrier.selected_brief_id ?? aiFirst.selected_brief_id ?? metadata.selected_brief_id),
     ai_first_stage: normalizeAiFirstStage(carrier.ai_first_stage ?? aiFirst.ai_first_stage ?? metadata.ai_first_stage),

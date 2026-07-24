@@ -68,29 +68,141 @@
     {
       "idx": 9,
       "version": "7",
+      "when": 1783251180000,
+      "tag": "0009_writing_cover_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
       "when": 1783302180000,
       "tag": "0010_drama_ai_first_episode_fields",
       "breakpoints": true
     },
     {
-      "idx": 10,
+      "idx": 11,
       "version": "7",
       "when": 1783303020000,
       "tag": "0011_drama_ai_first_sources",
       "breakpoints": true
     },
     {
-      "idx": 11,
+      "idx": 12,
       "version": "7",
       "when": 1783314120000,
       "tag": "0012_episode_script_run_trace",
       "breakpoints": true
     },
     {
-      "idx": 12,
+      "idx": 13,
       "version": "7",
-      "when": 1783425600000,
-      "tag": "0015_canvas_runs_active_unique",
+      "when": 1783316520000,
+      "tag": "0013_auth_security_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1783339200000,
+      "tag": "0014_task_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1783342800000,
+      "tag": "0015_drama_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1783344600000,
+      "tag": "0016_drama_story_graph",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783346400000,
+      "tag": "0017_drama_story_graph_search",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783759501000,
+      "tag": "0018_agent_executions",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783762200000,
+      "tag": "0019_storyboard_sets",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1783866600000,
+      "tag": "0020_storyboard_continuity_contracts",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783867500000,
+      "tag": "0021_episode_media_production_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1783870200000,
+      "tag": "0022_episode_edit_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1783871100000,
+      "tag": "0023_episode_dialogue_takes",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783872000000,
+      "tag": "0024_episode_dialogue_take_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1783872900000,
+      "tag": "0025_episode_dialogue_cue_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1783873800000,
+      "tag": "0026_episode_media_run_item_first_frames",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1783929600000,
+      "tag": "0027_drama_review_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1783933200000,
+      "tag": "0028_canvas_runs_active_unique",
       "breakpoints": true
     }
   ]

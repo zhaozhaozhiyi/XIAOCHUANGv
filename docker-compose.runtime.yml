@@ -1,8 +1,9 @@
 x-backend-runtime-env: &backend-runtime-env
-  NODE_ENV: production
+  NODE_ENV: ${BACKEND_NODE_ENV:-production}
   DATABASE_URL: postgresql://zhaoxiaogang:xiaochuang@postgres:5432/xiaochuang?schema=public
   REDIS_URL: redis://redis:6379
   TASK_QUEUE_NAME: ${TASK_QUEUE_NAME:-backend-tasks}
+  AI_CONFIG_ENCRYPTION_KEY: ${AI_CONFIG_ENCRYPTION_KEY:-xiaochuang-runtime-local-key}
   STORAGE_DRIVER: s3
   STORAGE_PUBLIC_BASE_URL: ${STORAGE_PUBLIC_BASE_URL:-http://127.0.0.1:${MINIO_API_PORT:-9000}/xiaochuang-media}
   STORAGE_S3_FORCE_PATH_STYLE: "true"
@@ -11,6 +12,59 @@ x-backend-runtime-env: &backend-runtime-env
   S3_BUCKET: ${S3_BUCKET:-xiaochuang-media}
   S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin123}
+  AGENT_RUNTIME_PROVIDER: ${AGENT_RUNTIME_PROVIDER:-disabled}
+  AGENT_RUNTIME_HERMES_API_KEY: ${AGENT_RUNTIME_HERMES_API_KEY:-xiaochuang-hermes-runtime-local-key}
+  AGENT_RUNTIME_MCP_SERVICE_KEY: ${AGENT_RUNTIME_MCP_SERVICE_KEY:-xiaochuang-mcp-runtime-local-key}
+  AGENT_RUNTIME_MODEL_GATEWAY_SERVICE_KEY: ${AGENT_RUNTIME_MODEL_GATEWAY_SERVICE_KEY:-xiaochuang-model-gateway-runtime-local-key}
+  HERMES_RUNTIME_POOLS_JSON: ${HERMES_RUNTIME_POOLS_JSON:-}
+  HERMES_RUNTIME_PER_RUN_MCP_AUTH_ENABLED: ${HERMES_RUNTIME_PER_RUN_MCP_AUTH_ENABLED:-0}
+  HERMES_RUNTIME_PER_RUN_MODEL_GATEWAY_AUTH_ENABLED: ${HERMES_RUNTIME_PER_RUN_MODEL_GATEWAY_AUTH_ENABLED:-0}
+  HERMES_RUNTIME_BACKEND_BASE_URL: ${HERMES_RUNTIME_BACKEND_BASE_URL:-http://backend:3010/api/v1}
+  HERMES_RUNTIME_MCP_CAPABILITY_HEADER: ${HERMES_RUNTIME_MCP_CAPABILITY_HEADER:-X-Xiaochuang-MCP-Capability}
+  AGENT_RUNTIME_CAPABILITY_PRIVATE_KEY: ${AGENT_RUNTIME_CAPABILITY_PRIVATE_KEY:-}
+  AGENT_RUNTIME_CAPABILITY_PUBLIC_KEY: ${AGENT_RUNTIME_CAPABILITY_PUBLIC_KEY:-}
+  AGENT_RUNTIME_CAPABILITY_TTL_SECONDS: ${AGENT_RUNTIME_CAPABILITY_TTL_SECONDS:-900}
+  AGENT_RUNTIME_LEASE_TTL_SECONDS: ${AGENT_RUNTIME_LEASE_TTL_SECONDS:-900}
+
+x-hermes-runtime-env: &hermes-runtime-env
+  API_SERVER_ENABLED: "1"
+  API_SERVER_HOST: 0.0.0.0
+  API_SERVER_PORT: 8642
+  API_SERVER_KEY: ${AGENT_RUNTIME_HERMES_API_KEY:-xiaochuang-hermes-runtime-local-key}
+  HERMES_MODEL_GATEWAY_BASE_URL: http://backend:3010/api/v1/internal/agent-runtime/model-gateway/v1
+  HERMES_MODEL_GATEWAY_SERVICE_KEY: ${AGENT_RUNTIME_MODEL_GATEWAY_SERVICE_KEY:-xiaochuang-model-gateway-runtime-local-key}
+  XIAOCHUANG_MCP_SERVICE_KEY: ${AGENT_RUNTIME_MCP_SERVICE_KEY:-xiaochuang-mcp-runtime-local-key}
+  XIAOCHUANG_CAPABILITY_REFRESH_SKEW_SECONDS: ${XIAOCHUANG_CAPABILITY_REFRESH_SKEW_SECONDS:-60}
+  XIAOCHUANG_CAPABILITY_REFRESH_TIMEOUT_SECONDS: ${XIAOCHUANG_CAPABILITY_REFRESH_TIMEOUT_SECONDS:-}
+
+x-hermes-runtime-service: &hermes-runtime-service
+  profiles: ["agent"]
+  build:
+    context: .
+    dockerfile: deploy/hermes/Dockerfile
+  image: xiaochuang-hermes-runtime:${HERMES_RUNTIME_IMAGE_TAG:-local}
+  restart: unless-stopped
+  depends_on:
+    backend:
+      condition: service_healthy
+  read_only: true
+  user: "10000:10000"
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 128
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,noexec,size=64m
+  healthcheck:
+    test:
+      - CMD-SHELL
+      - python -c "from urllib.request import urlopen; response=urlopen('http://127.0.0.1:8642/health', timeout=2); raise SystemExit(0 if response.status == 200 else 1)"
+    interval: 10s
+    timeout: 3s
+    retries: 12
+  networks:
+    - agent-runtime
 
 services:
   postgres:
@@ -23,7 +77,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - ./.local/postgres-data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_DIR:-./.local/postgres-data}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U zhaoxiaogang -d xiaochuang"]
       interval: 5s
@@ -36,7 +90,7 @@ services:
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - ./.local/redis-data:/data
+      - ${REDIS_DATA_DIR:-./.local/redis-data}:/data
     command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -54,7 +108,7 @@ services:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - ./.local/minio-data:/data
+      - ${MINIO_DATA_DIR:-./.local/minio-data}:/data
     command: ["server", "/data", "--console-address", ":9001"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
@@ -96,10 +150,31 @@ services:
       PORT: 3010
     ports:
       - "${BACKEND_PORT:-3010}:3010"
+    networks:
+      - default
+      - agent-runtime
     healthcheck:
       test:
         - CMD-SHELL
         - node -e "fetch('http://127.0.0.1:3010/api/v1/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  runtime-verify-mock-ai:
+    profiles: ["runtime-verify"]
+    image: xiaochuang-backend:${BACKEND_IMAGE_TAG:-local}
+    container_name: xiaochuang-runtime-verify-mock-ai
+    command:
+      - node
+      - apps/backend/dist/src/mock-ai-server.js
+      - --port=3099
+    networks:
+      - default
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://127.0.0.1:3099/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 5s
       timeout: 3s
       retries: 30
@@ -134,3 +209,81 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+    networks:
+      - default
+      - agent-runtime
+
+  task-recover:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    image: xiaochuang-backend:${BACKEND_IMAGE_TAG:-local}
+    container_name: xiaochuang-task-recover
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-runtime-env
+    command:
+      - npm
+      - run
+      - start:recover
+      - --workspace
+      - apps/backend
+      - --
+      - --ready-file=/tmp/task-recover-ready.json
+      - --interval-ms=${TASK_RECOVER_INTERVAL_MS:-15000}
+      - --limit=${TASK_RECOVER_LIMIT:-20}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "const fs=require('node:fs');try{const s=JSON.parse(fs.readFileSync('/tmp/task-recover-ready.json','utf8'));process.exit(s.status==='ready'?0:1)}catch{process.exit(1)}"
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - default
+      - agent-runtime
+
+  hermes-source:
+    <<: *hermes-runtime-service
+    container_name: xiaochuang-hermes-source
+    environment:
+      <<: *hermes-runtime-env
+      XIAOCHUANG_TOOL_PROFILE: xiaochuang-drama-source
+
+  hermes-plan:
+    <<: *hermes-runtime-service
+    container_name: xiaochuang-hermes-plan
+    environment:
+      <<: *hermes-runtime-env
+      XIAOCHUANG_TOOL_PROFILE: xiaochuang-drama-plan
+
+  hermes-script:
+    <<: *hermes-runtime-service
+    container_name: xiaochuang-hermes-script
+    environment:
+      <<: *hermes-runtime-env
+      XIAOCHUANG_TOOL_PROFILE: xiaochuang-drama-script
+
+  hermes-graph:
+    <<: *hermes-runtime-service
+    container_name: xiaochuang-hermes-graph
+    environment:
+      <<: *hermes-runtime-env
+      XIAOCHUANG_TOOL_PROFILE: xiaochuang-drama-graph
+
+  hermes-storyboard:
+    <<: *hermes-runtime-service
+    container_name: xiaochuang-hermes-storyboard
+    environment:
+      <<: *hermes-runtime-env
+      XIAOCHUANG_TOOL_PROFILE: xiaochuang-drama-storyboard
+
+networks:
+  agent-runtime:
+    internal: true

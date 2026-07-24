@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Loader2, X, Check } from 'lucide-react'
+import { Check, Loader2 } from 'lucide-react'
 import { useGridTool } from '@/hooks/use-grid-tool'
 import { cn } from '@/lib/cn'
+import { Dialog, DialogContent, DialogDescription, DialogHeaderBar, DialogMain, DialogTitle } from '@/components/ui/dialog'
 import type { Storyboard } from '@/types/api'
 
 const GRID_MODES = [
@@ -93,28 +93,18 @@ export function GridToolDialog({ storyboards, dramaId, episodeId, onDone }: Prop
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={e => { if (e.target === e.currentTarget) gt.setOpen(false) }}
-    >
-      <div className="bg-bg-surface border border-border rounded-[var(--radius-xl)] shadow-shadow-elevated w-[920px] max-w-[96vw] max-h-[92vh] flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-border bg-bg-0/90 px-6 py-5 sm:px-8 sm:py-5">
-          <span className="font-display text-[15px] font-semibold text-text-0">宫格图工具</span>
-          <button
-            type="button"
-            aria-label="关闭"
-            title="关闭"
-            className="w-7 h-7 rounded-full flex items-center justify-center text-text-3 hover:bg-bg-hover hover:text-text-0 transition-colors"
-            onClick={() => gt.setOpen(false)}
-          >
-            <X size={14} aria-hidden />
-          </button>
-        </div>
+    <Dialog open={gt.open} onOpenChange={gt.setOpen}>
+      <DialogContent variant="workspace" size="wide">
+        <DialogDescription className="sr-only">
+          选择镜头并生成宫格图，可在生成后切分格子并分配到对应分镜。
+        </DialogDescription>
+        <DialogHeaderBar variant="workspace">
+          <DialogTitle className="font-display text-[15px] font-semibold text-text-0">宫格图工具</DialogTitle>
+        </DialogHeaderBar>
 
         {/* Step 0: Config */}
         {gt.step === 0 && (
-          <div className="flex flex-1 flex-col gap-5 overflow-hidden p-6 sm:p-8">
+          <DialogMain variant="workspace" className="gap-5 overflow-hidden">
             {/* Mode tabs */}
             <div className="flex gap-2">
               {GRID_MODES.map(m => (
@@ -216,12 +206,12 @@ export function GridToolDialog({ storyboards, dramaId, episodeId, onDone }: Prop
                 {gt.promptLoading ? '生成中' : '生成提示词'}
               </button>
             </div>
-          </div>
+          </DialogMain>
         )}
 
         {/* Step 1: Prompt Preview */}
         {gt.step === 1 && (
-          <div className="flex flex-1 flex-col gap-5 overflow-hidden p-6 sm:p-8">
+          <DialogMain variant="workspace" className="gap-5 overflow-hidden">
             <div className="rounded-[12px] bg-bg-2 border border-border p-4">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xs font-bold text-text-3 uppercase tracking-wide">宫格图提示词</span>
@@ -275,21 +265,21 @@ export function GridToolDialog({ storyboards, dramaId, episodeId, onDone }: Prop
                 生成宫格图
               </button>
             </div>
-          </div>
+          </DialogMain>
         )}
 
         {/* Step 2: Generating */}
         {gt.step === 2 && (
-            <div className="flex flex-col flex-1 items-center justify-center gap-3 p-10">
+          <DialogMain variant="workspace" className="items-center justify-center gap-3 p-10">
             <Loader2 size={32} className="animate-spin text-accent" />
             <div className="text-sm font-semibold text-text-1">宫格图生成中...</div>
             <div className="text-xs text-text-3">{gt.statusText}</div>
-          </div>
+          </DialogMain>
         )}
 
         {/* Step 3: Preview + Assignment */}
         {gt.step === 3 && (
-          <div className="flex flex-1 overflow-hidden">
+          <DialogMain variant="workspace" className="flex-row overflow-hidden !p-0">
             {/* Left: image preview */}
             <div className="flex flex-1 flex-col gap-4 overflow-hidden p-6 sm:p-8">
               <div className="flex-1 min-h-0 rounded-[12px] overflow-hidden bg-bg-2 border border-border flex items-center justify-center">
@@ -421,12 +411,12 @@ export function GridToolDialog({ storyboards, dramaId, episodeId, onDone }: Prop
                 </button>
               </div>
             </div>
-          </div>
+          </DialogMain>
         )}
 
         {/* Step 4: Done */}
         {gt.step === 4 && (
-          <div className="flex flex-col flex-1 items-center justify-center gap-3 p-10">
+          <DialogMain variant="workspace" className="items-center justify-center gap-3 p-10">
             <Check size={32} className="text-success" />
             <div className="font-display text-[17px] font-bold text-text-0">分配完成</div>
             <div className="text-sm text-text-3">{assignedCount} 格已分配</div>
@@ -437,9 +427,9 @@ export function GridToolDialog({ storyboards, dramaId, episodeId, onDone }: Prop
             >
               关闭
             </button>
-          </div>
+          </DialogMain>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -34,15 +34,13 @@ export function ConfirmDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        layout="panel"
-        size="compact"
-        showCloseButton={false}
+        variant="confirm"
       >
-        <DialogHeaderBar density="compact" className="border-0 bg-transparent">
+        <DialogHeaderBar variant="confirm">
           <DialogTitle className="font-display text-lg font-semibold text-text-0">{title}</DialogTitle>
           <DialogDescription className="mt-1.5 text-sm leading-6 text-text-2">{description}</DialogDescription>
         </DialogHeaderBar>
-        <DialogActions density="compact">
+        <DialogActions variant="confirm">
           <Button type="button" variant="ghost" disabled={loading} onClick={() => onOpenChange(false)}>
             {cancelLabel}
           </Button>

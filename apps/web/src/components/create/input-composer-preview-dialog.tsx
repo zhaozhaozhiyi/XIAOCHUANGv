@@ -13,7 +13,7 @@ export function InputComposerPreviewDialog(props: {
 }) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent showCloseButton={false} className="h-[100dvh] w-[100vw] max-w-none overflow-hidden border-0 bg-transparent p-0 shadow-none">
+      <DialogContent variant="media">
         <DialogTitle className="sr-only">
           {props.referencePreviewTitle || (props.isPreviewVideo ? '视频预览' : '图片预览')}
         </DialogTitle>

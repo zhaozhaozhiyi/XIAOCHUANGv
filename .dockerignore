@@ -28,4 +28,11 @@ docs
 newdocs
 RELEASES
 参考图片
-参考项目
+参考项目/*
+deploy/hermes/overrides
+deploy/hermes/upstream.lock.json
+deploy/hermes/.build/hermes-agent/.venv
+deploy/hermes/.build/hermes-agent/.pytest-cache
+deploy/hermes/.build/hermes-agent/.pytest_cache
+deploy/hermes/.build/hermes-agent/*.egg-info
+deploy/hermes/.build/hermes-agent/**/__pycache__

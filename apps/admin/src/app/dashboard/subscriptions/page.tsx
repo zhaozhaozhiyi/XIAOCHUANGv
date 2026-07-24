@@ -1,4 +1,7 @@
+import { AdminCard, AdminPageHeader, AdminPager, AdminStatCard, AdminTableEmptyRow } from "@/components/admin-kit";
+import { SubscriptionStatusChip } from "@/components/admin-status";
 import { backendJson } from "@/lib/backend";
+import { buildPageHref } from "@/lib/query";
 
 interface PageProps {
   searchParams: Promise<{ page?: string; status?: string }>;
@@ -43,83 +46,69 @@ export default async function SubscriptionsPage({ searchParams }: PageProps) {
   const response = await backendJson<SubscriptionsResponse>(`/api/v1/admin/subscriptions?${query.toString()}`);
   const allSubscriptions = response.items;
   const plans = response.plans;
+  const hasNextPage = response.pagination.page * response.pagination.pageSize < response.pagination.total;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">订阅管理</h1>
-          <p className="text-slate-500 mt-1">管理用户订阅和套餐</p>
-        </div>
-      </div>
+      <AdminPageHeader
+        title="订阅管理"
+        description="查看套餐结构与用户订阅状态，快速识别活跃和过期订阅。"
+      />
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         {plans.map((plan) => (
-          <div key={plan.id} className="bg-white rounded-xl shadow-sm border p-4">
-            <h3 className="font-semibold text-slate-900">{plan.displayName}</h3>
-            <p className="text-2xl font-bold text-blue-600 mt-2">
-              {plan.price === 0 ? "免费" : `¥${plan.price / 100}`}
-              {plan.price > 0 && <span className="text-sm text-slate-500">/{plan.priceUnit}</span>}
-            </p>
-          </div>
+          <AdminStatCard
+            key={plan.id}
+            label={plan.displayName}
+            value={
+              <>
+                {plan.price === 0 ? "免费" : `¥${plan.price / 100}`}
+                {plan.price > 0 ? <span className="ml-1 text-sm text-[color:var(--admin-text-2)]">/{plan.priceUnit}</span> : null}
+              </>
+            }
+          />
         ))}
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-50">
+      <AdminCard>
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">用户ID</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">套餐</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">状态</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">开始时间</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">到期时间</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">操作</th>
+                <th>用户ID</th>
+                <th>套餐</th>
+                <th>状态</th>
+                <th>开始时间</th>
+                <th>到期时间</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody>
               {allSubscriptions.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
-                    暂无数据
-                  </td>
-                </tr>
+                <AdminTableEmptyRow
+                  colSpan={5}
+                  title="当前没有订阅记录"
+                  description="新订阅生效后，这里会展示套餐、状态和到期时间。"
+                />
               ) : (
                 allSubscriptions.map((sub) => (
-                  <tr key={sub.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-4">
+                  <tr key={sub.id}>
+                    <td>
                       <div>
-                        <p className="font-medium text-slate-900">{sub.userDisplayName || `用户 #${sub.userId}`}</p>
-                        <p className="text-sm text-slate-500">{sub.userEmail || "-"}</p>
+                        <p className="admin-cell-main">{sub.userDisplayName || `用户 #${sub.userId}`}</p>
+                        <p className="admin-cell-sub">{sub.userEmail || "-"}</p>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className="font-medium text-slate-900">{sub.planName}</span>
+                    <td>
+                      <span className="admin-cell-main">{sub.planName}</span>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        sub.status === "active" ? "bg-green-100 text-green-700" :
-                        sub.status === "cancelled" ? "bg-red-100 text-red-700" :
-                        sub.status === "expired" ? "bg-yellow-100 text-yellow-700" :
-                        "bg-slate-100 text-slate-700"
-                      }`}>
-                        {sub.status}
-                      </span>
+                    <td>
+                      <SubscriptionStatusChip status={sub.status} />
                     </td>
-                    <td className="px-6 py-4 text-slate-500">
+                    <td className="text-[color:var(--admin-text-2)]">
                       {new Date(sub.startedAt).toLocaleDateString("zh-CN")}
                     </td>
-                    <td className="px-6 py-4 text-slate-500">
+                    <td className="text-[color:var(--admin-text-2)]">
                       {sub.expiresAt ? new Date(sub.expiresAt).toLocaleDateString("zh-CN") : "-"}
-                    </td>
-                    <td className="px-6 py-4">
-                      <a
-                        href={`/dashboard/subscriptions/${sub.id}`}
-                        className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded-lg"
-                      >
-                        查看
-                      </a>
                     </td>
                   </tr>
                 ))
@@ -127,7 +116,12 @@ export default async function SubscriptionsPage({ searchParams }: PageProps) {
             </tbody>
           </table>
         </div>
-      </div>
+        <AdminPager
+          totalLabel={`共 ${response.pagination.total} 条记录`}
+          previousHref={page > 1 ? buildPageHref(page - 1, { status: params.status }) : null}
+          nextHref={hasNextPage ? buildPageHref(page + 1, { status: params.status }) : null}
+        />
+      </AdminCard>
     </div>
   );
 }

@@ -36,6 +36,8 @@ import { AddNodeSubmenu } from './AddNodeSubmenu'
 import { CanvasUploadDialog } from './CanvasUploadDialog'
 import { QuickGenerateDialog } from './QuickGenerateDialog'
 import type { CanvasNode } from '@/lib/canvas/types'
+import { cn } from '@/lib/cn'
+import { useCanvasRuntime } from './CanvasRuntimeContext'
 
 interface Props {
   children: React.ReactNode
@@ -62,6 +64,8 @@ export function CanvasContextMenu({
   const [uploadPosition, setUploadPosition] = useState<{ x: number; y: number } | null>(null)
   const [quickOpen, setQuickOpen] = useState(false)
   const reactFlow = useReactFlow<CanvasNode>()
+  const runtime = useCanvasRuntime()
+  const freezoneChrome = runtime.chrome === 'freezone'
 
   const rememberContextPosition = (event: React.MouseEvent) => {
     const pos = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY })
@@ -80,7 +84,7 @@ export function CanvasContextMenu({
             {children}
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="min-w-[180px]">
+        <ContextMenuContent className={cn('min-w-[180px]', freezoneChrome && 'drama-freezone-popover')}>
           <ContextMenuItem onClick={() => setUploadOpen(true)}>
             <Upload className="mr-2 size-4" />
             上传
@@ -95,7 +99,7 @@ export function CanvasContextMenu({
               <Plus className="mr-2 size-4" />
               添加节点
             </ContextMenuSubTrigger>
-            <ContextMenuSubContent className="min-w-[220px]">
+            <ContextMenuSubContent className={cn('min-w-[220px]', freezoneChrome && 'drama-freezone-popover')}>
               <AddNodeSubmenu position="screen-center" />
             </ContextMenuSubContent>
           </ContextMenuSub>

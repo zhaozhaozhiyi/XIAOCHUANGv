@@ -1,6 +1,7 @@
 {
   "name": "@xiaochuang/canvas-shared",
   "version": "0.22.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "exports": {

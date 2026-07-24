@@ -3,6 +3,11 @@ import { and, eq, inArray } from 'drizzle-orm'
 
 import { DatabaseService } from '../../../db/database.service'
 import { canvasEdges, canvasNodes, canvasTasks } from '../../../db/schema'
+import {
+  AUDIO_RESULT_NODE_TYPES,
+  IMAGE_RESULT_NODE_TYPES,
+  VIDEO_RESULT_NODE_TYPES,
+} from '../canvas-node-types'
 import type { ResolvedCanvasInputs } from './canvas-execution.types'
 
 const EXECUTE_TYPES = new Set(['text-to-image', 'image-to-video', 'text-to-speech', 'concat', 'export'])
@@ -13,10 +18,15 @@ function safeJsonParse<T>(json: string | null | undefined, fallback: T): T {
 }
 
 function pickImageUrl(data: Record<string, unknown>): string | undefined {
+  if (typeof data.imageUrl === 'string' && data.imageUrl) return data.imageUrl
+  if (typeof data.previewImageUrl === 'string' && data.previewImageUrl) return data.previewImageUrl
+  if (typeof data.thumbnailUrl === 'string' && data.thumbnailUrl) return data.thumbnailUrl
+  if (typeof data.thumbnail_url === 'string' && data.thumbnail_url) return data.thumbnail_url
   const images = data.images
   if (Array.isArray(images) && typeof images[0] === 'string' && images[0]) return images[0]
+  const batch = data.generationBatch
+  if (Array.isArray(batch) && typeof batch[0] === 'string' && batch[0]) return batch[0]
   if (typeof data.image === 'string' && data.image) return data.image
-  if (typeof data.url === 'string' && data.url) return data.url
   if (typeof data.avatar === 'string' && data.avatar) return data.avatar
   return undefined
 }
@@ -24,6 +34,7 @@ function pickImageUrl(data: Record<string, unknown>): string | undefined {
 function pickVideoUrl(data: Record<string, unknown>): string | undefined {
   if (typeof data.video === 'string' && data.video) return data.video
   if (typeof data.videoUrl === 'string' && data.videoUrl) return data.videoUrl
+  if (typeof data.resultVideoUrl === 'string' && data.resultVideoUrl) return data.resultVideoUrl
   const videos = data.videos
   if (Array.isArray(videos) && typeof videos[0] === 'string' && videos[0]) return videos[0]
   return undefined
@@ -36,12 +47,44 @@ function pickAudioUrl(data: Record<string, unknown>): string | undefined {
 }
 
 function pickText(data: Record<string, unknown>): string | undefined {
-  const keys = ['prompt', 'text', 'userInput', 'shotDescription', 'description']
+  const keys = ['prompt', 'content', 'text', 'summary', 'userInput', 'shotDescription', 'description', 'title']
   for (const key of keys) {
     const v = data[key]
     if (typeof v === 'string' && v.trim()) return v.trim()
   }
   return undefined
+}
+
+function collectStringUrls(value: unknown, keys: string[] = ['url']): string[] {
+  if (!Array.isArray(value)) return []
+  const urls: string[] = []
+  for (const item of value) {
+    if (typeof item === 'string' && item) {
+      urls.push(item)
+      continue
+    }
+    if (!item || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    for (const key of keys) {
+      const url = record[key]
+      if (typeof url === 'string' && url) urls.push(url)
+    }
+  }
+  return Array.from(new Set(urls))
+}
+
+function collectParamVideoUrls(params: Record<string, unknown>) {
+  return [
+    ...collectStringUrls(params.videoUrls),
+    ...collectStringUrls(params.videos, ['videoUrl', 'resultVideoUrl', 'url']),
+    ...collectStringUrls(params.clips, ['videoUrl', 'resultVideoUrl', 'url']),
+  ].filter((url, index, array) => array.indexOf(url) === index)
+}
+
+function collectParamReferences(params: Record<string, unknown>) {
+  return Array.isArray(params.references)
+    ? params.references.filter((r): r is string => typeof r === 'string' && Boolean(r))
+    : []
 }
 
 function resultToUrl(result: Record<string, unknown> | null): string | undefined {
@@ -75,12 +118,10 @@ export class CanvasInputResolverService {
     if (sourceNodeIds.length === 0) {
       return {
         imageUrl: undefined,
-        videoUrls: [],
-        audioUrl: undefined,
+        videoUrls: collectParamVideoUrls(params),
+        audioUrl: typeof params.audioUrl === 'string' && params.audioUrl ? params.audioUrl : undefined,
         text: pickText(params),
-        references: Array.isArray(params.references)
-          ? params.references.filter((r): r is string => typeof r === 'string')
-          : [],
+        references: collectParamReferences(params),
       }
     }
 
@@ -102,7 +143,7 @@ export class CanvasInputResolverService {
     const taskByNode = new Map(completedTasks.map((t) => [t.nodeId, t]))
 
     let imageUrl: string | undefined
-    const videoUrls: string[] = []
+    const videoUrls: string[] = collectParamVideoUrls(params)
     let audioUrl: string | undefined
     const references: string[] = []
 
@@ -116,36 +157,35 @@ export class CanvasInputResolverService {
         const result = safeJsonParse<Record<string, unknown> | null>(task?.resultJson ?? null, null)
         const url = resultToUrl(result)
         if (source.nodeDefId === 'text-to-image' && url) imageUrl = imageUrl ?? url
-        if ((source.nodeDefId === 'image-to-video' || source.nodeDefId === 'concat') && url) {
+        if ((source.nodeDefId === 'image-to-video' || source.nodeDefId === 'concat' || source.nodeDefId === 'export') && url) {
           videoUrls.push(url)
         }
         if (source.nodeDefId === 'text-to-speech' && url) audioUrl = url
         continue
       }
 
-      const img = pickImageUrl(data)
+      const genericUrl = typeof data.url === 'string' && data.url ? data.url : undefined
+      const img = pickImageUrl(data) || (IMAGE_RESULT_NODE_TYPES.has(source.nodeDefId) ? genericUrl : undefined)
       if (img) {
         references.push(img)
         if (!imageUrl && (edge.targetPort?.includes('image') || edge.sourcePort?.includes('image'))) {
           imageUrl = img
         }
       }
-      const vid = pickVideoUrl(data)
+      const vid = pickVideoUrl(data) || (VIDEO_RESULT_NODE_TYPES.has(source.nodeDefId) ? genericUrl : undefined)
       if (vid) videoUrls.push(vid)
-      const aud = pickAudioUrl(data)
+      const aud = pickAudioUrl(data) || (AUDIO_RESULT_NODE_TYPES.has(source.nodeDefId) ? genericUrl : undefined)
       if (aud) audioUrl = aud
     }
 
-    if (Array.isArray(params.references)) {
-      for (const ref of params.references) {
-        if (typeof ref === 'string' && ref && !references.includes(ref)) references.push(ref)
-      }
+    for (const ref of collectParamReferences(params)) {
+      if (!references.includes(ref)) references.push(ref)
     }
 
     return {
       imageUrl,
-      videoUrls,
-      audioUrl,
+      videoUrls: Array.from(new Set(videoUrls)),
+      audioUrl: audioUrl || (typeof params.audioUrl === 'string' && params.audioUrl ? params.audioUrl : undefined),
       text: pickText(params),
       references,
     }

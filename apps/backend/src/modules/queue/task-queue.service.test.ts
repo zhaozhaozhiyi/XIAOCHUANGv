@@ -39,6 +39,7 @@ describe('TaskQueueService', () => {
     const redisUrl = 'redis://:secret@redis.local:6379'
     const service = new TaskQueueService({
       get: vi.fn(() => redisUrl),
+      getOrThrow: vi.fn(() => redisUrl),
     } as any)
     queueMock.getJob.mockResolvedValue(null)
     queueMock.add.mockResolvedValue({ id: buildTaskJobId(123) })
@@ -64,6 +65,7 @@ describe('TaskQueueService', () => {
     const redisUrl = 'redis://127.0.0.1:6379'
     const service = new TaskQueueService({
       get: vi.fn(() => redisUrl),
+      getOrThrow: vi.fn(() => redisUrl),
     } as any)
     const data = { canvasTaskId: 'canvas-task-1', userId: 7 }
     queueMock.getJob.mockResolvedValue(null)
@@ -80,5 +82,54 @@ describe('TaskQueueService', () => {
         jobId: buildCanvasTaskJobId(data.canvasTaskId),
       },
     )
+  })
+
+  it('requeues a reused drama task after its prior BullMQ job completed', async () => {
+    const redisUrl = 'redis://127.0.0.1:6379'
+    const service = new TaskQueueService({
+      get: vi.fn(() => redisUrl),
+      getOrThrow: vi.fn(() => redisUrl),
+    } as any)
+    const completedJob = {
+      id: buildTaskJobId(123),
+      getState: vi.fn().mockResolvedValue('completed'),
+      remove: vi.fn().mockResolvedValue(undefined),
+    }
+    queueMock.getJob.mockResolvedValue(completedJob)
+    queueMock.add.mockResolvedValue({ id: buildTaskJobId(123) })
+
+    const jobId = await service.enqueueTask(123)
+
+    expect(jobId).toBe(buildTaskJobId(123))
+    expect(completedJob.getState).toHaveBeenCalledTimes(1)
+    expect(completedJob.remove).toHaveBeenCalledTimes(1)
+    expect(queueMock.add).toHaveBeenCalledWith(
+      DRAMA_TASK_JOB_NAME,
+      { taskId: 123 },
+      {
+        ...TASK_QUEUE_DEFAULT_JOB_OPTIONS,
+        jobId: buildTaskJobId(123),
+      },
+    )
+  })
+
+  it('does not duplicate a drama task while its BullMQ job is still active', async () => {
+    const redisUrl = 'redis://127.0.0.1:6379'
+    const service = new TaskQueueService({
+      get: vi.fn(() => redisUrl),
+      getOrThrow: vi.fn(() => redisUrl),
+    } as any)
+    const activeJob = {
+      id: buildTaskJobId(123),
+      getState: vi.fn().mockResolvedValue('active'),
+      remove: vi.fn(),
+    }
+    queueMock.getJob.mockResolvedValue(activeJob)
+
+    const jobId = await service.enqueueTask(123)
+
+    expect(jobId).toBe(buildTaskJobId(123))
+    expect(activeJob.remove).not.toHaveBeenCalled()
+    expect(queueMock.add).not.toHaveBeenCalled()
   })
 })

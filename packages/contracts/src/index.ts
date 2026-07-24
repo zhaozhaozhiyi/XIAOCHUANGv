@@ -1,5 +1,7 @@
 import type { components, operations, paths } from './generated.js'
 
+export * from './ai-provider-catalog.js'
+export * from './drama-workspace.js'
 export * from './shared.js'
 export type { components, operations, paths } from './generated.js'
 

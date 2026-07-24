@@ -5,6 +5,7 @@ import {
   aiConfigAPI,
   assetAPI,
   dramaAPI,
+  imageAPI,
   skillsAPI,
   taskAPI,
   writingAPI,
@@ -54,6 +55,15 @@ export function prefetchNavData(href: string) {
     oncePerWindow(path, () => [
       assetAPI.list(),
       dramaAPI.list({ include_details: false }),
+    ])
+    return
+  }
+
+  if (path === '/create/video') {
+    oncePerWindow(path, () => [
+      taskAPI.list({ source_type: 'quick_video', page_size: 8, sort: 'updated_at' }),
+      imageAPI.list(),
+      assetAPI.list({ kind: 'audio', source_type: 'quick_video' }),
     ])
     return
   }

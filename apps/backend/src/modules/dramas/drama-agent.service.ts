@@ -1,14 +1,25 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common'
+import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common'
 import { z } from 'zod'
 
-import { getTextProviderBaseUrl } from '../agents/agents.ai'
+import { getTextProviderBaseUrl, withTextProviderRequestOptions } from '../agents/agents.ai'
 import { AiConfigResolverService, type AIConfig } from '../ai-configs/ai-configs.resolver'
+import { parseJsonWithRepair } from '../ai/skill-handlers/_shared'
+import { SkillsService } from '../skills/skills.service'
 
 type DramaAgentTaskType =
   | 'source_chunk_analyze'
   | 'source_global_summarize'
   | 'adaptation_brief_generate'
   | 'episode_blueprint_generate'
+  | 'episode_script_generate'
+
+type DramaAdaptationSkillMode =
+  | 'source_chunk_analyze'
+  | 'source_analysis'
+  | 'source_analysis_from_chunks'
+  | 'strategy_generate'
+  | 'blueprint_generate'
+  | 'blueprint_refine'
   | 'episode_script_generate'
 
 type DramaAgentExecutionInput = {
@@ -50,6 +61,8 @@ type SourceAnalysisLike = {
   protagonist: string
   antagonist?: string | null
   protagonist_goal: string
+  target_episode_count?: number | null
+  episode_duration?: string | null
   relationship_map: Array<Record<string, unknown>>
   world_rules: string[]
   emotional_curve: Array<Record<string, unknown>>
@@ -111,34 +124,6 @@ function compactText(value: unknown, maxLength: number) {
   return `${text.slice(0, maxLength)}...`
 }
 
-function parsePositiveInt(value: string | undefined, fallback: number) {
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function getDefaultMaxTokens(taskType: DramaAgentTaskType) {
-  switch (taskType) {
-    case 'source_chunk_analyze':
-      return 1800
-    case 'source_global_summarize':
-      return 3000
-    case 'adaptation_brief_generate':
-      return 2500
-    case 'episode_blueprint_generate':
-      return 4000
-    case 'episode_script_generate':
-      return 8192
-  }
-}
-
-function resolveMaxTokens(taskType: DramaAgentTaskType) {
-  const taskEnvKey = `DRAMA_AGENT_${taskType.toUpperCase()}_MAX_TOKENS`
-  return parsePositiveInt(
-    process.env[taskEnvKey] || process.env.DRAMA_AGENT_MAX_TOKENS,
-    getDefaultMaxTokens(taskType),
-  )
-}
-
 function extractJsonPayload(text: string) {
   const normalized = String(text || '')
     .trim()
@@ -147,21 +132,27 @@ function extractJsonPayload(text: string) {
     .replace(/\s*```$/i, '')
     .trim()
 
-  try {
-    return JSON.parse(normalized) as unknown
-  } catch {
-    const objectStart = normalized.indexOf('{')
-    const objectEnd = normalized.lastIndexOf('}')
-    if (objectStart >= 0 && objectEnd > objectStart) {
-      return JSON.parse(normalized.slice(objectStart, objectEnd + 1)) as unknown
-    }
-    const arrayStart = normalized.indexOf('[')
-    const arrayEnd = normalized.lastIndexOf(']')
-    if (arrayStart >= 0 && arrayEnd > arrayStart) {
-      return JSON.parse(normalized.slice(arrayStart, arrayEnd + 1)) as unknown
-    }
-    throw new BadRequestException('remote_agent_non_json')
+  const candidates = [normalized]
+  const objectStart = normalized.indexOf('{')
+  const objectEnd = normalized.lastIndexOf('}')
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    candidates.push(normalized.slice(objectStart, objectEnd + 1))
   }
+  const arrayStart = normalized.indexOf('[')
+  const arrayEnd = normalized.lastIndexOf(']')
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    candidates.push(normalized.slice(arrayStart, arrayEnd + 1))
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return parseJsonWithRepair(candidate) as unknown
+    } catch {
+      // try next candidate / repair path
+    }
+  }
+
+  throw new BadRequestException('remote_agent_non_json')
 }
 
 function extractChatText(payload: unknown) {
@@ -180,12 +171,16 @@ function extractChatText(payload: unknown) {
   return ''
 }
 
-function unwrapResult(payload: unknown, keys: string[]) {
+function unwrapResult(payload: unknown, keys: string[], depth = 0): unknown {
   const raw = toRecord(payload)
   for (const key of keys) {
     if (raw[key] != null) return raw[key]
   }
-  if (raw.result != null) return raw.result
+  if (depth < 4) {
+    for (const key of ['result', 'data', 'payload', 'output']) {
+      if (raw[key] != null) return unwrapResult(raw[key], keys, depth + 1)
+    }
+  }
   return payload
 }
 
@@ -209,27 +204,46 @@ function recordArray(value: unknown) {
   return []
 }
 
+function normalizeSourceTraceArray(...values: unknown[]) {
+  for (const value of values) {
+    if (Array.isArray(value)) return value
+    if (value && typeof value === 'object') return [value]
+    const text = String(value || '').trim()
+    if (text) return [text]
+  }
+  return []
+}
+
+function normalizeEvidenceItem(value: unknown, fallbackClaim: string) {
+  if (typeof value === 'string') {
+    return {
+      claim: fallbackClaim || value,
+      source_trace: [value],
+    }
+  }
+  const raw = toRecord(value)
+  return {
+    ...raw,
+    claim: firstString(raw.claim, raw['结论'], raw['证据'], raw.title, fallbackClaim, '来源证据'),
+    source_trace: normalizeSourceTraceArray(raw.source_trace, raw.trace, raw.source, raw['来源'], raw['溯源']),
+  }
+}
+
 function normalizeEvidence(value: unknown) {
-  if (Array.isArray(value)) return value
+  if (Array.isArray(value)) return value.map((item, index) => normalizeEvidenceItem(item, `证据 ${index + 1}`))
   const raw = toRecord(value)
   if (!Object.keys(raw).length) return []
-  if (raw.claim || raw.source_trace) return [{
-    ...raw,
-    claim: firstString(raw.claim, raw['结论'], raw['证据'], '来源证据'),
-    source_trace: Array.isArray(raw.source_trace) ? raw.source_trace : [],
-  }]
+  if (raw.claim || raw.source_trace || raw['结论'] || raw['来源']) return [normalizeEvidenceItem(raw, '来源证据')]
   return Object.entries(raw).map(([claim, evidence]) => {
-    const item = toRecord(evidence)
-    return {
-      ...item,
-      claim: firstString(item.claim, claim),
-      source_trace: Array.isArray(item.source_trace) ? item.source_trace : [],
-    }
+    return normalizeEvidenceItem(evidence, claim)
   })
 }
 
 function normalizeSourceAnalysisPayload(value: unknown) {
-  const raw = toRecord(value)
+  const candidate = Array.isArray(value) ? value.find((item) => Object.keys(toRecord(item)).length) : value
+  const rawCandidate = toRecord(candidate)
+  const sourceWrapped = toRecord(rawCandidate.source_analysis || rawCandidate['源稿分析'])
+  const raw = Object.keys(sourceWrapped).length ? { ...rawCandidate, ...sourceWrapped } : rawCandidate
   const nested = toRecord(raw.analysis || raw.overview || raw.summary || raw['分析'])
   const merged = Object.keys(nested).length ? { ...raw, ...nested } : raw
 
@@ -240,6 +254,11 @@ function normalizeSourceAnalysisPayload(value: unknown) {
     protagonist: firstString(merged.protagonist, merged.hero, merged.main_character, merged['主角'], merged['主人公']),
     antagonist: firstString(merged.antagonist, merged.villain, merged['反派'], merged['对立面']) || null,
     protagonist_goal: firstString(merged.protagonist_goal, merged.goal, merged['主角目标'], merged['人物目标']),
+    target_episode_count: positiveIntFromUnknown(
+      merged.target_episode_count || merged.episode_count || merged.episodes || merged['目标集数'] || merged['集数'],
+      0,
+    ),
+    episode_duration: firstString(merged.episode_duration, merged.duration, merged['单集时长'], merged['时长'], '60-90 秒'),
     relationship_map: recordArray(merged.relationship_map || merged.relationships || merged['人物关系']),
     world_rules: stringArray(merged.world_rules || merged.rules || merged['世界规则']),
     emotional_curve: recordArray(merged.emotional_curve || merged.emotion_curve || merged['情绪曲线']),
@@ -255,11 +274,19 @@ function positiveIntFromUnknown(value: unknown, fallback: number) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }
 
-function arrayPayload(value: unknown, keys: string[]) {
+function arrayPayload(value: unknown, keys: string[], depth = 0): unknown[] {
   if (Array.isArray(value)) return value
   const raw = toRecord(value)
   for (const key of keys) {
     if (Array.isArray(raw[key])) return raw[key] as unknown[]
+  }
+  if (depth < 4) {
+    for (const key of ['result', 'data', 'payload', 'output']) {
+      if (raw[key] != null) {
+        const nested = arrayPayload(raw[key], keys, depth + 1)
+        if (nested.length) return nested
+      }
+    }
   }
   const values = Object.values(raw).filter((item) => item && typeof item === 'object')
   return values.length ? values : []
@@ -377,13 +404,30 @@ const sourceTraceSchema = z.preprocess((value) => {
   excerpt: z.string().nullable().optional(),
 }).passthrough())
 
+const relationshipMapItemSchema = z.object({
+  subject: z.string().trim().optional(),
+  object: z.string().trim().optional(),
+  predicate: z.string().trim().optional(),
+  source: z.string().trim().optional(),
+  target: z.string().trim().optional(),
+  relation: z.string().trim().optional(),
+  relationship: z.string().trim().optional(),
+  character: z.string().trim().optional(),
+  role: z.string().trim().optional(),
+  description: z.string().trim().optional(),
+  source_trace: z.array(sourceTraceSchema).default([]),
+  evidence: z.unknown().optional(),
+}).passthrough()
+
 const sourceAnalysisSchema = z.object({
   theme: z.string().trim().min(1),
   core_conflict: z.string().trim().min(1),
   protagonist: z.string().trim().min(1),
   antagonist: z.string().trim().nullable().optional(),
   protagonist_goal: z.string().trim().min(1),
-  relationship_map: z.array(z.record(z.unknown())).default([]),
+  target_episode_count: z.number().int().nonnegative().default(0),
+  episode_duration: z.string().trim().min(1).default('60-90 秒'),
+  relationship_map: z.array(relationshipMapItemSchema).default([]),
   world_rules: z.array(z.string()).default([]),
   emotional_curve: z.array(z.record(z.unknown())).default([]),
   adaptation_risks: z.array(z.string()).default([]),
@@ -498,30 +542,24 @@ export class RemoteDramaAgentAdapter {
   async executeJson(input: DramaAgentExecutionInput): Promise<DramaAgentExecutionResult> {
     const config = await this.resolveConfig(input.userId)
     const url = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`
-    const timeoutMs = parsePositiveInt(process.env.DRAMA_AGENT_TIMEOUT_MS, 120_000)
-    const maxTokens = resolveMaxTokens(input.taskType)
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
 
     try {
       const response = await fetch(url, {
         method: 'POST',
-        signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.apiKey}`,
           'X-Drama-Agent-Task': input.taskType,
           'X-Idempotency-Key': input.idempotencyKey,
         },
-        body: JSON.stringify({
+        body: JSON.stringify(withTextProviderRequestOptions(config, {
           model: config.model,
           temperature: 0.35,
           messages: [
             { role: 'system', content: input.systemPrompt },
             { role: 'user', content: input.userPrompt },
           ],
-          max_tokens: maxTokens,
-        }),
+        })),
       })
 
       const text = await response.text()
@@ -541,14 +579,8 @@ export class RemoteDramaAgentAdapter {
       }
     } catch (error) {
       if (error instanceof BadRequestException) throw error
-      const message = error instanceof Error && error.name === 'AbortError'
-        ? 'remote_agent_timeout'
-        : error instanceof Error
-          ? error.message
-          : 'remote_agent_failed'
+      const message = error instanceof Error ? error.message : 'remote_agent_failed'
       throw new BadRequestException(message)
-    } finally {
-      clearTimeout(timer)
     }
   }
 
@@ -598,6 +630,9 @@ export class DramaAgentService {
   constructor(
     @Inject(RemoteDramaAgentAdapter) private readonly adapter: RemoteDramaAgentAdapter,
     @Inject(DramaAgentSchemaValidator) private readonly validator: DramaAgentSchemaValidator,
+    @Optional()
+    @Inject(SkillsService)
+    private readonly skillsService?: SkillsService,
   ) {}
 
   async canExecute(userId: number) {
@@ -624,15 +659,18 @@ export class DramaAgentService {
       taskType: 'source_chunk_analyze',
       outputSchemaName: 'SourceChunkAnalysis',
       idempotencyKey: `drama:${input.dramaId}:source:${input.sourceId}:chunk:${input.chunkNo}:${input.contentHash}:analyze`,
-      systemPrompt: buildSystemPrompt('SourceChunkAnalysis'),
-      userPrompt: [
-        `source_id：${input.sourceId}`,
-        `chunk_id：${input.chunkId}`,
-        `chunk_no：${input.chunkNo}`,
-        `source_trace：${JSON.stringify(input.sourceTrace)}`,
-        '请只分析当前分块，输出 {"source_chunk_analysis":{summary,key_events,characters,scenes,risks,source_trace}}。',
-        `分块正文：\n${input.content}`,
-      ].join('\n\n'),
+      systemPrompt: this.buildSkillPrompt('source_chunk_analyze', 'SourceChunkAnalysis'),
+      userPrompt: serializeRuntimeContext({
+        source: {
+          id: input.sourceId,
+          chunk: {
+            id: input.chunkId,
+            number: input.chunkNo,
+            source_trace: input.sourceTrace,
+            content: input.content,
+          },
+        },
+      }),
     })
     return {
       ...result,
@@ -653,14 +691,18 @@ export class DramaAgentService {
       taskType: 'source_global_summarize',
       outputSchemaName: 'SourceAnalysis',
       idempotencyKey: `drama:${input.dramaId}:source:${input.sourceId}:analysis:${input.health.estimated_tokens}`,
-      systemPrompt: buildSystemPrompt('SourceAnalysis'),
-      userPrompt: [
-        `短剧项目：${input.dramaTitle}`,
-        `源稿健康：${JSON.stringify(input.health)}`,
-        '请输出 {"source_analysis":{theme,core_conflict,protagonist,antagonist,protagonist_goal,relationship_map,world_rules,emotional_curve,adaptation_risks,evidence}} JSON。',
-        'evidence 必须是数组；每一项必须包含 claim 和 source_trace 数组。不要使用 Markdown，不要使用中文字段名替代上述字段。',
-        formatSourceForAgent(input.content, input.health),
-      ].join('\n\n'),
+      systemPrompt: this.buildSkillPrompt('source_analysis', 'SourceAnalysis'),
+      userPrompt: serializeRuntimeContext({
+        project: {
+          id: input.dramaId,
+          title: input.dramaTitle,
+        },
+        source: {
+          id: input.sourceId,
+          profile: buildSourceProfile(input.health),
+          content: input.content,
+        },
+      }),
     })
     return {
       ...result,
@@ -681,15 +723,18 @@ export class DramaAgentService {
       taskType: 'source_global_summarize',
       outputSchemaName: 'SourceAnalysis',
       idempotencyKey: `drama:${input.dramaId}:source:${input.sourceId}:analysis:chunks:${input.chunkAnalyses.length}`,
-      systemPrompt: buildSystemPrompt('SourceAnalysis'),
-      userPrompt: [
-        `短剧项目：${input.dramaTitle}`,
-        `source_id：${input.sourceId}`,
-        `源稿健康：${JSON.stringify(input.health)}`,
-        '以下是 chunk 级理解结果。只能基于这些摘要、章节索引和 source_trace 合成全局 source_analysis，不要编造未出现的原文。',
-        JSON.stringify({ chunk_analyses: input.chunkAnalyses }),
-        '请输出 {"source_analysis":{theme,core_conflict,protagonist,antagonist,protagonist_goal,relationship_map,world_rules,emotional_curve,adaptation_risks,evidence}} JSON。',
-      ].join('\n\n'),
+      systemPrompt: this.buildSkillPrompt('source_analysis_from_chunks', 'SourceAnalysis'),
+      userPrompt: serializeRuntimeContext({
+        project: {
+          id: input.dramaId,
+          title: input.dramaTitle,
+        },
+        source: {
+          id: input.sourceId,
+          profile: buildSourceProfile(input.health),
+          chunk_analyses: input.chunkAnalyses,
+        },
+      }),
     })
     return {
       ...result,
@@ -713,19 +758,23 @@ export class DramaAgentService {
       taskType: 'adaptation_brief_generate',
       outputSchemaName: 'AdaptationBrief[]',
       idempotencyKey: `drama:${input.dramaId}:brief:${input.count}:${input.targetEpisodeCount || 'auto'}`,
-      systemPrompt: buildSystemPrompt('AdaptationBrief[]'),
-      userPrompt: [
-        `短剧项目：${input.dramaTitle}`,
-        `要求生成 ${input.count} 套可比较改编策略。`,
-        `目标集数：${input.targetEpisodeCount || '由你建议'}`,
-        `单集时长：${input.episodeDuration || '60-90 秒'}`,
-        `风格方向：${input.styleDirection || '跟随项目风格'}`,
-        `源稿健康：${JSON.stringify(input.health)}`,
-        `源稿理解：${JSON.stringify(input.analysis)}`,
-        '请输出 {"adaptation_briefs":[...]} JSON。',
-        '数组每项必须包含英文 snake_case 字段：id,name,claim,rhythm_model,target_episode_count,episode_duration,style_direction,hook_density,retained_points,removed_points,risk_notes,production_cost,recommended_for。',
-        'retained_points、removed_points、risk_notes 必须是字符串数组；target_episode_count 必须是数字。',
-      ].join('\n\n'),
+      systemPrompt: this.buildSkillPrompt('strategy_generate', 'AdaptationBrief[]'),
+      userPrompt: serializeRuntimeContext({
+        project: {
+          id: input.dramaId,
+          title: input.dramaTitle,
+        },
+        request: {
+          count: input.count,
+          target_episode_count: input.targetEpisodeCount ?? null,
+          episode_duration: input.episodeDuration ?? null,
+          style_direction: input.styleDirection ?? null,
+        },
+        source: {
+          profile: buildSourceProfile(input.health),
+          analysis: input.analysis,
+        },
+      }),
     })
     return {
       ...result,
@@ -746,16 +795,18 @@ export class DramaAgentService {
       taskType: 'episode_blueprint_generate',
       outputSchemaName: 'EpisodeBlueprint[]',
       idempotencyKey: `drama:${input.dramaId}:brief:${input.brief.id}:blueprint`,
-      systemPrompt: buildSystemPrompt('EpisodeBlueprint[]'),
-      userPrompt: [
-        `source_id：${input.sourceId}`,
-        `源稿健康：${JSON.stringify(input.health)}`,
-        `源稿理解：${JSON.stringify(input.analysis)}`,
-        `选中策略：${JSON.stringify(input.brief)}`,
-        '请输出 {"episode_blueprints":[...]} JSON。每集必须包含 source_trace，且 episode_number 从 1 连续递增。',
-        '数组每项必须包含英文 snake_case 字段：episode_number,title,positioning,opening_hook,summary,source_trace,characters,scenes,ending_hook,risk_notes,brief_id。',
-        'characters、scenes、risk_notes 必须是字符串数组；source_trace 必须是数组；不要用中文字段名替代。',
-      ].join('\n\n'),
+      systemPrompt: this.buildSkillPrompt('blueprint_generate', 'EpisodeBlueprint[]'),
+      userPrompt: serializeRuntimeContext({
+        project: {
+          id: input.dramaId,
+        },
+        source: {
+          id: input.sourceId,
+          profile: buildSourceProfile(input.health),
+          analysis: input.analysis,
+        },
+        selected_brief: input.brief,
+      }),
     })
     return {
       ...result,
@@ -779,20 +830,23 @@ export class DramaAgentService {
       taskType: 'episode_blueprint_generate',
       outputSchemaName: 'EpisodeBlueprint[]',
       idempotencyKey: `episode:${input.episodeId}:blueprint:${input.brief.id}:regenerate:${Date.now()}`,
-      systemPrompt: buildSystemPrompt('EpisodeBlueprint[]'),
-      userPrompt: [
-        `短剧项目 ID：${input.dramaId}`,
-        `分集 ID：${input.episodeId}`,
-        `目标集数：第 ${input.episodeNumber} 集`,
-        `source_id：${input.sourceId}`,
-        `源稿健康：${JSON.stringify(input.health)}`,
-        `源稿理解：${JSON.stringify(input.analysis)}`,
-        `选中策略：${JSON.stringify(input.brief)}`,
-        `当前蓝图：${JSON.stringify(input.previousBlueprint || {})}`,
-        `请只重生第 ${input.episodeNumber} 集蓝图，输出 {"episode_blueprints":[...]} JSON。数组中只能有这一集，episode_number 必须等于 ${input.episodeNumber}，必须包含 source_trace，不要改写其他集。`,
-        '数组每项必须包含英文 snake_case 字段：episode_number,title,positioning,opening_hook,summary,source_trace,characters,scenes,ending_hook,risk_notes,brief_id。',
-        'characters、scenes、risk_notes 必须是字符串数组；source_trace 必须是数组；不要用中文字段名替代。',
-      ].join('\n\n'),
+      systemPrompt: this.buildSkillPrompt('blueprint_refine', 'EpisodeBlueprint[]'),
+      userPrompt: serializeRuntimeContext({
+        project: {
+          id: input.dramaId,
+        },
+        request: {
+          episode_id: input.episodeId,
+          episode_number: input.episodeNumber,
+        },
+        source: {
+          id: input.sourceId,
+          profile: buildSourceProfile(input.health),
+          analysis: input.analysis,
+        },
+        selected_brief: input.brief,
+        current_blueprint: input.previousBlueprint,
+      }),
     })
     const [blueprint] = this.validator.validateEpisodeBlueprints(result.result)
     if (!blueprint) throw new BadRequestException('episode_blueprint_required')
@@ -819,48 +873,49 @@ export class DramaAgentService {
       taskType: 'episode_script_generate',
       outputSchemaName: 'EpisodeScript',
       idempotencyKey: `episode:${input.episodeId}:script:${input.blueprint?.brief_id || 'unknown'}`,
-      systemPrompt: buildSystemPrompt('EpisodeScript'),
-      userPrompt: [
-        `短剧项目 ID：${input.dramaId}`,
-        `分集 ID：${input.episodeId}`,
-        `选中策略：${JSON.stringify(input.brief || {})}`,
-        `分集蓝图：${JSON.stringify(input.blueprint || {})}`,
-        `原文追溯：${JSON.stringify(input.sourceTrace || [])}`,
-        '请输出 {"script_content":"..."} JSON。正文应为可直接进入短剧工作台的中文分集剧本，必须遵守选中策略，并只基于分集蓝图与原文追溯扩写，不要编造未出现的主线事实。',
-      ].join('\n\n'),
+      systemPrompt: this.buildSkillPrompt('episode_script_generate', 'EpisodeScript'),
+      userPrompt: serializeRuntimeContext({
+        project: {
+          id: input.dramaId,
+        },
+        episode: {
+          id: input.episodeId,
+        },
+        selected_brief: input.brief,
+        blueprint: input.blueprint,
+        source_trace: input.sourceTrace,
+      }),
     })
     return {
       ...result,
       scriptContent: this.validator.validateEpisodeScript(result.result),
     }
   }
-}
-
-function buildSystemPrompt(schemaName: string) {
-  return [
-    '你是短剧 AI-first 改编远程执行器。',
-    '你只能返回严格 JSON，不要 Markdown，不要解释。',
-    '本地后端负责权限、幂等、状态推进和最终写库；你只返回结构化结果。',
-    `输出结构：${schemaName}`,
-    '必须保留 source_trace 或可追溯证据；无法确定时返回 warnings 字段，但不要编造事实。',
-  ].join('\n')
-}
-
-function formatSourceForAgent(content: string, health: SourceHealthLike) {
-  if (!health.over_context_limit) {
-    return `源稿全文：\n${content}`
+  private buildSkillPrompt(mode: DramaAdaptationSkillMode, outputSchemaName: string) {
+    const skillPrompt = this.skillsService?.getSkillContent(['drama_adaptation_copilot']).trim()
+    if (!skillPrompt) {
+      throw new BadRequestException('drama_adaptation_skill_unavailable')
+    }
+    return [
+      skillPrompt,
+      '',
+      '# Runtime binding',
+      `mode: ${mode}`,
+      `output_schema: ${outputSchemaName}`,
+      '本次只执行当前 mode；只返回当前 mode 的严格 JSON 结果。',
+    ].join('\n')
   }
+}
 
-  const chapters = (health.chapter_index || [])
-    .slice(0, 80)
-    .map((chapter) => `- ${chapter.chapter_no}. ${chapter.title}（${chapter.word_count}字）：${compactText(chapter.brief, 180)}`)
-    .join('\n')
-  const head = content.slice(0, 5000)
-  const tail = content.slice(Math.max(0, content.length - 5000))
-  return [
-    '源稿为长篇，不能把全文塞进单次上下文。以下提供章节索引与首尾代表片段；后续应升级为 chunk 级远程任务。',
-    `章节索引：\n${chapters}`,
-    `开篇片段：\n${head}`,
-    `结尾片段：\n${tail}`,
-  ].join('\n\n')
+function buildSourceProfile(health: SourceHealthLike) {
+  return {
+    word_count: health.word_count,
+    chapter_count: health.chapter_count,
+    chapter_index: health.chapter_index || [],
+    anomalies: health.anomalies || [],
+  }
+}
+
+function serializeRuntimeContext(context: Record<string, unknown>) {
+  return JSON.stringify(context)
 }

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common'
 import { ConfigModule } from '@nestjs/config'
 
 import { AdminModule } from './modules/admin/admin.module'
+import { AgentRuntimeModule } from './modules/agent-runtime/agent-runtime.module'
 import { CanvasModule } from './modules/canvas/canvas.module'
 import { AgentConfigsModule } from './modules/agent-configs/agent-configs.module'
 import { AiModule } from './modules/ai/ai.module'
@@ -14,6 +15,7 @@ import { ComposeModule } from './modules/compose/compose.module'
 import { envSchema } from './config/env'
 import { DatabaseModule } from './db/database.module'
 import { DramasModule } from './modules/dramas/dramas.module'
+import { DramaWorkspaceModule } from './modules/drama-workspace/drama-workspace.module'
 import { EpisodesModule } from './modules/episodes/episodes.module'
 import { GridModule } from './modules/grid/grid.module'
 import { HealthModule } from './modules/health/health.module'
@@ -50,6 +52,7 @@ import { WritingsModule } from './modules/writings/writings.module'
     AuthModule,
     CharactersModule,
     DramasModule,
+    DramaWorkspaceModule,
     EpisodesModule,
     ScenesModule,
     SkillsModule,
@@ -64,6 +67,7 @@ import { WritingsModule } from './modules/writings/writings.module'
     AiConfigsModule,
     AssetsModule,
     AudioModule,
+    AgentRuntimeModule,
     CanvasModule,
     UploadsModule,
   ],

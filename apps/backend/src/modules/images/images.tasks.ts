@@ -2,15 +2,15 @@ import { Inject, Injectable } from '@nestjs/common'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 
 import { DatabaseService } from '../../db/database.service'
-import { AssetsService } from '../assets/assets.service'
 import { imageGenerations, scenes, storyboards, tasks } from '../../db/schema'
+import { DramaProductionBackfillService } from '../drama-workspace/drama-production-backfill.service'
 import { sanitizePayload, toPublicMediaUrl, trimText } from './images.utils'
 
 @Injectable()
 export class ImagesTasksService {
   constructor(
     @Inject(DatabaseService) private readonly databaseService: DatabaseService,
-    @Inject(AssetsService) private readonly assetsService: AssetsService,
+    @Inject(DramaProductionBackfillService) private readonly backfillService: DramaProductionBackfillService,
   ) {}
 
   private now() {
@@ -119,9 +119,9 @@ export class ImagesTasksService {
   private async syncCompletedAsset(taskId: number | null, status: string) {
     if (!taskId || status !== 'completed') return
     try {
-      await this.assetsService.ensureAssetFromTask(taskId)
+      await this.backfillService.backfillTaskResult(taskId)
     } catch (error) {
-      console.error('[ImagesTasksService] Failed to auto-create asset from task', taskId, error)
+      console.error('[ImagesTasksService] Failed to backfill image task result', taskId, error)
     }
   }
 

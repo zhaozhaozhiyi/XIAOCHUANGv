@@ -182,20 +182,21 @@ export function AgentsTab() {
   }))
 
   return (
-    <div className="page-shell animate-fade-up flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border pb-4">
+    <div className="settings-pane">
+      <div className="settings-pane-head">
         <h2 className="page-title mb-2">Agent 配置</h2>
         <p className="page-subtitle">调整模型、提示词和参数，保存后立即生效。</p>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pt-5">
-        <div className="space-y-3 max-w-[760px]">
+      <div className="settings-pane-body settings-pane-body--narrow">
+        <div className="space-y-3">
         {AGENT_DEFS.map(a => {
           const cfg = getAgentCfg(a.type)
           const isEditing = editingAgent === a.type
           return (
-            <div key={a.type} className="rounded-[14px] bg-bg-0 border border-border overflow-hidden">
-              <button className="w-full flex items-center gap-3 p-4 cursor-pointer hover:bg-bg-hover transition-colors text-left" onClick={() => toggleEdit(a.type)}>
+            <div key={a.type} className="settings-record-card">
+              <button type="button" className="w-full cursor-pointer text-left transition-colors hover:bg-bg-0/70" onClick={() => toggleEdit(a.type)}>
+                <div className="flex items-center gap-3 p-4">
                 <span className="text-lg w-8 h-8 flex items-center justify-center">{a.icon}</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-text-0">{a.label}</div>
@@ -207,10 +208,11 @@ export function AgentsTab() {
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-bg-2 text-text-3 shrink-0">默认</span>
                 )}
                 <ChevronDown size={14} className={`text-text-3 transition-transform shrink-0 ${isEditing ? 'rotate-180' : ''}`} />
+                </div>
               </button>
 
               {isEditing && (
-                <div className="px-4 pb-4 border-t border-border pt-4 flex flex-col gap-4">
+                <div className="settings-subtle-divider flex flex-col gap-4 border-t px-4 pb-4 pt-4">
                   <label className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-text-1">模型 <span className="text-text-3 font-normal">(留空使用 AI 服务默认)</span></span>
                     <BaseSelect value={form.model} onValueChange={v => setForm(f => ({ ...f, model: String(v) }))} options={textModelOptions} placeholder="— 使用 AI 服务默认 —" />

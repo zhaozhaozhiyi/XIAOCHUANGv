@@ -3,8 +3,21 @@ import path from 'node:path'
 
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 
-const SKILLS_DIR = path.resolve(process.cwd(), '../../skills')
 const SKILL_ID_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/
+
+function resolveSkillsDir() {
+  const candidates = [
+    path.resolve(process.cwd(), 'skills'),
+    path.resolve(process.cwd(), '../skills'),
+    path.resolve(process.cwd(), '../../skills'),
+  ]
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate
+  }
+
+  return candidates[candidates.length - 1]
+}
 
 function normalizeSkillId(raw: string | string[]) {
   const segments = Array.isArray(raw) ? raw : String(raw || '').split('/')
@@ -23,8 +36,9 @@ function normalizeSkillId(raw: string | string[]) {
 export class SkillsService {
   listSkills() {
     const skills: { id: string; name: string; description: string }[] = []
+    const skillsDir = resolveSkillsDir()
 
-    if (!fs.existsSync(SKILLS_DIR)) {
+    if (!fs.existsSync(skillsDir)) {
       return skills
     }
 
@@ -49,13 +63,13 @@ export class SkillsService {
       }
     }
 
-    scanDir(SKILLS_DIR)
+    scanDir(skillsDir)
     return skills
   }
 
   createSkill(body: Record<string, unknown>) {
     const id = normalizeSkillId(String(body.id || ''))
-    const skillDir = path.join(SKILLS_DIR, id)
+    const skillDir = path.join(resolveSkillsDir(), id)
     if (fs.existsSync(skillDir)) {
       throw new BadRequestException('Skill already exists')
     }
@@ -71,7 +85,7 @@ export class SkillsService {
 
   getSkillContent(rawId: string[]) {
     const skillId = normalizeSkillId(rawId)
-    const skillPath = path.join(SKILLS_DIR, skillId, 'SKILL.md')
+    const skillPath = path.join(resolveSkillsDir(), skillId, 'SKILL.md')
     if (!fs.existsSync(skillPath)) {
       throw new NotFoundException('Skill not found')
     }
@@ -80,7 +94,7 @@ export class SkillsService {
 
   updateSkillContent(rawId: string[], content: string) {
     const skillId = normalizeSkillId(rawId)
-    const skillDir = path.join(SKILLS_DIR, skillId)
+    const skillDir = path.join(resolveSkillsDir(), skillId)
     if (!fs.existsSync(skillDir)) {
       fs.mkdirSync(skillDir, { recursive: true })
     }
@@ -89,7 +103,7 @@ export class SkillsService {
 
   deleteSkill(rawId: string[]) {
     const skillId = normalizeSkillId(rawId)
-    const skillDir = path.join(SKILLS_DIR, skillId)
+    const skillDir = path.join(resolveSkillsDir(), skillId)
     if (!fs.existsSync(skillDir)) {
       throw new NotFoundException('Skill not found')
     }

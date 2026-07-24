@@ -12,6 +12,7 @@ import type { NextConfig } from 'next'
 const nextDistDir =
   process.env.NEXT_DIST_DIR?.trim() ||
   (process.env.NODE_ENV === 'production' ? '.next-prod' : '.next-dev')
+const backendBaseUrl = String(process.env.BACKEND_BASE_URL || '').trim()
 
 function trimTrailingSlashes(value: string) {
   return value.replace(/\/+$/, '')
@@ -31,7 +32,6 @@ function resolvePublicBackendBaseUrl() {
     return normalizeOrigin(explicit)
   }
 
-  const backendBaseUrl = String(process.env.BACKEND_BASE_URL || 'http://127.0.0.1:3010').trim()
   if (!backendBaseUrl) return ''
 
   try {
@@ -53,6 +53,10 @@ const publicMediaBaseUrl = explicitPublicMediaBaseUrl
   : publicBackendBaseUrl
     ? `${publicBackendBaseUrl}/static`
     : ''
+
+if (process.env.NODE_ENV === 'production' && !backendBaseUrl) {
+  throw new Error('BACKEND_BASE_URL is required for apps/web production builds.')
+}
 
 if (process.env.NODE_ENV === 'production' && !publicMediaBaseUrl) {
   throw new Error(

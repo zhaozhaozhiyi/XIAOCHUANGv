@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/NousResearch/hermes-agent.git",
+    "revision": "e71a2bd11b733f3be7cf99deafde0066c343d462",
+    "projectVersion": "0.15.1"
+  },
+  "overlay": {
+    "directory": "deploy/hermes/overrides",
+    "sha256": "333ed8f528fcdf3e512e298d1999c355f51d4560bc5b53d2ab401e170ec65d79",
+    "files": [
+      {
+        "path": "agent/agent_init.py",
+        "sha256": "77e51956023752b39175ee25ef39290895f544a94d8333324369ee856c0b978f"
+      },
+      {
+        "path": "agent/auxiliary_client.py",
+        "sha256": "ef85248070d3fb099f72eaa261438d7ce51c1cd63c9d6996a272e5161aeb62c8"
+      },
+      {
+        "path": "gateway/platforms/api_server.py",
+        "sha256": "9a56be6194a0e8c021d6741db6b543b60e6515efd114fe935156cf7d3f4ec0b5"
+      },
+      {
+        "path": "gateway/xiaochuang_runtime_context.py",
+        "sha256": "72919e7c3c48b3cadce0a5a6df3b3e8bf010e3a49a302ffc21145c605d3b9cb4"
+      },
+      {
+        "path": "gateway/xiaochuang_skill_bundle.py",
+        "sha256": "08347210175a6db91caea0ddfd909ea801f37ed924313e1a1b1970b03e0b7fa1"
+      },
+      {
+        "path": "model_tools.py",
+        "sha256": "11a6dff6afa7dd77985014bdd0b55994b7f153f7f703c68157f799c9c3bffe0d"
+      },
+      {
+        "path": "run_agent.py",
+        "sha256": "6e2d12838e06bbc7394b7ce32d65a0f8964a86218b6fdeedf643401c9a8b7d72"
+      },
+      {
+        "path": "tests/agent/test_xiaochuang_model_gateway_auxiliary.py",
+        "sha256": "350e45edf583f604de286d9d6bc51ac2f8b3d4351be52e8d0988cc6ffd63e7d2"
+      },
+      {
+        "path": "tests/gateway/test_api_server_runs.py",
+        "sha256": "4ee9e545cb0bb8e1c4aff1ce38e7fb0d0159f04954b97cfe5b7d5c13f1447df6"
+      },
+      {
+        "path": "tests/gateway/test_api_server_toolset.py",
+        "sha256": "7d0f75fe3b33a3ffd72bf2157c8512aa8317b647e81b49567b9635351b1c15bd"
+      },
+      {
+        "path": "tests/gateway/test_xiaochuang_skill_bundle.py",
+        "sha256": "8cdd75006a9e9ae1e8ee315c80fdb128b909fed04f81d109db1ae99d24e72217"
+      },
+      {
+        "path": "tests/gateway/test_xiaochuang_source_profile_e2e.py",
+        "sha256": "a400f3025da378ebd69d556fbe1d09b7d0d8858bdb2bd4a738448920b2ade427"
+      },
+      {
+        "path": "tests/run_agent/test_provider_attribution_headers.py",
+        "sha256": "aa2a56f9766197e90b9753f501d21543213a92530063f144155435031acc0b52"
+      },
+      {
+        "path": "tests/tools/test_tool_result_storage.py",
+        "sha256": "0330487715032a2a7790bd6ae95ab54dc1b83c8e5c33f5b392ab0670d6995a91"
+      },
+      {
+        "path": "tests/tools/test_xiaochuang_drama_tool.py",
+        "sha256": "f9a72eb7eab9e7c11e828208c0313589b10e72303769bfa5961f4af35f34cea9"
+      },
+      {
+        "path": "tools/tool_result_storage.py",
+        "sha256": "bf1ebddc32b8a2899791d4864d46108656507263899656ceb615ad107e3be227"
+      },
+      {
+        "path": "tools/xiaochuang_drama_tool.py",
+        "sha256": "e099f61b1f9159bbe2cafbd065f1af79cf2e7129180f6d54266317e01de999cc"
+      }
+    ]
+  }
+}

@@ -4,7 +4,7 @@ import type { FastifyReply } from 'fastify'
 import { z } from 'zod'
 
 import { AuthService } from './auth.service'
-import { buildDevPhoneCodeResponse, getDevAuthCode, isLocalAuthMockEnabled } from './auth-dev'
+import { buildDevPhoneCodeResponse, getDevAuthCode, isLocalAuthCodeMockEnabled } from './auth-dev'
 import { AuthRegistrationService } from './auth-registration.service'
 import { CurrentUser } from './current-user.decorator'
 import { SessionAuthGuard } from './session-auth.guard'
@@ -75,7 +75,7 @@ export class AuthController {
       throw new UnauthorizedException('手机号不能为空')
     }
 
-    if (isLocalAuthMockEnabled()) {
+    if (isLocalAuthCodeMockEnabled()) {
       await this.authRegistrationService.issueMockVerificationCode(payload.phone, 'register', getDevAuthCode())
       return buildDevPhoneCodeResponse()
     }
@@ -96,7 +96,7 @@ export class AuthController {
       throw new UnauthorizedException('手机号不能为空')
     }
 
-    if (isLocalAuthMockEnabled()) {
+    if (isLocalAuthCodeMockEnabled()) {
       await this.authRegistrationService.issueMockVerificationCode(payload.phone, 'login', getDevAuthCode())
       return buildDevPhoneCodeResponse()
     }
@@ -162,7 +162,7 @@ export class AuthController {
 
     const result = await this.authRegistrationService
       .loginWithPhoneCode(payload.phone, payload.smsCode, {
-        autoCreateIfMissing: isLocalAuthMockEnabled(),
+        autoCreateIfMissing: isLocalAuthCodeMockEnabled(),
       })
       .catch((error) => {
         throw new UnauthorizedException(error instanceof Error ? error.message : '登录失败')

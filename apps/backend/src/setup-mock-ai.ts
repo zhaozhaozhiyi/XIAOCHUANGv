@@ -3,6 +3,7 @@ import 'reflect-metadata'
 import { and, eq } from 'drizzle-orm'
 
 import { DEFAULT_MOCK_AI_PORT, MOCK_AI_CONFIG_PRESETS, MOCK_AI_VOICES, getMockAiBaseUrl } from './mock-ai.shared'
+import { prepareAiConfigSecretForStorage } from './modules/ai-configs/ai-configs.crypto'
 
 function hasFlag(flag: string) {
   return process.argv.includes(flag)
@@ -81,12 +82,12 @@ async function main() {
         provider: preset.provider,
         name: preset.name,
         baseUrl: baseUrl,
-        apiKey: preset.apiKey,
+        apiKey: prepareAiConfigSecretForStorage(preset.apiKey),
         model: JSON.stringify([preset.model]),
         priority: 900_000,
         isDefault: false,
         isActive: true,
-        settings: null,
+        settings: preset.settings ? JSON.stringify(preset.settings) : null,
         updatedAt: timestamp,
       }
 

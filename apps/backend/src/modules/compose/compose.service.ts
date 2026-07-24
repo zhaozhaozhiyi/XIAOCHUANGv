@@ -12,6 +12,8 @@ import { DatabaseService } from '../../db/database.service'
 import { characters, dramas, episodes, storyboards, tasks } from '../../db/schema'
 import { AudioService } from '../audio/audio.service'
 import { getStoryboardTtsDialogue, isNarratorSpeaker, parseDialogueForTTS } from '../audio/audio.dialogue'
+import { DramaProductionBackfillService } from '../drama-workspace/drama-production-backfill.service'
+import { assertLegacyEpisodeProductionAllowed } from '../drama-workspace/continuity-production-gate'
 import { readProjectDefaults, resolveProjectConfigId } from '../dramas/drama-metadata'
 import { getAbsolutePath } from '../images/images.storage'
 import { TaskQueueService } from '../queue/task-queue.service'
@@ -145,6 +147,7 @@ export class ComposeService {
     @Inject(AudioService) private readonly audioService: AudioService,
     @Inject(StorageService) private readonly storageService: StorageService,
     @Inject(TaskQueueService) private readonly taskQueueService: TaskQueueService,
+    @Inject(DramaProductionBackfillService) private readonly backfillService: DramaProductionBackfillService,
   ) {}
 
   private async toAbsPath(relativePath: string) {
@@ -520,7 +523,7 @@ export class ComposeService {
         .update(storyboards)
         .set({ composedVideoUrl: storedVideo.url, status: 'compose_completed', updatedAt: now() })
         .where(eq(storyboards.id, storyboardId))
-      await this.syncStoryboardComposeTask({
+      const completedTaskId = await this.syncStoryboardComposeTask({
         storyboardId,
         userId: storyboard.userId ?? null,
         payload: {
@@ -529,6 +532,13 @@ export class ComposeService {
         },
         status: 'completed',
       })
+      if (completedTaskId != null) {
+        try {
+          await this.backfillService.backfillTaskResult(completedTaskId)
+        } catch (error) {
+          console.error('[ComposeService] Failed to backfill storyboard compose task result', completedTaskId, error)
+        }
+      }
 
       return storedVideo.url
     } catch (error) {
@@ -576,6 +586,11 @@ export class ComposeService {
       .where(eq(storyboards.id, storyboardId))
     if (!storyboard) throw new Error(`Storyboard ${storyboardId} not found`)
     if (!storyboard.videoUrl) throw new Error(`Storyboard ${storyboardId} has no video`)
+    await assertLegacyEpisodeProductionAllowed(
+      this.databaseService,
+      storyboard.episodeId,
+      userId,
+    )
 
     await this.databaseService.db
       .update(storyboards)
@@ -600,6 +615,11 @@ export class ComposeService {
   }
 
   async enqueueEpisodeCompose(episodeId: number, userId?: number | null) {
+    await assertLegacyEpisodeProductionAllowed(
+      this.databaseService,
+      episodeId,
+      userId,
+    )
     const rows = await this.databaseService.db
       .select()
       .from(storyboards)

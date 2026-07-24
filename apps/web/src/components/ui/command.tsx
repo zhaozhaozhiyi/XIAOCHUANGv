@@ -45,6 +45,8 @@ function CommandDialog({
   return (
     <Dialog {...props}>
       <DialogContent
+        variant="workspace"
+        size="standard"
         className={cn(
           "gap-0 overflow-hidden p-2 sm:max-w-lg sm:p-3",
           className
