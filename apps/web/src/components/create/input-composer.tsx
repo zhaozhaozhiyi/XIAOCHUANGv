@@ -695,7 +695,7 @@ export function InputComposer({
           <div
             className={cn(
               'rounded-[14px] bg-bg-input transition-[min-height,padding,margin] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]',
-              composerCompact ? 'mb-2 min-h-[80px] px-3 py-2 sm:min-h-[84px] sm:px-3 sm:py-2.5' : 'mb-3 min-h-[112px] px-3 py-2.5 sm:min-h-[128px] sm:px-3.5 sm:py-3',
+              composerCompact ? 'mb-2 min-h-[96px] px-3 py-2 sm:min-h-[100px] sm:px-3 sm:py-2.5' : 'mb-3 min-h-[112px] px-3 py-2.5 sm:min-h-[128px] sm:px-3.5 sm:py-3',
             )}
           >
             <div className="relative flex items-start">
@@ -794,7 +794,7 @@ export function InputComposer({
                   placeholder={promptPlaceholder}
                   className={cn(
                     'relative z-0 resize-none overflow-y-auto border-0 bg-transparent px-0 py-0 text-[14px] leading-7 text-transparent shadow-none placeholder:text-text-3 caret-text-2 focus-visible:ring-0',
-                    composerCompact ? 'h-[60px] min-h-[60px] sm:h-[64px] sm:min-h-[64px]' : 'h-[92px] min-h-[92px] sm:h-[112px] sm:min-h-[112px]',
+                    composerCompact ? 'h-[80px] min-h-[80px]' : 'h-[92px] min-h-[92px] sm:h-[112px] sm:min-h-[112px]',
                   )}
                   style={{ paddingLeft: `${promptLeftPadding}px` }}
                 />
