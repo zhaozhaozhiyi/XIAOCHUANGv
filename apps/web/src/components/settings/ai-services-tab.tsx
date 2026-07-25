@@ -213,6 +213,7 @@ export function AIServicesTab() {
     const settings = parseSettingsText()
     if (settings === false) return
     await testCfg({
+      config_id: cfgEditId ?? undefined,
       service_type: cfgForm.service_type,
       provider: cfgForm.provider,
       api_key: cfgForm.api_key,

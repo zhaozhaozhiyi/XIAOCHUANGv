@@ -1775,8 +1775,13 @@ export const skillsAPI = {
 };
 
 export const voicesAPI = {
-  list: (provider?: string) =>
-    api.get<AIVoice[]>(`/ai-voices${provider ? `?provider=${provider}` : ""}`),
+  list: (provider?: string, configId?: number | null) => {
+    const query = new URLSearchParams();
+    if (provider) query.set("provider", provider);
+    if (configId != null) query.set("config_id", String(configId));
+    const suffix = query.size ? `?${query.toString()}` : "";
+    return api.get<AIVoice[]>(`/ai-voices${suffix}`);
+  },
   sync: () => api.post("/ai-voices/sync", {}),
 };
 

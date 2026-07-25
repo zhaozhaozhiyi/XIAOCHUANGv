@@ -94,8 +94,7 @@ export function useInputComposerModeState(options: UseInputComposerModeStateOpti
   const videoModelsLoadedRef = useRef(false)
   const videoModelsLoadingRef = useRef(false)
   const voicesLoadingRef = useRef(false)
-  const voicesProviderRef = useRef<string | null>(null)
-  const audioConfigsLoadedRef = useRef(false)
+  const voicesConfigRef = useRef<string | null>(null)
   const audioConfigsLoadingRef = useRef(false)
   const previousToolbarModeRef = useRef<ComposerToolbarMode>(toolbarMode)
   const onToolbarModeChangeRef = useRef(options.onToolbarModeChange)
@@ -153,32 +152,40 @@ export function useInputComposerModeState(options: UseInputComposerModeStateOpti
     }
   }, [])
 
-  const loadVoices = useCallback(async (provider: string) => {
-    // 按服务商加载音色；切换服务商时重新拉取，避免沿用上一个服务商的音色。
-    if (voicesProviderRef.current === provider) return
-    voicesProviderRef.current = provider
+  const loadVoices = useCallback(async (provider: string, configId: number | null) => {
+    const configKey = provider && configId != null ? `${provider}:${configId}` : ''
+    if (!configKey) {
+      voicesConfigRef.current = null
+      setVoiceOptions([])
+      return
+    }
+    if (voicesConfigRef.current === configKey) return
+    voicesConfigRef.current = configKey
     voicesLoadingRef.current = true
     setVoicesLoading(true)
     try {
-      const voices = await voicesAPI.list(provider || undefined) as unknown as AIVoice[]
-      setVoiceOptions(voices || [])
+      const voices = await voicesAPI.list(provider, configId) as unknown as AIVoice[]
+      if (voicesConfigRef.current === configKey) setVoiceOptions(voices || [])
     } catch {
-      setVoiceOptions([])
-      voicesProviderRef.current = null
+      if (voicesConfigRef.current === configKey) {
+        setVoiceOptions([])
+        voicesConfigRef.current = null
+      }
     } finally {
-      voicesLoadingRef.current = false
-      setVoicesLoading(false)
+      if (voicesConfigRef.current === configKey) {
+        voicesLoadingRef.current = false
+        setVoicesLoading(false)
+      }
     }
   }, [])
 
   const loadAudioConfigs = useCallback(async () => {
-    if (audioConfigsLoadedRef.current || audioConfigsLoadingRef.current) return
+    if (audioConfigsLoadingRef.current) return
     audioConfigsLoadingRef.current = true
     setAudioConfigsLoading(true)
     try {
       const configs = await aiConfigAPI.list('audio') as unknown as AIServiceConfig[]
       setAudioConfigOptions(buildAudioConfigOptions(configs || []))
-      audioConfigsLoadedRef.current = true
     } catch {
       setAudioConfigOptions([])
     } finally {
@@ -240,12 +247,12 @@ export function useInputComposerModeState(options: UseInputComposerModeStateOpti
   useEffect(() => {
     if (toolbarMode !== 'audio') return
     const task = window.setTimeout(() => {
-      void loadVoices(selectedAudioConfig?.provider ?? '')
+      void loadVoices(selectedAudioConfig?.provider ?? '', selectedAudioConfig?.id ?? null)
     }, 0)
     return () => {
       window.clearTimeout(task)
     }
-  }, [toolbarMode, selectedAudioConfig?.provider, loadVoices])
+  }, [toolbarMode, selectedAudioConfig?.id, selectedAudioConfig?.provider, loadVoices])
 
   useEffect(() => {
     if (voiceOptions.some((item) => item.voice_id === selectedVoiceId)) return

@@ -74,15 +74,24 @@ export async function normalizeImageReferenceForAdapter(
 ) {
   const raw = String(value || '').trim()
   if (!raw || raw.startsWith('data:image/')) return raw || null
-  const shouldInline = storageService.isLocalStoragePath(raw)
-    || raw.startsWith('http://')
-    || raw.startsWith('https://')
-  if (!shouldInline) return raw
+
+  if (!storageService.usesLocalDriver()) {
+    return storageService.isLocalStoragePath(raw)
+      ? storageService.toPublicUrl(raw) || raw
+      : raw
+  }
+
+  const localStoragePath = storageService.publicUrlToLocalStoragePath(raw)
+  const source = localStoragePath || raw
+  const shouldInline = storageService.isLocalStoragePath(source)
+    || source.startsWith('http://')
+    || source.startsWith('https://')
+  if (!shouldInline) return source
 
   try {
-    return await readImageAsCompressedDataUrl(storageService, raw, options)
+    return await readImageAsCompressedDataUrl(storageService, source, options)
   } catch {
-    return storageService.isLocalStoragePath(raw) ? null : raw
+    return storageService.isLocalStoragePath(source) ? null : raw
   }
 }
 
