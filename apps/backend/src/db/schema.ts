@@ -318,7 +318,10 @@ export const dramaSourceChunks = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    index("idx_drama_source_chunks_source_id").on(table.sourceId),
+    uniqueIndex("idx_drama_source_chunks_source_chunk_no").on(
+      table.sourceId,
+      table.chunkNo,
+    ),
     index("idx_drama_source_chunks_drama_id").on(table.dramaId),
     index("idx_drama_source_chunks_status").on(table.status),
   ],

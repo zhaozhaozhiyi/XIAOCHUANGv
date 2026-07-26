@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -187,25 +194,26 @@ export function useDramaAiFirstController(
   const hasPersistedSource = Boolean(novelSource || drama?.source_health);
   const hasSourceIssue = hasPersistedSource && !novelSourceHealth.ok;
   const hasUsableNovelSource = hasPersistedSource && novelSourceHealth.ok;
+  const deferredSourceContentDraft = useDeferredValue(sourceContentDraft);
   const sourceDraftWordCount = useMemo(
-    () => countNovelWords(sourceContentDraft),
-    [sourceContentDraft],
+    () => countNovelWords(deferredSourceContentDraft),
+    [deferredSourceContentDraft],
   );
   const sourceDraftChapterCount = useMemo(
-    () => buildChapterIndex(sourceContentDraft).length || 0,
-    [sourceContentDraft],
+    () => buildChapterIndex(deferredSourceContentDraft).length || 0,
+    [deferredSourceContentDraft],
   );
   const sourceDialogHealth = useMemo(() => {
-    if (!sourceContentDraft.trim()) return getNovelSourceHealth(null);
+    if (!deferredSourceContentDraft.trim()) return getNovelSourceHealth(null);
     return getNovelSourceHealth({
       type: "paste",
       title: sourceTitleDraft.trim() || drama?.title || "",
-      content: sourceContentDraft,
+      content: deferredSourceContentDraft,
       word_count: 0,
       chapter_count: 0,
       imported_at: "",
     });
-  }, [drama?.title, sourceContentDraft, sourceTitleDraft]);
+  }, [deferredSourceContentDraft, drama?.title, sourceTitleDraft]);
   const selectedWritingSource = useMemo(
     () =>
       writingSources.find((item) => item.id === selectedWritingSourceId) ??

@@ -29,6 +29,8 @@ const DIRECT_TOKEN_LIMIT = 60_000;
 const ASYNC_TOKEN_LIMIT = 400_000;
 const DEFAULT_CHUNK_TOKENS = 12_000;
 const SOURCE_PREVIEW_CHARS = 12_000;
+const SOURCE_GLOBAL_SUMMARY_MAX_INPUT_CHARS = 60_000;
+const SOURCE_SUMMARY_REDUCE_BATCH_SIZE = 6;
 const REMOTE_AGENT_MODE = "remote_agent";
 const AI_FIRST_TASK_TYPE = "source_analysis";
 const AI_FIRST_BRIEF_TASK_TYPE = "adaptation_briefs";
@@ -124,6 +126,12 @@ type SourceChunkAnalysisPayload = {
   ai_run_id?: number | null;
   remote_run_id?: string | null;
   generated_at?: string | null;
+};
+
+type SourceChunkAnalysisAggregate = SourceChunkAnalysisPayload & {
+  chunk_id?: number;
+  chunk_no?: number;
+  reduction_level?: number;
 };
 
 type AdaptationBriefPayload = {
@@ -321,6 +329,29 @@ function estimateTokensByWordCount(wordCount: number) {
 
 function hashText(content: string) {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function mergeSourceTraces(
+  analyses: SourceChunkAnalysisPayload[],
+  maxItems = 64,
+) {
+  const traces: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+  for (const analysis of analyses) {
+    for (const trace of analysis.source_trace || []) {
+      const key = JSON.stringify(trace);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      traces.push(trace);
+    }
+  }
+  if (traces.length <= maxItems) return traces;
+  return Array.from({ length: maxItems }, (_, index) => {
+    const sourceIndex = Math.round(
+      (index * (traces.length - 1)) / Math.max(1, maxItems - 1),
+    );
+    return traces[sourceIndex];
+  });
 }
 
 function normalizeSourceType(
@@ -4035,23 +4066,28 @@ export class DramaAiFirstService {
     if (!drafts.length) return [];
 
     const ts = new Date();
-    await this.databaseService.db.insert(dramaSourceChunks).values(
-      drafts.map((chunk) => ({
-        userId: source.userId,
-        dramaId: source.dramaId,
-        sourceId: chunk.sourceId,
-        chunkNo: chunk.chunkNo,
-        title: chunk.title,
-        contentStart: chunk.contentStart,
-        contentEnd: chunk.contentEnd,
-        contentHash: chunk.contentHash,
-        estimatedTokens: chunk.estimatedTokens,
-        sourceTrace: chunk.sourceTrace,
-        status: "pending",
-        createdAt: ts,
-        updatedAt: ts,
-      })),
-    );
+    await this.databaseService.db
+      .insert(dramaSourceChunks)
+      .values(
+        drafts.map((chunk) => ({
+          userId: source.userId,
+          dramaId: source.dramaId,
+          sourceId: chunk.sourceId,
+          chunkNo: chunk.chunkNo,
+          title: chunk.title,
+          contentStart: chunk.contentStart,
+          contentEnd: chunk.contentEnd,
+          contentHash: chunk.contentHash,
+          estimatedTokens: chunk.estimatedTokens,
+          sourceTrace: chunk.sourceTrace,
+          status: "pending",
+          createdAt: ts,
+          updatedAt: ts,
+        })),
+      )
+      .onConflictDoNothing({
+        target: [dramaSourceChunks.sourceId, dramaSourceChunks.chunkNo],
+      });
 
     return this.databaseService.db
       .select()
@@ -4077,9 +4113,7 @@ export class DramaAiFirstService {
     const chunks = await this.ensureSourceChunks(input.source, input.health);
     if (!chunks.length) throw new BadRequestException("source_chunks_required");
 
-    const chunkAnalyses: Array<
-      SourceChunkAnalysisPayload & { chunk_id: number; chunk_no: number }
-    > = [];
+    const chunkAnalyses: SourceChunkAnalysisAggregate[] = [];
     const reportChunkProgress = async (
       phase: "chunk_analysis" | "global_summary" = "chunk_analysis",
     ) => {
@@ -4239,20 +4273,91 @@ export class DramaAiFirstService {
     }
 
     await reportChunkProgress("global_summary");
+    let globalSummaryInput = chunkAnalyses;
+    let reductionLevel = 0;
+    while (
+      JSON.stringify(globalSummaryInput).length >
+        SOURCE_GLOBAL_SUMMARY_MAX_INPUT_CHARS &&
+      globalSummaryInput.length > 1
+    ) {
+      reductionLevel += 1;
+      const reduced: SourceChunkAnalysisAggregate[] = [];
+      for (
+        let offset = 0;
+        offset < globalSummaryInput.length;
+        offset += SOURCE_SUMMARY_REDUCE_BATCH_SIZE
+      ) {
+        const batch = globalSummaryInput.slice(
+          offset,
+          offset + SOURCE_SUMMARY_REDUCE_BATCH_SIZE,
+        );
+        if (batch.length === 1) {
+          reduced.push(batch[0]);
+          continue;
+        }
+        const batchNo = Math.floor(offset / SOURCE_SUMMARY_REDUCE_BATCH_SIZE) + 1;
+        const agent = await this.dramaAgentService!.reduceSourceChunkAnalyses({
+          userId: input.userId,
+          dramaId: input.dramaId,
+          sourceId: input.source.id,
+          level: reductionLevel,
+          batchNo,
+          chunkAnalyses: batch,
+        });
+        const run = await this.recordRemoteRun({
+          userId: input.userId,
+          dramaId: input.dramaId,
+          skillId: "drama_source_chunk_reducer",
+          mode: "source_chunk_reduce",
+          userMessage: `Reduce source ${input.source.id} summaries at level ${reductionLevel}, batch ${batchNo}`,
+          remoteRunId: agent.remoteRunId,
+          usage: agent.usage,
+          result: agent.chunkAnalysis,
+        });
+        reduced.push({
+          ...agent.chunkAnalysis,
+          source_trace: mergeSourceTraces([
+            ...batch,
+            agent.chunkAnalysis,
+          ]),
+          ai_run_id: run.id,
+          remote_run_id: agent.remoteRunId,
+          generated_at: input.generatedAt,
+          chunk_id: batch[0]?.chunk_id,
+          chunk_no: batch[0]?.chunk_no,
+          reduction_level: reductionLevel,
+        });
+      }
+      globalSummaryInput = reduced;
+      if (input.taskId) {
+        await this.updateSourceAnalysisTask(input.taskId, {
+          status: "running",
+          progress: Math.min(92, 87 + reductionLevel),
+          resultSummaryJson: JSON.stringify({
+            phase: "global_summary_reduce",
+            source_id: input.source.id,
+            total_chunks: chunks.length,
+            ready_chunks: chunkAnalyses.length,
+            reduction_level: reductionLevel,
+            summary_batches: reduced.length,
+          }),
+        });
+      }
+    }
     const globalAgent = await this.dramaAgentService!.analyzeSourceFromChunks({
       userId: input.userId,
       dramaId: input.dramaId,
       dramaTitle: input.dramaTitle,
       sourceId: input.source.id,
       health: input.health,
-      chunkAnalyses,
+      chunkAnalyses: globalSummaryInput,
     });
     const run = await this.recordRemoteRun({
       userId: input.userId,
       dramaId: input.dramaId,
       skillId: "drama_source_analyzer",
       mode: "source_analysis",
-      userMessage: `Analyze drama source ${input.source.id} from ${chunkAnalyses.length} chunk(s)`,
+      userMessage: `Analyze drama source ${input.source.id} from ${chunkAnalyses.length} chunk(s) in ${globalSummaryInput.length} summary input(s)`,
       remoteRunId: globalAgent.remoteRunId,
       usage: globalAgent.usage,
       result: globalAgent.analysis,

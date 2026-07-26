@@ -698,7 +698,13 @@ function SourceStage({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => setEditing(true)}
+            onClick={() => {
+              controller.setSourceTitleDraft(
+                source.title || controller.drama?.title || "",
+              );
+              controller.setSourceContentDraft("");
+              setEditing(true);
+            }}
           >
             <RefreshCw size={14} />
             重新导入

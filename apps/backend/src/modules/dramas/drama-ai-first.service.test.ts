@@ -350,8 +350,47 @@ describe('RemoteDramaAgentAdapter capability detection', () => {
 
       const [, options] = fetchMock.mock.calls[0] || []
       const body = JSON.parse(String(options?.body || '{}'))
-      expect(options?.signal).toBeUndefined()
+      expect(options?.signal).toBeInstanceOf(AbortSignal)
       expect(body).not.toHaveProperty('max_tokens')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('retries transient provider failures with the same idempotency key', async () => {
+    const resolver = {
+      resolveConfig: vi.fn().mockResolvedValue(makeResolvedTextConfig()),
+    }
+    const adapter = new RemoteDramaAgentAdapter(resolver as any)
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: vi.fn().mockResolvedValue('temporarily unavailable'),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          id: 'run-after-retry',
+          choices: [{ message: { content: '{"result":{"ok":true}}' } }],
+        })),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      await expect(adapter.executeJson({
+        userId: 1,
+        taskType: 'source_chunk_analyze',
+        idempotencyKey: 'stable-retry-key',
+        systemPrompt: 'system',
+        userPrompt: 'user',
+        outputSchemaName: 'SourceChunkAnalysis',
+      })).resolves.toMatchObject({ remoteRunId: 'run-after-retry' })
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock.mock.calls[0]?.[1]?.headers['X-Idempotency-Key']).toBe('stable-retry-key')
+      expect(fetchMock.mock.calls[1]?.[1]?.headers['X-Idempotency-Key']).toBe('stable-retry-key')
     } finally {
       vi.unstubAllGlobals()
     }
@@ -684,6 +723,33 @@ describe('DramaAgentSchemaValidator', () => {
     expect(briefs).toHaveLength(2)
     expect(blueprints[0]?.source_trace?.[0]?.chapter_no).toBe(1)
     expect(script).toContain('旧宅客厅')
+  })
+
+  it('bounds source chunk summaries before they enter global reduction', () => {
+    const chunk = validator.validateSourceChunkAnalysis({
+      source_chunk_analysis: {
+        summary: '长'.repeat(5_000),
+        key_events: Array.from({ length: 40 }, (_, index) => `事件${index}-${'细'.repeat(500)}`),
+        characters: Array.from({ length: 80 }, (_, index) => `角色${index}`),
+        scenes: Array.from({ length: 80 }, (_, index) => `场景${index}`),
+        risks: Array.from({ length: 40 }, (_, index) => `风险${index}`),
+        source_trace: Array.from({ length: 100 }, (_, index) => ({
+          source_id: 1,
+          chunk_id: index + 1,
+          excerpt: '证'.repeat(1_000),
+          ignored_payload: 'x'.repeat(5_000),
+        })),
+      },
+    })
+
+    expect(chunk.summary.length).toBeLessThanOrEqual(1_803)
+    expect(chunk.key_events).toHaveLength(16)
+    expect(chunk.characters).toHaveLength(40)
+    expect(chunk.scenes).toHaveLength(32)
+    expect(chunk.risks).toHaveLength(16)
+    expect(chunk.source_trace).toHaveLength(64)
+    expect(chunk.source_trace[0]).not.toHaveProperty('ignored_payload')
+    expect(String(chunk.source_trace[0]?.excerpt).length).toBeLessThanOrEqual(303)
   })
 
   it('normalizes common nested source analysis output variants', () => {

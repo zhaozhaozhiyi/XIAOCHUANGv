@@ -3,6 +3,52 @@ import { describe, expect, it, vi } from 'vitest'
 import { TaskExecutionService } from './task-execution.service'
 
 describe('TaskExecutionService', () => {
+  it('restores an idempotent source task to queued state before a BullMQ retry', async () => {
+    const task = {
+      id: 41,
+      userId: 7,
+      status: 'queued',
+      attemptCount: 0,
+      domainTable: 'drama_sources',
+      domainId: 1000,
+      deletedAt: null,
+      startedAt: null,
+      lockedBy: null,
+      lockExpiresAt: null,
+      payloadJson: JSON.stringify({ source_id: 1000 }),
+    }
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn(() => Promise.resolve([task])),
+        })),
+      })),
+      insert: vi.fn(() => ({ values: vi.fn(() => Promise.resolve()) })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn(() => ({
+            returning: vi.fn(() => Promise.resolve([{ id: task.id }])),
+          })),
+        })),
+      })),
+    }
+    const failure = new Error('provider timeout')
+    const taskDomainRegistry = {
+      execute: vi.fn(() => Promise.reject(failure)),
+      prepareAutomaticRetry: vi.fn(() => Promise.resolve(true)),
+      markFailed: vi.fn(),
+      markCanceled: vi.fn(),
+    }
+    const service = new TaskExecutionService({ db } as any, taskDomainRegistry as any)
+
+    await expect(service.executeTaskById(task.id, 'worker-test', {
+      retryOnFailure: true,
+    })).rejects.toThrow('provider timeout')
+
+    expect(taskDomainRegistry.prepareAutomaticRetry).toHaveBeenCalledWith(task)
+    expect(taskDomainRegistry.markFailed).not.toHaveBeenCalled()
+  })
+
   it('increments attemptCount only when a queued task is claimed for execution', async () => {
     const task = {
       id: 42,

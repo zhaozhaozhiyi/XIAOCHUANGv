@@ -5,6 +5,7 @@ export type TaskRecord = typeof tasks.$inferSelect
 
 export interface TaskDomainHandler {
   readonly domainTable: string
+  readonly automaticRetrySafe?: boolean
   retry(task: TaskRecord, payload: Record<string, unknown>): Promise<TaskActionResponse>
   cancel(task: TaskRecord, currentUserId: number): Promise<TaskActionResponse>
   refreshPresentation(task: TaskRecord): Promise<void>

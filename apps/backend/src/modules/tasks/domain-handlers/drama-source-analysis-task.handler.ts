@@ -51,6 +51,7 @@ export class DramaSourceAnalysisTaskHandler
   implements TaskDomainHandler
 {
   readonly domainTable = "drama_sources";
+  readonly automaticRetrySafe = true;
 
   constructor(
     @Inject(DatabaseService) databaseService: DatabaseService,
@@ -121,28 +122,33 @@ export class DramaSourceAnalysisTaskHandler
     if (!source) throw new NotFoundException("source_not_found");
 
     const now = this.now();
-    await this.databaseService.db.insert(dramaSourceChunks).values({
-      userId: input.userId,
-      dramaId: input.dramaId,
-      sourceId: input.sourceId,
-      chunkNo: 1,
-      chapterNo: 1,
-      title: source.title || "全文",
-      contentStart: 0,
-      contentEnd: source.content.length,
-      contentHash: hashText(source.content),
-      estimatedTokens: source.estimatedTokens ?? 0,
-      sourceTrace: JSON.stringify([
-        {
-          source_id: input.sourceId,
-          content_start: 0,
-          content_end: source.content.length,
-        },
-      ]),
-      status: "pending",
-      createdAt: now,
-      updatedAt: now,
-    });
+    await this.databaseService.db
+      .insert(dramaSourceChunks)
+      .values({
+        userId: input.userId,
+        dramaId: input.dramaId,
+        sourceId: input.sourceId,
+        chunkNo: 1,
+        chapterNo: 1,
+        title: source.title || "全文",
+        contentStart: 0,
+        contentEnd: source.content.length,
+        contentHash: hashText(source.content),
+        estimatedTokens: source.estimatedTokens ?? 0,
+        sourceTrace: JSON.stringify([
+          {
+            source_id: input.sourceId,
+            content_start: 0,
+            content_end: source.content.length,
+          },
+        ]),
+        status: "pending",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({
+        target: [dramaSourceChunks.sourceId, dramaSourceChunks.chunkNo],
+      });
   }
 
   async retry(task: TaskRecord, payload: Record<string, unknown>) {
