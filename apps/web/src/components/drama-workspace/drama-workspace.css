@@ -1586,6 +1586,8 @@ button.drama-filter-chip {
   position: relative;
   display: flex;
   flex: 1 1 0;
+  min-height: 40px;
+  align-self: stretch;
   align-items: center;
   justify-content: center;
   gap: 7px;
