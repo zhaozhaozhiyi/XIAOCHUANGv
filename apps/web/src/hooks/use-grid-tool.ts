@@ -189,13 +189,22 @@ export const useGridTool = create<GridToolState>((set, get) => ({
         url: '/api/v1/ai/runs?stream=1',
         method: 'POST',
         body: {
-          message: '生成宫格提示词',
-          storyboard_ids: shotIds,
-          drama_id: dramaId,
-          episode_id: episodeId,
-          rows,
-          cols,
-          mode,
+          skill_id: 'grid_prompt_generator',
+          mode: 'grid_prompt',
+          scene: 'grid_tool',
+          target: {
+            type: 'episode',
+            drama_id: dramaId,
+            episode_id: episodeId,
+          },
+          input: {
+            message: '生成宫格提示词',
+            storyboard_ids: shotIds,
+            rows,
+            cols,
+            mode,
+          },
+          options: { stream: true },
         },
         onEvent: (evt) => {
           if (!evt.data) return

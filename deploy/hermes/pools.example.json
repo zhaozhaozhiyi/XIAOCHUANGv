@@ -6,7 +6,7 @@
       "skillBundle": "xiaochuang-source@1.0.0",
       "skillManifest": [
         { "ref": "xiaochuang_runtime_policy@1.0.0", "sha256": "aa87759f2954a5a2c129a7c93c690d2f75e8edacabbaa13b2f88d6196700c65e" },
-        { "ref": "drama_source_understanding@1.0.0", "sha256": "402eda22f7a1882cd11989c550c0afe54597a268263823eee83470135f830071" }
+        { "ref": "drama_source_understanding@1.0.0", "sha256": "d5e7fade00bd7d824adba76946a51691e5bdd5d42e960478d78a3ec6769bdd06" }
       ],
       "allowedTools": ["get_task_context", "list_source_chunks", "get_source_chunk", "submit_source_chunk_analysis", "submit_source_analysis", "report_progress", "complete_execution", "fail_execution"],
       "modelProfile": "xiaochuang-text-project",

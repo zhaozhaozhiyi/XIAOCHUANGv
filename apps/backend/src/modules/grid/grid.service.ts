@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import sharp from 'sharp'
 
@@ -111,9 +111,9 @@ function createGridCellFileName(index: number) {
 @Injectable()
 export class GridService {
   constructor(
-    private readonly databaseService: DatabaseService,
-    private readonly imagesService: ImagesService,
-    private readonly storageService: StorageService,
+    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @Inject(ImagesService) private readonly imagesService: ImagesService,
+    @Inject(StorageService) private readonly storageService: StorageService,
   ) {}
 
   private parseMode(mode?: string): GridMode {

@@ -209,6 +209,15 @@ function normalizeSourceTrace(value: unknown): SourceTraceItem[] {
     })
 }
 
+function normalizePositiveRange(value: unknown) {
+  const raw = toRecord(value)
+  if (!raw) return null
+  const min = toOptionalNumber(raw.min)
+  const max = toOptionalNumber(raw.max)
+  if (!min || !max || min < 1 || max < min) return null
+  return { min, max }
+}
+
 function normalizeSourceHealth(value: unknown): SourceHealth | null {
   const raw = parseMaybeJsonObject(value)
   if (!raw) return null
@@ -266,6 +275,26 @@ function normalizeSourceAnalysis(value: unknown): SourceAnalysis | null {
   const theme = toStringValue(raw.theme)
   const coreConflict = toStringValue(raw.core_conflict)
   if (!theme && !coreConflict) return null
+  const recommendedEpisodeRange = normalizePositiveRange(raw.recommended_episode_count)
+  const recommendedEpisodeRaw = toRecord(raw.recommended_episode_count)
+  const recommendedEpisodeCount = recommendedEpisodeRange && recommendedEpisodeRaw
+    ? {
+        ...recommendedEpisodeRange,
+        preferred: toOptionalNumber(recommendedEpisodeRaw.preferred) ?? 0,
+      }
+    : null
+  const adaptationMode =
+    raw.adaptation_mode === 'faithful' ||
+    raw.adaptation_mode === 'moderate_expansion' ||
+    raw.adaptation_mode === 'continuation'
+      ? raw.adaptation_mode
+      : null
+  const sourceCompleteness =
+    raw.source_completeness === 'complete' ||
+    raw.source_completeness === 'incomplete' ||
+    raw.source_completeness === 'uncertain'
+      ? raw.source_completeness
+      : null
   return {
     theme,
     core_conflict: coreConflict,
@@ -274,6 +303,26 @@ function normalizeSourceAnalysis(value: unknown): SourceAnalysis | null {
     protagonist_goal: toStringValue(raw.protagonist_goal),
     target_episode_count: toOptionalNumber(raw.target_episode_count),
     episode_duration: toStringValue(raw.episode_duration),
+    adaptation_mode: adaptationMode,
+    source_completeness: sourceCompleteness,
+    major_beat_count: toOptionalNumber(raw.major_beat_count),
+    supported_duration_seconds: normalizePositiveRange(raw.supported_duration_seconds),
+    recommended_episode_count:
+      recommendedEpisodeCount &&
+      recommendedEpisodeCount.preferred >= recommendedEpisodeCount.min &&
+      recommendedEpisodeCount.preferred <= recommendedEpisodeCount.max
+        ? recommendedEpisodeCount
+        : null,
+    episode_duration_seconds: normalizePositiveRange(raw.episode_duration_seconds),
+    recommendation_confidence: toOptionalNumber(raw.recommendation_confidence),
+    recommendation_basis: parseMaybeJsonArray(raw.recommendation_basis).map((item) => {
+      const basis = toRecord(item) ?? {}
+      return {
+        claim: toStringValue(basis.claim),
+        source_trace: normalizeSourceTrace(basis.source_trace),
+      }
+    }).filter((item) => item.claim && item.source_trace?.length),
+    expansion_notes: toStringArray(raw.expansion_notes),
     relationship_map: parseMaybeJsonArray(raw.relationship_map).map((item) => toRecord(item) ?? {}),
     world_rules: toStringArray(raw.world_rules),
     emotional_curve: parseMaybeJsonArray(raw.emotional_curve).map((item) => toRecord(item) ?? {}),

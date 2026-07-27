@@ -198,8 +198,17 @@ Runtime 工具是唯一业务读写通道。不要输出“请用户复制保存
     "protagonist": "主角",
     "antagonist": "主要阻力或对手",
     "protagonist_goal": "主角目标",
-    "target_episode_count": 24,
-    "episode_duration": "60-90 秒",
+    "adaptation_mode": "faithful | moderate_expansion | continuation",
+    "source_completeness": "complete | incomplete | uncertain",
+    "major_beat_count": "由源稿证据得到的正整数",
+    "supported_duration_seconds": { "min": "正整数", "max": "正整数" },
+    "recommended_episode_count": { "min": "正整数", "preferred": "正整数", "max": "正整数" },
+    "episode_duration_seconds": { "min": "正整数", "max": "正整数" },
+    "target_episode_count": "与 recommended_episode_count.preferred 相同",
+    "episode_duration": "由 episode_duration_seconds 格式化的可读区间",
+    "recommendation_confidence": "0 到 1",
+    "recommendation_basis": [{ "claim": "集数或时长依据", "source_trace": [] }],
+    "expansion_notes": ["仅列出超出原稿事实的扩写假设"],
     "relationship_map": [{
       "subject": "角色A",
       "object": "角色B",
@@ -215,7 +224,7 @@ Runtime 工具是唯一业务读写通道。不要输出“请用户复制保存
 }
 ```
 
-`target_episode_count` 与 `episode_duration` 必须由你根据人物弧线、情节密度、冲突推进和短剧可看性自行判断；不得套用固定字数换算或默认集数。`relationship_map` 优先输出可绘制的关系边。所有关键结论必须有 `evidence` 和 `source_trace`。
+先判断源稿是否完整和改编边界，再用可溯源主要情节点、对白、动作、反应与转场估算原稿可支撑的总时长。每个推荐区间至少给出一条带 `source_trace` 的 `recommendation_basis`；`faithful` 模式不得把续写内容计入时长或集数。`target_episode_count` 必须等于推荐区间的 `preferred`。不得套用固定字数换算或默认集数。`relationship_map` 优先输出可绘制的关系边。所有关键结论必须有 `evidence` 和 `source_trace`。
 
 ### `source_analysis_from_chunks`
 
@@ -232,8 +241,8 @@ Runtime 工具是唯一业务读写通道。不要输出“请用户复制保存
     "name": "方案名",
     "claim": "改编主张",
     "rhythm_model": "节奏模型",
-    "target_episode_count": 24,
-    "episode_duration": "60-90 秒",
+    "target_episode_count": "由已确认源稿理解或创作者约束得出的正整数",
+    "episode_duration": "由已确认秒数范围得出的可读时长",
     "style_direction": "风格方向",
     "hook_density": "高/中/低",
     "retained_points": [],
@@ -269,7 +278,7 @@ Runtime 工具是唯一业务读写通道。不要输出“请用户复制保存
 }
 ```
 
-集数从 1 连续递增，每集都必须可独立进入正文生成，并保留可追溯来源。
+如果运行时上下文提供 `request.episode_range`，只输出该闭区间内的 `episode_blueprints`；数组长度和集号必须与 `request.required_episode_numbers` 完全一致。使用 `previous_blueprint` 延续上一批的情节、角色状态与钩子，但不得重复上一集。未提供范围时，集数从 1 连续递增。每集都必须可独立进入正文生成，并保留可追溯来源。
 
 ### `blueprint_refine`
 

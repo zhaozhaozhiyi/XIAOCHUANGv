@@ -37,7 +37,7 @@ export const XIAOCHUANG_DRAMA_MCP_TOOL_DEFINITIONS: readonly XiaochuangDramaMcpT
     {
       name: "submit_source_analysis",
       description:
-        "Submit the global source-understanding result after all required chunks are ready.",
+        "Submit the global source-understanding result with evidence-backed episode and duration ranges, adaptation boundary, completeness, confidence, and expansion assumptions after all required chunks are ready.",
     },
     {
       name: "submit_blueprint_batch",

@@ -1235,13 +1235,29 @@ describe("XiaochuangDramaMcpService", () => {
     });
     const { service, store } = createService({}, fixtures);
 
+    const recommendationTrace = [{ source_id: 11, chunk_no: 2 }];
+    const reliableRecommendation = {
+      adaptation_mode: "faithful",
+      source_completeness: "complete",
+      major_beat_count: 9,
+      supported_duration_seconds: { min: 1080, max: 1620 },
+      recommended_episode_count: { min: 15, preferred: 18, max: 21 },
+      episode_duration_seconds: { min: 60, max: 90 },
+      recommendation_confidence: 0.76,
+      recommendation_basis: [
+        {
+          claim: "九个主要情节点可支撑十五至二十一集",
+          source_trace: recommendationTrace,
+        },
+      ],
+      expansion_notes: [],
+    };
     const result = await service.invoke("submit_source_analysis", "token", {
+      ...reliableRecommendation,
       theme: "与过去和解",
       core_conflict: "主角在遗憾与现实之间摇摆",
       protagonist: "林夏",
       protagonist_goal: "接纳平凡生活",
-      target_episode_count: 18,
-      episode_duration: "75 秒",
       relationship_map: [
         {
           subject: "林夏",
@@ -1283,7 +1299,9 @@ describe("XiaochuangDramaMcpService", () => {
     expect(metadata.ai_first.source_analysis).toMatchObject({
       theme: "与过去和解",
       target_episode_count: 18,
-      episode_duration: "75 秒",
+      episode_duration: "60-90 秒",
+      recommended_episode_count: { min: 15, preferred: 18, max: 21 },
+      recommendation_confidence: 0.76,
       agent_execution_id: 81,
       remote_run_id: "run_1",
       generation_mode: "remote_agent",
@@ -1386,6 +1404,18 @@ describe("XiaochuangDramaMcpService", () => {
       core_conflict: "冲突",
       protagonist: "主角",
       protagonist_goal: "目标",
+      adaptation_mode: "faithful",
+      source_completeness: "complete",
+      major_beat_count: 8,
+      supported_duration_seconds: { min: 720, max: 1080 },
+      episode_duration_seconds: { min: 60, max: 90 },
+      recommendation_confidence: 0.75,
+      recommendation_basis: [
+        {
+          claim: "八个主要情节点支撑推荐区间",
+          source_trace: [{ source_id: 11, chunk_no: 2 }],
+        },
+      ],
       evidence: [
         {
           claim: "第二分块提供主题依据",
@@ -1397,15 +1427,15 @@ describe("XiaochuangDramaMcpService", () => {
     await expect(
       service.invoke("submit_source_analysis", "token", {
         ...baseAnalysis,
-        episode_duration: "60 秒",
       }),
-    ).rejects.toThrow("source_analysis_target_episode_count_required");
+    ).rejects.toThrow("source_analysis_recommended_episode_range_invalid");
     await expect(
       service.invoke("submit_source_analysis", "token", {
         ...baseAnalysis,
-        target_episode_count: 18,
+        recommended_episode_count: { min: 15, preferred: 18, max: 21 },
+        episode_duration_seconds: undefined,
       }),
-    ).rejects.toThrow("source_analysis_episode_duration_required");
+    ).rejects.toThrow("source_analysis_episode_duration_range_invalid");
     expect(store.db.transaction).not.toHaveBeenCalled();
   });
 

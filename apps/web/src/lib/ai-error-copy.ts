@@ -62,7 +62,7 @@ export function getAiErrorCopy(error: unknown, fallback = 'AI 调用失败') {
     return '参考图或提示词触发了服务商内容拦截。建议更换参考图，弱化真人隐私特征后重试。'
   }
   if (lower.includes('fetch failed') || lower.includes('network') || lower.includes('timeout')) {
-    return 'AI 服务连接或轮询超时。请确认后端、Redis/队列 Worker 和媒体存储已启动，再稍后重试。'
+    return 'AI 服务连接或响应超时。请稍后重试；若持续发生，请检查模型服务状态或更换响应更稳定的模型。'
   }
   if (lower.includes('without provider task id') || lower.includes('manual retry required')) {
     return '任务缺少服务商任务号，系统无法安全自动恢复。请在任务中心手动重试，避免重复提交。'

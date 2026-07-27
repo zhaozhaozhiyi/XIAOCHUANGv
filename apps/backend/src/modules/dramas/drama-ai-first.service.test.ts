@@ -6,6 +6,7 @@ import { DatabaseService } from '../../db/database.service'
 import { DramaAgentSchemaValidator, DramaAgentService, RemoteDramaAgentAdapter } from './drama-agent.service'
 import {
   DramaAiFirstService,
+  buildEpisodeBlueprintBatchRanges,
   markEpisodeGenerationModeSourceStale,
   markEpisodeGenerationModeStale,
   resolveWholePlanBlueprintState,
@@ -13,6 +14,25 @@ import {
 
 function makeService() {
   return new DramaAiFirstService({} as DatabaseService)
+}
+
+function reliableSourceAnalysis(overrides: Record<string, unknown> = {}) {
+  const sourceTrace = [{ source_id: 1, chapter_no: 1 }]
+  return {
+    adaptation_mode: 'faithful',
+    source_completeness: 'complete',
+    major_beat_count: 8,
+    supported_duration_seconds: { min: 720, max: 1080 },
+    recommended_episode_count: { min: 10, preferred: 12, max: 14 },
+    episode_duration_seconds: { min: 60, max: 90 },
+    target_episode_count: 12,
+    episode_duration: 'ignored model display value',
+    recommendation_confidence: 0.78,
+    recommendation_basis: [{ claim: '八个主要情节点可支撑十至十四集', source_trace: sourceTrace }],
+    expansion_notes: [],
+    evidence: [{ claim: '第一章建立核心冲突', source_trace: sourceTrace }],
+    ...overrides,
+  }
 }
 
 function withEnv<T>(values: Record<string, string | undefined>, fn: () => T): T
@@ -292,6 +312,117 @@ describe('DramaAiFirstService source health', () => {
   })
 })
 
+describe('episode blueprint batching', () => {
+  it('splits a 24-episode plan into continuous four-episode ranges', () => {
+    expect(buildEpisodeBlueprintBatchRanges(24, 4)).toEqual([
+      { start: 1, end: 4 },
+      { start: 5, end: 8 },
+      { start: 9, end: 12 },
+      { start: 13, end: 16 },
+      { start: 17, end: 20 },
+      { start: 21, end: 24 },
+    ])
+  })
+
+  it('clamps oversized batches and keeps the final range bounded', () => {
+    expect(buildEpisodeBlueprintBatchRanges(10, 99)).toEqual([
+      { start: 1, end: 8 },
+      { start: 9, end: 10 },
+    ])
+  })
+
+  it('generates consecutive batches, carries continuity, and reports progress', async () => {
+    const makeBlueprint = (episodeNumber: number) => ({
+      episode_number: episodeNumber,
+      title: `第${episodeNumber}集`,
+      positioning: '推进主线',
+      opening_hook: '冲突升级。',
+      summary: '围绕核心冲突推进。',
+      source_trace: [{ source_id: 7, chapter_no: 1 }],
+      characters: ['林夏'],
+      scenes: ['旧宅客厅'],
+      ending_hook: '新的线索出现。',
+      risk_notes: [],
+      brief_id: 'brief-1',
+    })
+    const generateEpisodeBlueprints = vi.fn(async (input: {
+      episodeStart: number
+      episodeEnd: number
+      previousBlueprint?: { episode_number: number } | null
+    }) => ({
+      blueprints: Array.from(
+        { length: input.episodeEnd - input.episodeStart + 1 },
+        (_, index) => makeBlueprint(input.episodeStart + index),
+      ),
+      remoteRunId: `run-${input.episodeStart}-${input.episodeEnd}`,
+      usage: {},
+      warnings: [],
+    }))
+    const inserted: Array<Record<string, unknown>> = []
+    const tx = {
+      insert: vi.fn(() => ({
+        values: vi.fn((value: Record<string, unknown>) => {
+          inserted.push(value)
+          return Promise.resolve()
+        }),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({ where: vi.fn(() => Promise.resolve()) })),
+      })),
+    }
+    const databaseService = {
+      db: {
+        transaction: vi.fn(async (callback: (transaction: typeof tx) => Promise<void>) => callback(tx)),
+      },
+    }
+    const service = new DramaAiFirstService(
+      databaseService as unknown as DatabaseService,
+      { generateEpisodeBlueprints } as unknown as DramaAgentService,
+    ) as any
+    const taskUpdates: Array<Record<string, unknown>> = []
+    service.loadEpisodeBlueprintContext = vi.fn().mockResolvedValue({
+      drama: { id: 10, totalEpisodes: 0, metadata: null },
+      metadata: {},
+      aiFirst: {},
+      health: {},
+      analysis: {},
+      effectiveBrief: { id: 'brief-1', target_episode_count: 8 },
+      existingEpisodes: [],
+      sourceId: 7,
+    })
+    service.shouldUseRemoteAgent = vi.fn().mockResolvedValue(true)
+    service.assertAiFirstTaskNotCanceled = vi.fn().mockResolvedValue(undefined)
+    service.recordRemoteRun = vi.fn()
+      .mockResolvedValueOnce({ id: 101 })
+      .mockResolvedValueOnce({ id: 102 })
+    service.updateEpisodeBlueprintsTask = vi.fn(async (_taskId: number, update: Record<string, unknown>) => {
+      taskUpdates.push(update)
+    })
+    service.getAiFirst = vi.fn().mockResolvedValue({ ok: true })
+
+    await withEnv({ DRAMA_AGENT_BLUEPRINT_BATCH_SIZE: '4' }, () =>
+      service.generateEpisodeBlueprintsNow({ userId: 1, dramaId: 10, taskId: 99 }),
+    )
+
+    expect(generateEpisodeBlueprints).toHaveBeenCalledTimes(2)
+    expect(generateEpisodeBlueprints.mock.calls[0]?.[0]).toMatchObject({
+      episodeStart: 1,
+      episodeEnd: 4,
+      previousBlueprint: null,
+    })
+    expect(generateEpisodeBlueprints.mock.calls[1]?.[0]).toMatchObject({
+      episodeStart: 5,
+      episodeEnd: 8,
+      previousBlueprint: { episode_number: 4 },
+    })
+    expect(taskUpdates.map((update) => {
+      const summary = JSON.parse(String(update.resultSummaryJson || '{}'))
+      return summary.generated_episodes
+    }).filter(Boolean)).toEqual([4, 8])
+    expect(inserted).toHaveLength(8)
+  })
+})
+
 describe('RemoteDramaAgentAdapter capability detection', () => {
   function makeResolvedTextConfig() {
     return {
@@ -391,6 +522,31 @@ describe('RemoteDramaAgentAdapter capability detection', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2)
       expect(fetchMock.mock.calls[0]?.[1]?.headers['X-Idempotency-Key']).toBe('stable-retry-key')
       expect(fetchMock.mock.calls[1]?.[1]?.headers['X-Idempotency-Key']).toBe('stable-retry-key')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('maps a local request timeout without retrying it', async () => {
+    const resolver = {
+      resolveConfig: vi.fn().mockResolvedValue(makeResolvedTextConfig()),
+    }
+    const adapter = new RemoteDramaAgentAdapter(resolver as any)
+    const timeout = new Error('The operation was aborted due to timeout')
+    timeout.name = 'TimeoutError'
+    const fetchMock = vi.fn().mockRejectedValue(timeout)
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      await expect(adapter.executeJson({
+        userId: 1,
+        taskType: 'episode_blueprint_generate',
+        idempotencyKey: 'timeout-once',
+        systemPrompt: 'system',
+        userPrompt: 'user',
+        outputSchemaName: 'EpisodeBlueprint[]',
+      })).rejects.toThrow(/remote_agent_timeout/)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
     } finally {
       vi.unstubAllGlobals()
     }
@@ -660,6 +816,20 @@ describe('DramaAiFirstService pilot task recovery', () => {
 describe('DramaAgentSchemaValidator', () => {
   const validator = new DramaAgentSchemaValidator()
 
+  it('rejects unexplained single-value episode recommendations', () => {
+    expect(() => validator.validateSourceAnalysis({
+      source_analysis: {
+        theme: '身份反转与复仇',
+        core_conflict: '女主被夺走继承权后夺回真相。',
+        protagonist: '林夏',
+        protagonist_goal: '拿回继承权',
+        target_episode_count: 24,
+        episode_duration: '60-90 秒',
+        evidence: [{ claim: '第一章出现遗嘱调包', source_trace: [{ source_id: 1, chapter_no: 1 }] }],
+      },
+    })).toThrow(/remote_agent_invalid_output/)
+  })
+
   it('accepts structured remote agent outputs', () => {
     const chunk = validator.validateSourceChunkAnalysis({
       source_chunk_analysis: {
@@ -671,13 +841,13 @@ describe('DramaAgentSchemaValidator', () => {
       },
     })
     const analysis = validator.validateSourceAnalysis({
-      source_analysis: {
+      source_analysis: reliableSourceAnalysis({
         theme: '身份反转与复仇',
         core_conflict: '女主被夺走继承权后夺回真相。',
         protagonist: '林夏',
         protagonist_goal: '拿回继承权',
         evidence: [{ claim: '第一章出现遗嘱调包', source_trace: [{ source_id: 1, chapter_no: 1 }] }],
-      },
+      }),
     })
     const briefs = validator.validateAdaptationBriefs({
       adaptation_briefs: [
@@ -718,8 +888,9 @@ describe('DramaAgentSchemaValidator', () => {
 
     expect(chunk.source_trace[0]?.chunk_id).toBe(2)
     expect(analysis.relationship_map).toEqual([])
-    expect(analysis.target_episode_count).toBe(0)
+    expect(analysis.target_episode_count).toBe(12)
     expect(analysis.episode_duration).toBe('60-90 秒')
+    expect(analysis.recommended_episode_count).toEqual({ min: 10, preferred: 12, max: 14 })
     expect(briefs).toHaveLength(2)
     expect(blueprints[0]?.source_trace?.[0]?.chapter_no).toBe(1)
     expect(script).toContain('旧宅客厅')
@@ -754,7 +925,7 @@ describe('DramaAgentSchemaValidator', () => {
 
   it('normalizes common nested source analysis output variants', () => {
     const analysis = validator.validateSourceAnalysis({
-      source_analysis: {
+      source_analysis: reliableSourceAnalysis({
         analysis: {
           主题: '家族关系修复与代际和解',
           核心冲突: '主角想守住家庭真实情感，但家人长期误解彼此。',
@@ -772,13 +943,16 @@ describe('DramaAgentSchemaValidator', () => {
             source_trace: [{ source_id: 1, chapter_no: 1 }],
           },
         },
-      },
+        recommended_episode_count: { min: 14, preferred: 16, max: 18 },
+        episode_duration_seconds: { min: 45, max: 45 },
+        target_episode_count: 16,
+      }),
     })
 
     expect(analysis.theme).toContain('家族关系')
     expect(analysis.core_conflict).toContain('误解')
     expect(analysis.target_episode_count).toBe(16)
-    expect(analysis.episode_duration).toBe('45秒')
+    expect(analysis.episode_duration).toBe('45 秒')
     expect(analysis.relationship_map).toHaveLength(1)
     expect(analysis.evidence).toHaveLength(1)
     expect(analysis.evidence[0]?.source_trace[0]?.source_id).toBe(1)
@@ -786,13 +960,13 @@ describe('DramaAgentSchemaValidator', () => {
 
   it('normalizes string source traces into excerpt objects', () => {
     const analysis = validator.validateSourceAnalysis({
-      source_analysis: {
+      source_analysis: reliableSourceAnalysis({
         theme: '家庭和解',
         core_conflict: '误会累积导致亲情撕裂。',
         protagonist: '小陈',
         protagonist_goal: '修复家庭关系',
         evidence: [{ claim: '饭桌冲突推动关系变化', source_trace: ['饭桌上众人沉默'] }],
-      },
+      }),
     })
 
     expect(analysis.evidence[0]?.source_trace[0]).toMatchObject({ excerpt: '饭桌上众人沉默' })
@@ -836,13 +1010,14 @@ describe('DramaAgentSchemaValidator', () => {
     const analysis = validator.validateSourceAnalysis({
       result: {
         data: [{
-          源稿分析: {
+          源稿分析: reliableSourceAnalysis({
             主题: '身份反转与继承权争夺',
             主要冲突: '林夏想夺回被调包的遗嘱，但家族对手不断制造伪证。',
             主人公: '林夏',
             人物目标: '公开真遗嘱并夺回继承权',
             人物关系: [{ from: '林夏', to: '顾沉', relation: '盟友' }],
-          },
+            evidence: undefined,
+          }),
           证据: [{ 结论: '第一章出现遗嘱调包', 来源: ['旧宅客厅里，遗嘱被调包的事实曝光。'] }],
         }],
       },
@@ -914,9 +1089,127 @@ describe('DramaAgentSchemaValidator', () => {
       adaptation_briefs: [],
     })).toThrow(/remote_agent_invalid_output/)
   })
+
+  it('rejects brief recommendations that omit episode count or duration', () => {
+    expect(() => validator.validateAdaptationBriefs({
+      adaptation_briefs: [
+        {
+          id: 'b1',
+          name: '强钩子版',
+          claim: '围绕主线冲突推进。',
+          rhythm_model: '逐集推进',
+          style_direction: '都市短剧',
+        },
+        {
+          id: 'b2',
+          name: '情绪版',
+          claim: '保留人物情绪。',
+          rhythm_model: '情绪递进',
+          style_direction: '现实主义',
+        },
+      ],
+    })).toThrow(/remote_agent_invalid_output/)
+  })
 })
 
 describe('DramaAgentService prompt context', () => {
+  function blueprint(episodeNumber: number) {
+    return {
+      episode_number: episodeNumber,
+      title: `第${episodeNumber}集`,
+      positioning: '推进主线',
+      opening_hook: '冲突升级。',
+      summary: '围绕核心冲突推进。',
+      source_trace: [{ source_id: 7, chapter_no: 1 }],
+      characters: ['林夏'],
+      scenes: ['旧宅客厅'],
+      ending_hook: '新的线索出现。',
+      risk_notes: [],
+      brief_id: 'brief-strong-hook',
+    }
+  }
+
+  function brief() {
+    return {
+      id: 'brief-strong-hook',
+      name: '强钩子版',
+      claim: '每集前 5 秒给出反转。',
+      rhythm_model: '三集一反转',
+      target_episode_count: 24,
+      episode_duration: '60-90 秒',
+      style_direction: '都市爽剧',
+      hook_density: '高',
+      retained_points: ['遗嘱调包'],
+      removed_points: ['弱支线'],
+      risk_notes: [],
+      production_cost: '中',
+      recommended_for: '试播验证',
+    }
+  }
+
+  it('requests an exact blueprint range with continuity context', async () => {
+    const executeJson = vi.fn(async (_input: any) => ({
+      result: { episode_blueprints: [5, 6, 7, 8].map(blueprint) },
+      remoteRunId: 'remote-blueprints-5-8',
+      usage: null,
+      warnings: [],
+    }))
+    const service = new DramaAgentService(
+      { executeJson } as any,
+      new DramaAgentSchemaValidator(),
+      { getSkillContent: vi.fn(() => '# Skill') } as any,
+    )
+
+    await service.generateEpisodeBlueprints({
+      userId: 1,
+      dramaId: 10,
+      sourceId: 7,
+      health: {} as any,
+      analysis: {} as any,
+      brief: brief(),
+      episodeStart: 5,
+      episodeEnd: 8,
+      previousBlueprint: blueprint(4),
+    })
+
+    const input = executeJson.mock.calls[0]?.[0]
+    const runtimeContext = JSON.parse(String(input?.userPrompt || '{}'))
+    expect(input?.idempotencyKey).toContain('blueprint:5-8')
+    expect(runtimeContext.request).toEqual({
+      episode_range: { start: 5, end: 8 },
+      episode_start: 5,
+      episode_end: 8,
+      required_episode_numbers: [5, 6, 7, 8],
+      target_episode_count: 24,
+    })
+    expect(runtimeContext.previous_blueprint).toMatchObject({ episode_number: 4 })
+  })
+
+  it('rejects a blueprint batch with missing or unexpected episode numbers', async () => {
+    const executeJson = vi.fn(async () => ({
+      result: { episode_blueprints: [blueprint(5), blueprint(7), blueprint(8)] },
+      remoteRunId: 'remote-blueprints-invalid',
+      usage: null,
+      warnings: [],
+    }))
+    const service = new DramaAgentService(
+      { executeJson } as any,
+      new DramaAgentSchemaValidator(),
+      { getSkillContent: vi.fn(() => '# Skill') } as any,
+    )
+
+    await expect(service.generateEpisodeBlueprints({
+      userId: 1,
+      dramaId: 10,
+      sourceId: 7,
+      health: {} as any,
+      analysis: {} as any,
+      brief: brief(),
+      episodeStart: 5,
+      episodeEnd: 8,
+    })).rejects.toThrow(/remote_agent_blueprint_range_mismatch:5-8:5,7,8/)
+  })
+
   it('binds the adaptation skill and passes selected brief and source trace as runtime context', async () => {
     const executeJson = vi.fn(async (input) => ({
       result: { script_content: '# 第1集\n场景：旧宅客厅' },

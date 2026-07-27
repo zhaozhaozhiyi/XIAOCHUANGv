@@ -236,6 +236,15 @@ export class StorageService {
       return raw
     }
 
+    const publicLocalPath = this.publicUrlToLocalStoragePath(raw)
+    if (publicLocalPath) {
+      const absolutePath = this.getAbsolutePath(publicLocalPath)
+      if (!fs.existsSync(absolutePath)) {
+        throw new Error(`Local storage file not found: ${publicLocalPath}`)
+      }
+      return absolutePath
+    }
+
     if (this.isLocalStoragePath(raw)) {
       const normalized = raw.startsWith('/static/') ? raw.slice(1) : raw
       const absolutePath = this.getAbsolutePath(normalized)

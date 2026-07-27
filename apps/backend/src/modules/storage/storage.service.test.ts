@@ -23,6 +23,22 @@ afterEach(() => {
 })
 
 describe('StorageService remote URL hardening', () => {
+  it('resolves the configured public media URL to its local storage file', async () => {
+    const videoDir = path.join(tempDir, 'videos')
+    const videoPath = path.join(videoDir, 'shot.mp4')
+    fs.mkdirSync(videoDir, { recursive: true })
+    fs.writeFileSync(videoPath, 'video')
+    const service = createStorageService({
+      STORAGE_DRIVER: 'local',
+      STORAGE_LOCAL_PATH: tempDir,
+      STORAGE_PUBLIC_BASE_URL: 'http://127.0.0.1:3010/static',
+    })
+
+    await expect(
+      service.ensureLocalFile('http://127.0.0.1:3010/static/videos/shot.mp4'),
+    ).resolves.toBe(videoPath)
+  })
+
   it('rejects localhost remote downloads', async () => {
     const service = createStorageService({ STORAGE_LOCAL_PATH: tempDir })
 

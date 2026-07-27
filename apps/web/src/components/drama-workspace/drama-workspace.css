@@ -2276,6 +2276,33 @@ button.drama-filter-chip {
   padding: 4px 8px;
 }
 
+.drama-source-glance-reliability {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 48%, transparent);
+  padding-top: 9px;
+}
+
+.drama-source-glance-reliability strong,
+.drama-source-glance-reliability p,
+.drama-source-glance-reliability small {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.drama-source-glance-reliability strong {
+  color: var(--color-text-1);
+}
+
+.drama-source-glance-reliability p {
+  color: var(--color-text-2);
+}
+
+.drama-source-glance-reliability small {
+  color: var(--color-warning);
+}
+
 .drama-source-glance-edges {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

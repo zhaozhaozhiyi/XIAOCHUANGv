@@ -45,6 +45,28 @@ export interface SourceAnalysis {
   protagonist_goal: string
   target_episode_count?: number | null
   episode_duration?: string | null
+  adaptation_mode?: 'faithful' | 'moderate_expansion' | 'continuation' | null
+  source_completeness?: 'complete' | 'incomplete' | 'uncertain' | null
+  major_beat_count?: number | null
+  supported_duration_seconds?: {
+    min: number
+    max: number
+  } | null
+  recommended_episode_count?: {
+    min: number
+    preferred: number
+    max: number
+  } | null
+  episode_duration_seconds?: {
+    min: number
+    max: number
+  } | null
+  recommendation_confidence?: number | null
+  recommendation_basis?: Array<{
+    claim: string
+    source_trace?: SourceTraceItem[]
+  }>
+  expansion_notes?: string[]
   relationship_map?: Array<Record<string, unknown>>
   world_rules?: string[]
   emotional_curve?: Array<Record<string, unknown>>
