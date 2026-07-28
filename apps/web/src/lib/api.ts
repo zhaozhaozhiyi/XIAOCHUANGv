@@ -292,6 +292,7 @@ export type DramaWorkspacePayload = {
     id: string;
     title: string;
     source: string;
+    source_episode_id: string | null;
     updated_at: string;
     href: string;
   }>;

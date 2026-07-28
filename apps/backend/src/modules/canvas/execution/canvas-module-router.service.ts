@@ -201,6 +201,10 @@ export class CanvasModuleRouterService {
   ): Promise<CanvasTaskResult> {
     const urls = inputs.videoUrls.length ? inputs.videoUrls : []
     if (!urls.length) throw new Error('concat requires upstream video inputs')
+    const expectedVideoCount = Number(params.expectedVideoCount)
+    if (Number.isFinite(expectedVideoCount) && expectedVideoCount > 0 && urls.length !== expectedVideoCount) {
+      throw new Error(`concat requires ${expectedVideoCount} videos, received ${urls.length}`)
+    }
 
     const url = await this.concatService.concatVideos(urls)
     return { url, outputs: [{ type: 'video', url }] }

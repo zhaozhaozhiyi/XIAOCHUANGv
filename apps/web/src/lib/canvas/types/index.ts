@@ -294,6 +294,7 @@ export interface CanvasRunStatusResponse {
   canvas_id: string
   version_id: string
   run_id: string | null
+  state: 'idle' | 'running' | 'completed' | 'failed'
   /** 整体进度 */
   progress: { current: number; total: number; eta_seconds?: number }
   /** 各节点状态（按 nodeId 索引） */

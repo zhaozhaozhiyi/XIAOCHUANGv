@@ -30,6 +30,176 @@ function isCanvasRunActiveViolation(error: unknown): boolean {
 
 const EXECUTE_NODE_TYPES = ['text-to-image', 'image-to-video', 'text-to-speech', 'concat', 'export']
 
+interface StoryboardMovieSeed {
+  id: string
+  label: string
+  dataJson: string
+  positionX: number
+  positionY: number
+  shotIndex: number | null
+}
+
+function safeJsonParse(json: string): Record<string, unknown> {
+  try { return JSON.parse(json) as Record<string, unknown> } catch { return {} }
+}
+
+function firstString(...values: unknown[]): string {
+  return values.find((value): value is string => typeof value === 'string' && Boolean(value.trim()))?.trim() ?? ''
+}
+
+function storyboardImage(data: Record<string, unknown>): string {
+  if (Array.isArray(data.images) && typeof data.images[0] === 'string') return data.images[0]
+  return firstString(data.imageUrl, data.previewImageUrl, data.thumbnailUrl, data.image)
+}
+
+function storyboardVideo(data: Record<string, unknown>): string {
+  return firstString(data.videoUrl, data.resultVideoUrl, data.video)
+}
+
+function storyboardVideoPrompt(data: Record<string, unknown>): string {
+  const explicit = firstString(data.videoPrompt, data.motionPrompt)
+  if (explicit) return explicit
+  const cameraMove = firstString(data.cameraMove)
+  const cameraInstruction = cameraMove ? `镜头采用${cameraMove}运镜，` : '镜头缓慢推进，'
+  return `原创电影镜头，${cameraInstruction}人物保持当前造型与相对位置，自然呼吸并有轻微表情变化，动作缓慢克制，无新增人物，无文字无标志。`
+}
+
+function storyboardOrder(node: StoryboardMovieSeed, data: Record<string, unknown>): number {
+  const explicit = Number(node.shotIndex ?? data.shotIndex)
+  if (Number.isFinite(explicit) && explicit > 0) return explicit
+  const match = firstString(data.title, node.label).match(/(?:分镜|镜头|shot)\s*#?\s*(\d+)/i)
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER
+}
+
+/** 仅有分镜图片时，为“生成成片”自动补齐隐藏的视频执行链。 */
+export function buildStoryboardMoviePipeline(canvasId: string, input: StoryboardMovieSeed[]) {
+  const nowAt = now()
+  const shots = input
+    .map((node) => ({ node, data: safeJsonParse(node.dataJson) }))
+    .filter(({ data }) => Boolean(storyboardImage(data)))
+    .sort((a, b) => {
+      const byIndex = storyboardOrder(a.node, a.data) - storyboardOrder(b.node, b.data)
+      if (byIndex !== 0) return byIndex
+      return a.node.positionX - b.node.positionX || a.node.positionY - b.node.positionY
+    })
+
+  if (!shots.length) return null
+
+  const baseX = Math.max(...shots.map(({ node }) => node.positionX)) + 420
+  const baseY = Math.min(...shots.map(({ node }) => node.positionY))
+  const resultNodeId = uid('node')
+  const concatNodeId = uid('node')
+  const exportNodeId = uid('node')
+  const completedVideoUrls = shots.map(({ data }) => storyboardVideo(data))
+  const pendingVideos = shots.flatMap(({ node, data }, index) => {
+    if (completedVideoUrls[index]) return []
+    return [{
+      shotNodeId: node.id,
+      sequence: index + 1,
+      executeNode: {
+        id: uid('node'),
+        canvasId,
+        nodeDefId: 'image-to-video',
+        label: `[镜头 ${index + 1}] 图生视频`,
+        dataJson: JSON.stringify({
+          prompt: storyboardVideoPrompt(data),
+          duration: Number(data.duration) > 0 ? Number(data.duration) : 5,
+          sequence: index + 1,
+          sourceStoryboardId: node.id,
+          references: [storyboardImage(data)],
+        }),
+        positionX: baseX,
+        positionY: baseY + index * 80,
+        isHidden: true,
+        createdAt: nowAt,
+        updatedAt: nowAt,
+      },
+    }]
+  })
+  const videoNodes = pendingVideos.map(({ executeNode }) => executeNode)
+  const generatedNodeBySequence = new Map(
+    pendingVideos.map(({ sequence, executeNode }) => [sequence, executeNode.id]),
+  )
+  const videoSources = shots.map((_, index) => {
+    const existingUrl = completedVideoUrls[index]
+    return existingUrl
+      ? { url: existingUrl }
+      : { nodeId: generatedNodeBySequence.get(index + 1) }
+  })
+
+  const concatNode = {
+    id: concatNodeId,
+    canvasId,
+    nodeDefId: 'concat',
+    label: '[自动] 合成镜头',
+    dataJson: JSON.stringify(videoNodes.length === 0
+      ? { videoUrls: completedVideoUrls, expectedVideoCount: shots.length }
+      : { videoSources, expectedVideoCount: shots.length }),
+    positionX: baseX + 280,
+    positionY: baseY,
+    isHidden: true,
+    createdAt: nowAt,
+    updatedAt: nowAt,
+  }
+  const exportNode = {
+    id: exportNodeId,
+    canvasId,
+    nodeDefId: 'export',
+    label: '[自动] 导出成片',
+    dataJson: JSON.stringify({ resolution: '1080p', codec: 'h264' }),
+    positionX: baseX + 560,
+    positionY: baseY,
+    isHidden: true,
+    createdAt: nowAt,
+    updatedAt: nowAt,
+  }
+  const resultNode = {
+    id: resultNodeId,
+    canvasId,
+    nodeDefId: 'video-asset',
+    label: '生成成片',
+    dataJson: JSON.stringify({
+      title: '生成成片',
+      label: '生成成片',
+      shotCount: shots.length,
+      duration: shots.reduce((sum, { data }) => sum + (Number(data.duration) > 0 ? Number(data.duration) : 5), 0),
+    }),
+    positionX: baseX + 840,
+    positionY: baseY,
+    isHidden: false,
+    createdAt: nowAt,
+    updatedAt: nowAt,
+  }
+
+  const edges = [
+    ...pendingVideos.flatMap(({ executeNode, shotNodeId }) => [
+      {
+        id: uid('edge'), canvasId, sourceNodeId: executeNode.id, targetNodeId: shotNodeId,
+        edgeKind: 'dataflow', sourcePort: 'out:video', targetPort: 'in:video', createdAt: nowAt,
+      },
+      {
+        id: uid('edge'), canvasId, sourceNodeId: executeNode.id, targetNodeId: concatNodeId,
+        edgeKind: 'dataflow', sourcePort: 'out:video', targetPort: 'in:video', createdAt: nowAt,
+      },
+    ]),
+    {
+      id: uid('edge'), canvasId, sourceNodeId: concatNodeId, targetNodeId: exportNodeId,
+      edgeKind: 'dataflow', sourcePort: 'out:video', targetPort: 'in:video', createdAt: nowAt,
+    },
+    {
+      id: uid('edge'), canvasId, sourceNodeId: exportNodeId, targetNodeId: resultNodeId,
+      edgeKind: 'dataflow', sourcePort: 'out:video', targetPort: 'in:video', createdAt: nowAt,
+    },
+  ]
+
+  return {
+    nodes: [...videoNodes, concatNode, exportNode, resultNode],
+    executeNodes: [...videoNodes, concatNode, exportNode],
+    edges,
+    shotNodeIds: shots.map(({ node }) => node.id),
+  }
+}
+
 @Injectable()
 export class CanvasRunService {
   private readonly logger = new Logger(CanvasRunService.name)
@@ -70,8 +240,18 @@ export class CanvasRunService {
           .select()
           .from(canvasNodes)
           .where(and(eq(canvasNodes.canvasId, canvasId), eq(canvasNodes.isHidden, false)))
-        const executableNodes = allNodes.filter((n) => EXECUTE_NODE_TYPES.includes(n.nodeDefId))
-        if (executableNodes.length === 0) throw new BadRequestException('no executable nodes on this canvas')
+        let executableNodes: Array<Pick<typeof canvasNodes.$inferSelect, 'id' | 'nodeDefId' | 'dataJson'>> =
+          allNodes.filter((n) => EXECUTE_NODE_TYPES.includes(n.nodeDefId))
+        if (executableNodes.length === 0) {
+          const moviePipeline = buildStoryboardMoviePipeline(
+            canvasId,
+            allNodes.filter((node) => node.nodeDefId === 'storyboard'),
+          )
+          if (!moviePipeline) throw new BadRequestException('storyboard images are required before generating a movie')
+          await tx.insert(canvasNodes).values(moviePipeline.nodes)
+          await tx.insert(canvasEdges).values(moviePipeline.edges)
+          executableNodes = moviePipeline.executeNodes
+        }
         totalNodes = executableNodes.length
 
         await tx.insert(canvasVersions).values({
@@ -148,7 +328,7 @@ export class CanvasRunService {
       const result = task.resultJson ? JSON.parse(task.resultJson) : null
       const rawStatus = task.status
       const mappedStatus =
-        rawStatus === 'queued' || rawStatus === 'pending' ? 'idle'
+        rawStatus === 'queued' || rawStatus === 'pending' ? 'queued'
           : rawStatus === 'running' ? 'running'
             : rawStatus
       nodeStates[task.nodeId] = {
@@ -173,7 +353,7 @@ export class CanvasRunService {
       run_id: run.id,
       state,
       progress: {
-        current: run.completedNodes,
+        current: run.completedNodes + run.failedNodes + run.skippedNodes,
         total: run.totalNodes,
         eta_seconds: running ? 60 : undefined,
       },

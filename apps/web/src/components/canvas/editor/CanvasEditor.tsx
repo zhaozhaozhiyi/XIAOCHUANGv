@@ -735,7 +735,7 @@ function InnerEditor() {
     (runId: string) => {
       runStatus.start(runId, {
         onComplete: () => {
-          toast.success('成片生成完成', { description: '已落资产库' })
+          toast.success('成片生成完成', { description: '已添加到画布' })
         },
         onFailed: () => {
           toast.error('生成失败', { description: '请查看节点状态详情' })

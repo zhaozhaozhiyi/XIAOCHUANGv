@@ -15,6 +15,7 @@ import {
   storyboards,
 } from '../../db/schema'
 import { CanvasService } from '../canvas/canvas.service'
+import { buildHeuristicResult } from '../ai/skill-handlers/storyboard-from-text.handler'
 
 type CreateDramaCanvasInput = {
   title?: string
@@ -183,7 +184,7 @@ export class DramaCanvasProjectionService {
     }
     const episode = await this.requireEpisode(dramaId, userId, episodeId)
     const productionContext = parseNodeData(canvas.productionContextJson)
-    const projection = await this.buildProjection(dramaId, userId, episode.id, canvasId, {
+    const projection = await this.buildProjection(dramaId, userId, episode, canvasId, {
       include: input.include ?? (Array.isArray(productionContext.include) ? productionContext.include as ProjectionInclude[] : undefined),
       layout: input.layout ?? resolveProjectionLayout(productionContext.layout),
     })
@@ -273,10 +274,11 @@ export class DramaCanvasProjectionService {
   private async buildProjection(
     dramaId: number,
     userId: number,
-    episodeId: number,
+    episode: typeof episodes.$inferSelect,
     canvasId: string,
     options: { include?: ProjectionInclude[]; layout?: ProjectionLayout } = {},
   ) {
+    const episodeId = episode.id
     const include = resolveProjectionIncludes(options.include)
     const [characterRows, sceneRows, storyboardRows] = await Promise.all([
       this.db.db.select().from(characters).where(and(eq(characters.dramaId, dramaId), eq(characters.userId, userId), isNull(characters.deletedAt))),
@@ -300,6 +302,10 @@ export class DramaCanvasProjectionService {
       : []
     const includeStoryboards = include.has('storyboards')
     const includeExecutionNodes = includeStoryboards && include.has('execution_nodes')
+    const scriptContent = String(episode.scriptContent || episode.content || '').trim()
+    const scriptFallback = includeStoryboards && sortedStoryboards.length === 0 && scriptContent
+      ? buildHeuristicResult(scriptContent)
+      : null
 
     const nodeIdByKey = new Map<string, string>()
     const nodes: Array<{
@@ -342,22 +348,59 @@ export class DramaCanvasProjectionService {
     projectedCharacters.forEach((character, index) => {
       addNode(`character_${character.id}`, 'character', character.name, {
         characterId: character.id,
+        name: character.name,
+        label: character.name,
         title: character.name,
         description: character.description ?? character.appearance ?? '',
         imageUrl: character.imageUrl ?? null,
+        images: character.imageUrl ? [character.imageUrl] : [],
         assetScope: 'project',
       }, 0, index * 230)
     })
 
+    if (include.has('characters') && projectedCharacters.length === 0) {
+      scriptFallback?.characters.forEach((character, index) => {
+        addNode(`script_character_${index + 1}`, 'character', character.name, {
+          name: character.name,
+          label: character.name,
+          title: character.name,
+          role: character.role ?? '',
+          description: character.description ?? '',
+          images: [],
+          assetScope: 'episode',
+          generatedFromScript: true,
+        }, 0, index * 230)
+      })
+    }
+
     projectedScenes.forEach((scene, index) => {
       addNode(`scene_${scene.id}`, 'scene', scene.location, {
         sceneId: scene.id,
+        name: scene.location,
+        label: scene.location,
         title: scene.location,
         description: scene.prompt,
         imageUrl: scene.imageUrl ?? null,
+        images: scene.imageUrl ? [scene.imageUrl] : [],
         assetScope: 'episode',
       }, 0, projectedCharacters.length * 230 + 80 + index * 230)
     })
+
+    if (include.has('scenes') && projectedScenes.length === 0) {
+      const characterCount = projectedCharacters.length || scriptFallback?.characters.length || 0
+      scriptFallback?.scenes.forEach((scene, index) => {
+        addNode(`script_scene_${index + 1}`, 'scene', scene.location, {
+          name: scene.location,
+          label: scene.location,
+          title: scene.location,
+          time: scene.time ?? '',
+          description: scene.description ?? '',
+          images: [],
+          assetScope: 'episode',
+          generatedFromScript: true,
+        }, 0, characterCount * 230 + 80 + index * 230)
+      })
+    }
 
     if (includeStoryboards) sortedStoryboards.forEach((storyboard, index) => {
       const y = index * 280
@@ -395,6 +438,25 @@ export class DramaCanvasProjectionService {
         }, 1080, y, 280, 210, parentStoryboardId)
       }
     })
+
+    if (includeStoryboards && sortedStoryboards.length === 0) {
+      scriptFallback?.shots.forEach((shot, index) => {
+        const description = shot.description ?? ''
+        addNode(`script_storyboard_${index + 1}`, 'storyboard', shot.title || `镜头 ${index + 1}`, {
+          shotIndex: index + 1,
+          storyboardNumber: index + 1,
+          title: shot.title || `镜头 ${index + 1}`,
+          shotType: shot.shotType ?? '',
+          cameraMove: shot.cameraMove ?? '',
+          shotDescription: description,
+          description,
+          prompt: description,
+          duration: shot.duration ?? 4,
+          images: [],
+          generatedFromScript: true,
+        }, 360, index * 280, 300, 220)
+      })
+    }
 
     const edges: Array<{ id: string; source: string; target: string; edgeKind: string; relationType: string; label: string }> = []
     const addEdge = (sourceKey: string, targetKey: string, relationType: string, label: string, edgeKind = 'dataflow') => {

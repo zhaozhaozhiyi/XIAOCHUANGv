@@ -63,8 +63,12 @@ export function useNodeGenerate() {
           style: params.style,
         })
         useCanvasStore.getState().markEditing()
-        runPolling.start(result.hidden_node_id)
-        toast.success(`已开始 ${params.action.label}`)
+        runPolling.start(result.hidden_node_id, result.run_id)
+        toast.success(result.deduplicated
+          ? `${params.action.label} 已在队列中`
+          : result.queued
+            ? `${params.action.label} 已加入队列`
+            : `已开始 ${params.action.label}`)
         return true
       } catch (err) {
         toast.error('触发失败', { description: (err as Error)?.message })

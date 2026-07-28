@@ -3136,12 +3136,51 @@ button.drama-filter-chip {
   line-height: 1.6;
 }
 
-.drama-canvas-empty-actions,
-.drama-canvas-from-episode {
-  display: flex;
-  flex-wrap: wrap;
+.drama-canvas-empty-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 10px;
   align-items: center;
+}
+
+.drama-canvas-from-episode {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) max-content;
+  min-width: 0;
+  gap: 10px;
+  align-items: center;
+}
+
+.drama-canvas-episode-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.drama-canvas-from-episode > button,
+.drama-canvas-create-blank {
+  min-height: 40px;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .drama-canvas-empty-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .drama-canvas-create-blank {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 520px) {
+  .drama-canvas-from-episode {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .drama-canvas-from-episode > button,
+  .drama-canvas-create-blank {
+    width: 100%;
+  }
 }
 
 .drama-canvas-list {

@@ -7,17 +7,8 @@ import { Inject, Injectable } from '@nestjs/common'
 import { v4 as uuid } from 'uuid'
 
 import { StorageService } from '../../storage/storage.service'
-import { downloadFile } from '../../images/images.storage'
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
-
-async function resolveLocalPath(storageService: StorageService, url: string, subDir: string): Promise<string> {
-  if (storageService.isLocalStoragePath(url)) {
-    return storageService.ensureLocalFile(url)
-  }
-  const stored = await downloadFile(storageService, url, subDir)
-  return storageService.ensureLocalFile(stored.url)
-}
 
 async function concatVideoFiles(inputPaths: string[], outputPath: string): Promise<void> {
   if (inputPaths.length === 1) {
@@ -57,7 +48,7 @@ export class CanvasConcatService {
 
     try {
       for (let i = 0; i < videoUrls.length; i++) {
-        localPaths.push(await resolveLocalPath(this.storageService, videoUrls[i], 'videos'))
+        localPaths.push(await this.storageService.ensureLocalFile(videoUrls[i]))
       }
 
       const outputPath = path.join(workDir, `${uuid()}.mp4`)

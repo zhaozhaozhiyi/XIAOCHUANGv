@@ -1,9 +1,9 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 
 import { DatabaseService } from '../../../db/database.service'
-import { canvasNodes, canvasEdges, canvasRuns, canvasVersions, canvasTasks } from '../../../db/schema'
+import { canvasNodes, canvasEdges, canvasRuns, canvasVersions, canvasTasks, canvases } from '../../../db/schema'
 import {
   AUDIO_RESULT_NODE_TYPES,
   IMAGE_RESULT_NODE_TYPES,
@@ -75,6 +75,8 @@ const COMPOSE_ACTION: BusinessActionDef = {
 }
 
 const BUSINESS_ACTION_MAP: Record<string, BusinessActionDef> = {
+  '生成形象': IMAGE_ACTION,
+  '生成场景': IMAGE_ACTION,
   '构想画面': IMAGE_ACTION,
   '改画面': IMAGE_ACTION,
   '换装': IMAGE_ACTION,
@@ -330,6 +332,7 @@ export class BusinessActionService {
       userInput: input.userInput || '',
       actionLabel: input.actionLabel,
       outputKind: action.outputKind,
+      sourceNodeId: sourceNode?.id ?? null,
     }
     if (sourceMedia.imageRefs.length) executeData.references = sourceMedia.imageRefs
     if (sourceMedia.videoRefs.length) executeData.videoUrls = sourceMedia.videoRefs
@@ -359,23 +362,71 @@ export class BusinessActionService {
       sourceNode,
     })
 
-    // 一画布一活跃 run：business-action 也受部分唯一索引约束，先做活跃 run 检查给出友好错误。
-    const [activeRun] = await this.db.db
-      .select()
-      .from(canvasRuns)
-      .where(and(eq(canvasRuns.canvasId, canvasId), inArray(canvasRuns.status, ['pending', 'running'])))
-    if (activeRun) throw new BadRequestException('a run is already in progress')
+    const requestKey = JSON.stringify([
+      sourceNode?.id ?? null,
+      input.actionLabel,
+      executeData.prompt,
+      insertNewNode,
+      targetNodeType,
+    ])
+    executeData.requestKey = requestKey
 
-    const hiddenNodeId = uid('node')
-    const versionId = uid('ver')
-    const runId = uid('run')
-    const taskId = uid('task')
+    let hiddenNodeId = uid('node')
+    let versionId = uid('ver')
+    let runId = uid('run')
+    let taskId = uid('task')
+    let joinedActiveRun = false
+    let deduplicated = false
+    let createdVisibleNode = false
     const outPort = OUTPUT_PORT[action.executeNodeDefId] ?? 'text'
     const inPort = TARGET_INPUT_PORT[action.executeNodeDefId] ?? 'in:image'
 
-    // 全部插入放一个事务：并发 run 撞唯一索引时整体回滚，不留孤儿 node/edge/version/task。
+    // 锁 canvas 行串行化快速点击；新动作追加到当前 run，由 worker 受控并发执行。
     try {
       await this.db.db.transaction(async (tx) => {
+        const [canvas] = await tx
+          .select()
+          .from(canvases)
+          .where(eq(canvases.id, canvasId))
+          .for('update')
+        if (!canvas) throw new BadRequestException('canvas_not_found')
+
+        const [activeRun] = await tx
+          .select()
+          .from(canvasRuns)
+          .where(and(eq(canvasRuns.canvasId, canvasId), inArray(canvasRuns.status, ['pending', 'running'])))
+          .for('update')
+
+        if (activeRun) {
+          const [activeVersion] = await tx
+            .select()
+            .from(canvasVersions)
+            .where(eq(canvasVersions.id, activeRun.versionId))
+          if (!activeVersion?.label?.startsWith('BA')) {
+            throw new BadRequestException('a run is already in progress')
+          }
+
+          joinedActiveRun = true
+          runId = activeRun.id
+          versionId = activeRun.versionId
+
+          const activeTasks = await tx.select().from(canvasTasks).where(eq(canvasTasks.runId, activeRun.id))
+          const duplicate = activeTasks.find((task) => {
+            if (!['pending', 'queued', 'running'].includes(task.status)) return false
+            try {
+              return (JSON.parse(task.paramsJson || '{}') as Record<string, unknown>).requestKey === requestKey
+            } catch {
+              return false
+            }
+          })
+          if (duplicate) {
+            hiddenNodeId = duplicate.nodeId
+            taskId = duplicate.id
+            deduplicated = true
+            return
+          }
+        }
+
         if (insertNewNode) {
           await tx.insert(canvasNodes).values({
             id: targetNodeId,
@@ -389,6 +440,7 @@ export class BusinessActionService {
             createdAt: now(),
             updatedAt: now(),
           })
+          createdVisibleNode = true
         }
 
         await tx.insert(canvasNodes).values({
@@ -406,12 +458,24 @@ export class BusinessActionService {
           edgeKind: 'dataflow', sourcePort: `out:${outPort}`, targetPort: inPort, createdAt: now(),
         })
 
-        await tx.insert(canvasVersions).values({
-          id: versionId, canvasId, type: 'run', label: `BA: ${input.actionLabel}`, runId, nodeCount: 1, createdAt: now(),
-        })
-        await tx.insert(canvasRuns).values({
-          id: runId, canvasId, versionId, status: 'pending', totalNodes: 1, createdAt: now(),
-        })
+        if (joinedActiveRun) {
+          await tx
+            .update(canvasRuns)
+            .set({ totalNodes: sql`${canvasRuns.totalNodes} + 1` })
+            .where(eq(canvasRuns.id, runId))
+          await tx
+            .update(canvasVersions)
+            .set({ nodeCount: sql`${canvasVersions.nodeCount} + 1` })
+            .where(eq(canvasVersions.id, versionId))
+        } else {
+          await tx.insert(canvasVersions).values({
+            id: versionId, canvasId, type: 'run', label: `BA batch: ${input.actionLabel}`, runId, nodeCount: 1, createdAt: now(),
+          })
+          await tx.insert(canvasRuns).values({
+            id: runId, canvasId, versionId, status: 'pending', totalNodes: 1, createdAt: now(),
+          })
+          await tx.update(canvases).set({ currentVersionId: versionId }).where(eq(canvases.id, canvasId))
+        }
         await tx.insert(canvasTasks).values({
           id: taskId, runId, canvasId, nodeId: hiddenNodeId, nodeDefId: action.executeNodeDefId,
           status: 'pending', paramsJson: JSON.stringify(executeData), createdAt: now(),
@@ -424,15 +488,22 @@ export class BusinessActionService {
       throw error
     }
 
-    void this.orchestrator.startRun(runId, userId).catch((err) => {
-      this.logger.error(`business action orchestration failed: ${runId}`, err)
-    })
+    if (!deduplicated) {
+      const schedule = joinedActiveRun
+        ? this.orchestrator.enqueueAddedTask(taskId, userId)
+        : this.orchestrator.startRun(runId, userId)
+      void schedule.catch((err) => {
+        this.logger.error(`business action orchestration failed: ${runId}/${taskId}`, err)
+      })
+    }
 
     return {
       hidden_node_id: hiddenNodeId,
       run_id: runId,
       task_id: taskId,
-      node: insertNewNode ? {
+      queued: joinedActiveRun,
+      deduplicated,
+      node: createdVisibleNode ? {
         id: targetNodeId,
         type: targetNodeType,
         position: { x: targetX, y: targetY },

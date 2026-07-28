@@ -88,7 +88,8 @@ export class CanvasExecutionService {
   private async claimTask(canvasTaskId: string, workerId: string): Promise<boolean> {
     const [task] = await this.db.db.select().from(canvasTasks).where(eq(canvasTasks.id, canvasTaskId))
     if (!task) return false
-    if (task.status !== 'pending' && task.status !== 'queued') return false
+    // BullMQ worker 重启后会重投 stalled job；允许该唯一 job 接管数据库中遗留的 running 状态。
+    if (task.status !== 'pending' && task.status !== 'queued' && task.status !== 'running') return false
 
     await this.db.db
       .update(canvasTasks)

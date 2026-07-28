@@ -98,6 +98,28 @@ function resultToUrl(result: Record<string, unknown> | null): string | undefined
   return undefined
 }
 
+function orderedVideoUrls(
+  value: unknown,
+  taskByNode: Map<string, typeof canvasTasks.$inferSelect>,
+): string[] | null {
+  if (!Array.isArray(value)) return null
+  const urls: string[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const source = item as Record<string, unknown>
+    if (typeof source.url === 'string' && source.url) {
+      urls.push(source.url)
+      continue
+    }
+    if (typeof source.nodeId !== 'string') continue
+    const task = taskByNode.get(source.nodeId)
+    const result = safeJsonParse<Record<string, unknown> | null>(task?.resultJson ?? null, null)
+    const url = resultToUrl(result)
+    if (url) urls.push(url)
+  }
+  return urls
+}
+
 @Injectable()
 export class CanvasInputResolverService {
   constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
@@ -113,7 +135,16 @@ export class CanvasInputResolverService {
       .from(canvasEdges)
       .where(and(eq(canvasEdges.canvasId, canvasId), eq(canvasEdges.edgeKind, 'dataflow')))
 
-    const inbound = edges.filter((e) => e.targetNodeId === executeNodeId)
+    const sourceNodeOrder = Array.isArray(params.sourceNodeOrder)
+      ? params.sourceNodeOrder.filter((id): id is string => typeof id === 'string')
+      : []
+    const sourceOrderIndex = new Map(sourceNodeOrder.map((id, index) => [id, index]))
+    const inbound = edges
+      .filter((e) => e.targetNodeId === executeNodeId)
+      .sort((a, b) => (
+        (sourceOrderIndex.get(a.sourceNodeId) ?? Number.MAX_SAFE_INTEGER)
+        - (sourceOrderIndex.get(b.sourceNodeId) ?? Number.MAX_SAFE_INTEGER)
+      ))
     const sourceNodeIds = inbound.map((e) => e.sourceNodeId)
     if (sourceNodeIds.length === 0) {
       return {
@@ -182,9 +213,11 @@ export class CanvasInputResolverService {
       if (!references.includes(ref)) references.push(ref)
     }
 
+    const videosInRequestedOrder = orderedVideoUrls(params.videoSources, taskByNode)
+
     return {
       imageUrl,
-      videoUrls: Array.from(new Set(videoUrls)),
+      videoUrls: videosInRequestedOrder ?? Array.from(new Set(videoUrls)),
       audioUrl: audioUrl || (typeof params.audioUrl === 'string' && params.audioUrl ? params.audioUrl : undefined),
       text: pickText(params),
       references,

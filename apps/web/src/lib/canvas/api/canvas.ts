@@ -100,7 +100,14 @@ export const canvasApi = {
       position_y?: number
       target_node_type?: CanvasNode['type']
     },
-  ): Promise<{ hidden_node_id: string; run_id: string; task_id?: string; node?: CanvasNode | null }> {
+  ): Promise<{
+    hidden_node_id: string
+    run_id: string
+    task_id?: string
+    queued?: boolean
+    deduplicated?: boolean
+    node?: CanvasNode | null
+  }> {
     return canvasClient.post(`/canvases/${id}/business-action`, body)
   },
 

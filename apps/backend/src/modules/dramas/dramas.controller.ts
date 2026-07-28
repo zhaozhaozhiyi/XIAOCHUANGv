@@ -1647,6 +1647,7 @@ export class DramasController {
         id: canvas.id,
         title: canvas.title,
         source: canvas.source,
+        source_episode_id: canvas.sourceEpisodeId,
         updated_at: canvas.updatedAt,
         href: `/drama/${dramaId}/canvas/${canvas.id}`,
       })),

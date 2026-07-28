@@ -1,22 +1,33 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { BusinessActionService } from '../business-action/business-action.service'
 
-function thenable(result: any) {
-  const obj: any = { then: (resolve: any) => resolve(result) }
-  obj.select = vi.fn(() => obj)
-  obj.from = vi.fn(() => obj)
-  obj.where = vi.fn(() => obj)
-  obj.insert = vi.fn(() => obj)
-  obj.values = vi.fn(() => obj)
-  obj.returning = vi.fn(() => Promise.resolve(result))
-  return obj
+function queryResult(result: any[]) {
+  const promise = Promise.resolve(result)
+  const chain: any = {
+    from: vi.fn(() => chain),
+    where: vi.fn(() => chain),
+    for: vi.fn(() => promise),
+    then: promise.then.bind(promise),
+  }
+  return chain
 }
 
-function createDbMock(sourceNode: any | null = null) {
-  // 第一次 select 返回 sourceNode（triggerAction 先查源节点），后续 select 返回 []（活跃 run 检查等）。
-  let selectCallCount = 0
+function createDbMock(
+  sourceNode: any | null = null,
+  options: { activeRun?: any; activeVersion?: any; activeTasks?: any[] } = {},
+) {
+  let txSelectCallCount = 0
   const insertedValues: any[] = []
   const txMock = {
+    select: vi.fn(() => {
+      const callIdx = txSelectCallCount++
+      if (callIdx === 0) return queryResult([{ id: 'cnv_1' }])
+      if (callIdx === 1) return queryResult(options.activeRun ? [options.activeRun] : [])
+      if (callIdx === 2 && options.activeRun) {
+        return queryResult([options.activeVersion ?? { id: 'ver_active', label: 'BA batch: 构想画面' }])
+      }
+      return queryResult(options.activeTasks ?? [])
+    }),
     insert: vi.fn(() => ({
       values: vi.fn((values: any) => {
         if (Array.isArray(values)) insertedValues.push(...values)
@@ -29,14 +40,7 @@ function createDbMock(sourceNode: any | null = null) {
   return {
     insertedValues,
     db: {
-      select: vi.fn(() => {
-        const callIdx = selectCallCount++
-        return {
-          from: vi.fn(() => ({
-            where: vi.fn(() => Promise.resolve(callIdx === 0 ? (sourceNode ? [sourceNode] : []) : [])),
-          })),
-        }
-      }),
+      select: vi.fn(() => queryResult(sourceNode ? [sourceNode] : [])),
       transaction: vi.fn(async (fn: any) => fn(txMock)),
       insert: vi.fn(() => ({
         values: vi.fn((values: any) => {
@@ -50,7 +54,10 @@ function createDbMock(sourceNode: any | null = null) {
 }
 
 function createOrchestratorMock() {
-  return { startRun: vi.fn(() => Promise.resolve()) }
+  return {
+    startRun: vi.fn(() => Promise.resolve()),
+    enqueueAddedTask: vi.fn(() => Promise.resolve()),
+  }
 }
 
 describe('BusinessActionService', () => {
@@ -59,7 +66,7 @@ describe('BusinessActionService', () => {
   // ═══════════════════════════════════════════════
 
   const KNOWN_ACTIONS = [
-    '构想画面', '改画面', '换装', '换表情', '换时段', '换天气',
+    '生成形象', '生成场景', '构想画面', '改画面', '换装', '换表情', '换时段', '换天气',
     '生成镜头视频', '配音', '生成', '生成视频', '生成音频', '生成分镜',
     '整理脚本', '合成', '执行技能',
   ]
@@ -168,5 +175,89 @@ describe('BusinessActionService', () => {
       actionLabel: '生成视频',
       references: ['/static/source.png'],
     })
+  })
+
+  it('活跃 run 存在时把新动作追加到同一批次并立即入队', async () => {
+    const activeRun = { id: 'run_active', versionId: 'ver_active', status: 'running' }
+    const mockDb = createDbMock({
+      id: 'node_src', canvasId: 'cnv_1', nodeDefId: 'storyboard',
+      label: '分镜1', dataJson: '{}', positionX: 100, positionY: 200,
+    }, { activeRun })
+    const orchestrator = createOrchestratorMock()
+    const service = new BusinessActionService(mockDb as any, orchestrator as any)
+
+    const result = await service.triggerAction('cnv_1', 1, {
+      sourceNodeId: 'node_src',
+      actionLabel: '构想画面',
+      userInput: '夜景街道',
+      renderedPrompt: '夜景街道',
+    })
+
+    expect(result.run_id).toBe('run_active')
+    expect(result.queued).toBe(true)
+    expect(result.deduplicated).toBe(false)
+    expect(orchestrator.enqueueAddedTask).toHaveBeenCalledWith(result.task_id, 1)
+    expect(orchestrator.startRun).not.toHaveBeenCalled()
+    expect(mockDb.insertedValues.some((value) => value.id === 'run_active')).toBe(false)
+  })
+
+  it('同一批次内的相同非终态动作会复用原任务', async () => {
+    const requestKey = JSON.stringify([
+      'node_src', '构想画面', '夜景街道', false, 'image',
+    ])
+    const mockDb = createDbMock({
+      id: 'node_src', canvasId: 'cnv_1', nodeDefId: 'storyboard',
+      label: '分镜1', dataJson: '{}', positionX: 100, positionY: 200,
+    }, {
+      activeRun: { id: 'run_active', versionId: 'ver_active', status: 'running' },
+      activeTasks: [{
+        id: 'task_existing', nodeId: 'node_hidden', status: 'queued',
+        paramsJson: JSON.stringify({ requestKey }),
+      }],
+    })
+    const orchestrator = createOrchestratorMock()
+    const service = new BusinessActionService(mockDb as any, orchestrator as any)
+
+    const result = await service.triggerAction('cnv_1', 1, {
+      sourceNodeId: 'node_src',
+      actionLabel: '构想画面',
+      userInput: '夜景街道',
+      renderedPrompt: '夜景街道',
+    })
+
+    expect(result).toMatchObject({
+      run_id: 'run_active',
+      task_id: 'task_existing',
+      hidden_node_id: 'node_hidden',
+      queued: true,
+      deduplicated: true,
+      node: null,
+    })
+    expect(mockDb.insertedValues).toHaveLength(0)
+    expect(orchestrator.startRun).not.toHaveBeenCalled()
+    expect(orchestrator.enqueueAddedTask).not.toHaveBeenCalled()
+  })
+
+  it('不会把手动动作混入正在执行的成片流水线', async () => {
+    const mockDb = createDbMock({
+      id: 'node_src', canvasId: 'cnv_1', nodeDefId: 'storyboard',
+      label: '分镜1', dataJson: '{}', positionX: 100, positionY: 200,
+    }, {
+      activeRun: { id: 'run_movie', versionId: 'ver_movie', status: 'running' },
+      activeVersion: { id: 'ver_movie', label: '生成成片' },
+    })
+    const orchestrator = createOrchestratorMock()
+    const service = new BusinessActionService(mockDb as any, orchestrator as any)
+
+    await expect(service.triggerAction('cnv_1', 1, {
+      sourceNodeId: 'node_src',
+      actionLabel: '构想画面',
+      userInput: '夜景街道',
+      renderedPrompt: '夜景街道',
+    })).rejects.toThrow(/a run is already in progress/i)
+
+    expect(mockDb.insertedValues).toHaveLength(0)
+    expect(orchestrator.startRun).not.toHaveBeenCalled()
+    expect(orchestrator.enqueueAddedTask).not.toHaveBeenCalled()
   })
 })
