@@ -19,6 +19,7 @@ interface CanvasMetaState {
   title: string
   currentVersionId: string | null
   saveStatus: SaveStatus
+  editRevision: number
   lastSavedAt: string | null
   sourceDramaId: string | null
   viewport: CanvasViewport
@@ -40,12 +41,13 @@ interface CanvasMetaState {
 
 const initial: Pick<
   CanvasMetaState,
-  'canvasId' | 'title' | 'currentVersionId' | 'saveStatus' | 'lastSavedAt' | 'sourceDramaId' | 'viewport'
+  'canvasId' | 'title' | 'currentVersionId' | 'saveStatus' | 'editRevision' | 'lastSavedAt' | 'sourceDramaId' | 'viewport'
 > = {
   canvasId: null,
   title: '未命名画布',
   currentVersionId: null,
   saveStatus: 'idle',
+  editRevision: 0,
   lastSavedAt: null,
   sourceDramaId: null,
   viewport: { x: 0, y: 0, zoom: 1 },
@@ -63,11 +65,13 @@ export const useCanvasStore = create<CanvasMetaState>()(
         s.sourceDramaId = meta.sourceDramaId ?? null
         if (meta.viewport) s.viewport = meta.viewport
         s.saveStatus = 'saved'
+        s.editRevision = 0
       }),
     setTitle: (title) =>
       set((s) => {
         s.title = title
         s.saveStatus = 'editing'
+        s.editRevision += 1
       }),
     setSaveStatus: (status, savedAt) =>
       set((s) => {
@@ -80,7 +84,8 @@ export const useCanvasStore = create<CanvasMetaState>()(
       }),
     markEditing: () =>
       set((s) => {
-        if (s.saveStatus !== 'saving') s.saveStatus = 'editing'
+        s.saveStatus = 'editing'
+        s.editRevision += 1
       }),
   })),
 )

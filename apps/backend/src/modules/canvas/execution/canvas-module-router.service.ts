@@ -3,9 +3,10 @@ import { ConfigService } from '@nestjs/config'
 import { eq } from 'drizzle-orm'
 
 import { DatabaseService } from '../../../db/database.service'
-import { imageGenerations, videoGenerations } from '../../../db/schema'
+import { dramas, imageGenerations, videoGenerations } from '../../../db/schema'
 import { AudioService } from '../../audio/audio.service'
 import { ImagesService } from '../../images/images.service'
+import { appendDramaStyleHint } from '../../images/images.utils'
 import { VideosService } from '../../videos/videos.service'
 import type {
   CanvasGenerateContext,
@@ -16,6 +17,11 @@ import { CanvasConcatService, waitForRecordStatus } from './canvas-concat.servic
 
 function asString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback
+}
+
+function asPositiveInt(value: unknown): number | undefined {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
 @Injectable()
@@ -31,6 +37,20 @@ export class CanvasModuleRouterService {
 
   private useStub(): boolean {
     return this.config.get<string>('CANVAS_EXECUTION_STUB', '0') === '1'
+  }
+
+  private async resolveStyledPrompt(
+    prompt: string,
+    params: Record<string, unknown>,
+    context: CanvasGenerateContext,
+  ) {
+    const dramaId = asPositiveInt(context.dramaId ?? params.dramaId)
+    let style = asString(params.style)
+    if (dramaId) {
+      const [drama] = await this.db.db.select({ style: dramas.style }).from(dramas).where(eq(dramas.id, dramaId))
+      style = drama?.style || style
+    }
+    return style ? appendDramaStyleHint(prompt, style) : prompt
   }
 
   async execute(
@@ -94,18 +114,29 @@ export class CanvasModuleRouterService {
     inputs: ResolvedCanvasInputs,
     context: CanvasGenerateContext,
   ): Promise<CanvasTaskResult> {
-    const prompt = asString(params.prompt, inputs.text || '')
-    if (!prompt) throw new Error('text-to-image requires prompt')
+    const rawPrompt = asString(params.prompt, inputs.text || '')
+    if (!rawPrompt) throw new Error('text-to-image requires prompt')
+    const prompt = await this.resolveStyledPrompt(rawPrompt, params, context)
 
     const userId = Number(context.userId)
+    const dramaId = asPositiveInt(context.dramaId ?? params.dramaId)
+    const episodeId = asPositiveInt(context.episodeId ?? params.episodeId)
+    const storyboardId = asPositiveInt(params.storyboardId ?? context.storyboardId)
     const genId = await this.imagesService.generateImage({
       userId,
+      dramaId,
+      storyboardId,
+      sceneId: asPositiveInt(params.sceneId),
+      characterId: asPositiveInt(params.characterId),
       prompt,
       referenceImages: inputs.references.length ? inputs.references : undefined,
       taskPayload: {
         canvasId: context.canvasId,
         canvasNodeId: context.nodeId,
         source: 'canvas',
+        drama_id: dramaId,
+        episode_id: episodeId,
+        storyboard_id: storyboardId,
       },
     })
 
@@ -139,9 +170,19 @@ export class CanvasModuleRouterService {
     const imageUrl = inputs.imageUrl || inputs.references[0]
 
     const userId = Number(context.userId)
+    const dramaId = asPositiveInt(context.dramaId ?? params.dramaId)
+    const episodeId = asPositiveInt(context.episodeId ?? params.episodeId)
+    const storyboardId = asPositiveInt(params.storyboardId ?? context.storyboardId)
+    const prompt = await this.resolveStyledPrompt(
+      asString(params.prompt, asString(params.motion, 'cinematic motion')),
+      params,
+      context,
+    )
     const genId = await this.videosService.generateVideo({
       userId,
-      prompt: asString(params.prompt, asString(params.motion, 'cinematic motion')),
+      dramaId,
+      storyboardId,
+      prompt,
       imageUrl,
       firstFrameUrl: imageUrl,
       duration: typeof params.duration === 'number' ? params.duration : Number(params.duration) || 5,
@@ -149,6 +190,9 @@ export class CanvasModuleRouterService {
         canvasId: context.canvasId,
         canvasNodeId: context.nodeId,
         source: 'canvas',
+        drama_id: dramaId,
+        episode_id: episodeId,
+        storyboard_id: storyboardId,
       },
     })
 

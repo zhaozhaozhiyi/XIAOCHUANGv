@@ -195,6 +195,7 @@ export interface CanvasEdge {
   /** 仅 dataflow 边带端口字段 */
   source_port?: string
   target_port?: string
+  label?: string
   /** 仅 narrative 边用；PRD §8.3 8 种 */
   relation_type?: RelationType
 }

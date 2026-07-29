@@ -74,6 +74,7 @@ export function useRunStatus(canvasId: string | null): UseRunStatusReturn {
         relation_type: edge.relation_type,
         source_port: edge.source_port,
         target_port: edge.target_port,
+        label: edge.label,
       },
     })) as FlowEdge[])
   }, [canvasId, replaceEdges, replaceNodes])
@@ -146,7 +147,22 @@ export function useRunStatus(canvasId: string | null): UseRunStatusReturn {
     [setRunState, stop, tick],
   )
 
-  useEffect(() => stop, [stop])
+  useEffect(() => {
+    if (!canvasId) return stop
+    let cancelled = false
+
+    void canvasApi.runStatus(canvasId)
+      .then((status) => {
+        if (cancelled || status.state !== 'running' || !status.run_id) return
+        start(status.run_id)
+      })
+      .catch(() => undefined)
+
+    return () => {
+      cancelled = true
+      stop()
+    }
+  }, [canvasId, start, stop])
 
   return { start, stop }
 }

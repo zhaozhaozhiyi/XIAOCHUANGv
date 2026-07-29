@@ -47,7 +47,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { cn } from '@/lib/cn'
@@ -147,6 +147,7 @@ interface FreezoneCanvasChromeProps {
   onAutoLayout: () => void
   onOpenGenerate: () => void
   onCancelRun: () => void
+  onBack: () => void
   canUndo: boolean
   canRedo: boolean
   canAutoLayout: boolean
@@ -158,6 +159,7 @@ function FreezoneCanvasChrome({
   onAutoLayout,
   onOpenGenerate,
   onCancelRun,
+  onBack,
   canUndo,
   canRedo,
   canAutoLayout,
@@ -171,13 +173,14 @@ function FreezoneCanvasChrome({
   return (
     <TooltipProvider delayDuration={0}>
       <div className="drama-freezone-title-pill">
-        <Link
-          href={runtime.backHref || '/canvas'}
+        <button
+          type="button"
+          onClick={onBack}
           aria-label={runtime.backLabel || '返回画布列表'}
           className="drama-freezone-icon-button"
         >
           <ArrowLeft size={15} />
-        </Link>
+        </button>
         <div className="drama-freezone-title-copy">
           <strong>{title || '未命名画布'}</strong>
           <SavePill status={saveStatus} />
@@ -289,6 +292,7 @@ function SavePill({ status }: { status: SaveStatus }) {
 
 function InnerEditor() {
   const runtime = useCanvasRuntime()
+  const router = useRouter()
   const freezoneChrome = runtime.chrome === 'freezone'
   const canvasId = useCanvasStore((s) => s.canvasId)
   const setViewport = useCanvasStore((s) => s.setViewport)
@@ -360,12 +364,18 @@ function InnerEditor() {
         relation_type: e.data?.relation_type,
         source_port: e.data?.source_port,
         target_port: e.data?.target_port,
+        label: typeof e.data?.label === 'string' ? e.data.label : undefined,
       })) as never,
       viewport,
     })
   }, [canvasId])
 
-  useDebouncedSave({ delay: 3000, enabled: !!canvasId, onSave: handleSave })
+  const { flush: flushSave } = useDebouncedSave({ delay: 3000, enabled: !!canvasId, onSave: handleSave })
+  const handleBack = useCallback(() => {
+    void flushSave()
+      .then(() => router.push(runtime.backHref || '/canvas'))
+      .catch(() => undefined)
+  }, [flushSave, router, runtime.backHref])
 
   // ─── React Flow 事件 ──────────────────────────────────────────────────────
   const handleNodesChange = useCallback(
@@ -842,6 +852,7 @@ function InnerEditor() {
             canAutoLayout={nodes.length > 0}
             onOpenGenerate={() => setGenerateOpen(true)}
             onCancelRun={runStatus.stop}
+            onBack={handleBack}
           />
         ) : (
           <>

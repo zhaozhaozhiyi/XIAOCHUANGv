@@ -27,6 +27,9 @@ export function CanvasPanel({ dramaId, data }: { dramaId: number; data: DramaWor
     episodeId: selectedEpisode?.id ?? routeContext.episodeId,
     episodeNumber: selectedEpisode?.episode_number ?? sourceEpisode?.episode_number ?? routeContext.episodeNumber,
   }
+  const sortedCanvases = useMemo(() => [...data.canvases].sort((left, right) => (
+    new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()
+  )), [data.canvases])
 
   const createBlank = async () => {
     setCreatingCanvas(true)
@@ -105,10 +108,10 @@ export function CanvasPanel({ dramaId, data }: { dramaId: number; data: DramaWor
 
       {actionError ? <div className="drama-inline-error" role="alert">{actionError}</div> : null}
 
-      {data.canvases.length ? (
+      {sortedCanvases.length ? (
         <div className="drama-canvas-list" aria-label="已有画布">
-          <div className="drama-canvas-list-heading"><span>已有画布</span><small>{data.canvases.length} 个</small></div>
-          {data.canvases.map((canvas) => (
+          <div className="drama-canvas-list-heading"><span>已有画布</span><small>{sortedCanvases.length} 个</small></div>
+          {sortedCanvases.map((canvas) => (
             <Link
               key={canvas.id}
               href={getDramaCanvasHref(dramaId, canvas.id, effectiveContext)}

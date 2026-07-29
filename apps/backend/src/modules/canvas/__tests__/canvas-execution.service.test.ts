@@ -23,6 +23,7 @@ describe('CanvasExecutionService', () => {
       [{ id: 'run_1', versionId: 'ver_1', status: 'running' }],
       [task],
       [task],
+      [{ id: 'cnv_1', sourceDramaId: '7', sourceEpisodeId: '8', sourceStoryboardId: '9' }],
     ]
     let selectIndex = 0
     const db = {
@@ -50,6 +51,12 @@ describe('CanvasExecutionService', () => {
 
     await expect(service.executeCanvasTaskById('task_1', 1, 'worker-retry')).resolves.toBe('completed')
     expect(moduleRouter.execute).toHaveBeenCalledOnce()
+    expect(moduleRouter.execute).toHaveBeenCalledWith(
+      'image-to-video',
+      {},
+      expect.any(Object),
+      expect.objectContaining({ dramaId: '7', episodeId: '8', storyboardId: '9' }),
+    )
     expect(backfill.backfill).toHaveBeenCalledOnce()
   })
 })

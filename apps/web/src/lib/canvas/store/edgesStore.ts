@@ -25,6 +25,7 @@ export interface FlowEdgeData extends Record<string, unknown> {
   relation_type?: RelationType
   source_port?: string
   target_port?: string
+  label?: string
 }
 
 export type FlowEdge = RFEdge<FlowEdgeData>

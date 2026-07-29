@@ -14,9 +14,16 @@ function queryResult(result: any[]) {
 
 function createDbMock(
   sourceNode: any | null = null,
-  options: { activeRun?: any; activeVersion?: any; activeTasks?: any[] } = {},
+  options: {
+    activeRun?: any
+    activeVersion?: any
+    activeTasks?: any[]
+    referenceEdges?: any[]
+    referenceNodes?: any[]
+  } = {},
 ) {
   let txSelectCallCount = 0
+  let dbSelectCallCount = 0
   const insertedValues: any[] = []
   const txMock = {
     select: vi.fn(() => {
@@ -40,7 +47,12 @@ function createDbMock(
   return {
     insertedValues,
     db: {
-      select: vi.fn(() => queryResult(sourceNode ? [sourceNode] : [])),
+      select: vi.fn(() => {
+        const callIndex = dbSelectCallCount++
+        if (callIndex === 0) return queryResult(sourceNode ? [sourceNode] : [])
+        if (callIndex === 1) return queryResult(options.referenceEdges ?? [])
+        return queryResult(options.referenceNodes ?? [])
+      }),
       transaction: vi.fn(async (fn: any) => fn(txMock)),
       insert: vi.fn(() => ({
         values: vi.fn((values: any) => {
@@ -175,6 +187,43 @@ describe('BusinessActionService', () => {
       actionLabel: '生成视频',
       references: ['/static/source.png'],
     })
+  })
+
+  it('分镜生成会收集已关联角色和场景图片作为参考', async () => {
+    const mockDb = createDbMock({
+      id: 'node_storyboard', canvasId: 'cnv_1', nodeDefId: 'storyboard',
+      label: '分镜1', dataJson: JSON.stringify({ prompt: '竹屋内人物对话' }),
+      positionX: 100, positionY: 200,
+    }, {
+      referenceEdges: [
+        { sourceNodeId: 'node_character', relationType: 'character_ref' },
+        { sourceNodeId: 'node_scene', relationType: 'scene_ref' },
+      ],
+      referenceNodes: [
+        {
+          id: 'node_character', nodeDefId: 'character',
+          dataJson: JSON.stringify({ images: ['/static/character.png'] }),
+        },
+        {
+          id: 'node_scene', nodeDefId: 'scene',
+          dataJson: JSON.stringify({ imageUrl: '/static/scene.png' }),
+        },
+      ],
+    })
+    const service = new BusinessActionService(mockDb as any, createOrchestratorMock() as any)
+
+    await service.triggerAction('cnv_1', 1, {
+      sourceNodeId: 'node_storyboard',
+      actionLabel: '构想画面',
+      userInput: '竹屋内人物对话',
+      renderedPrompt: '竹屋内人物对话',
+    })
+
+    const hiddenNode = mockDb.insertedValues.find((value) => value.nodeDefId === 'text-to-image')
+    expect(JSON.parse(hiddenNode.dataJson).references).toEqual([
+      '/static/character.png',
+      '/static/scene.png',
+    ])
   })
 
   it('活跃 run 存在时把新动作追加到同一批次并立即入队', async () => {

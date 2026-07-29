@@ -72,6 +72,7 @@ export function useCanvas(canvasId: string | null) {
             relation_type: e.relation_type,
             source_port: e.source_port,
             target_port: e.target_port,
+            label: e.label,
           },
         }))
         replaceNodes(flowNodes)

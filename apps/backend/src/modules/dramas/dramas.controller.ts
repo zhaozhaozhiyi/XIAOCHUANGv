@@ -1299,7 +1299,8 @@ export class DramasController {
             eq(canvases.sourceDramaId, String(dramaId)),
             isNull(canvases.deletedAt),
           ),
-        ),
+        )
+        .orderBy(desc(canvases.updatedAt)),
       this.databaseService.db
         .select()
         .from(videoMerges)

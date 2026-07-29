@@ -10,6 +10,60 @@ function now() {
   return new Date()
 }
 
+const SERVER_GENERATED_DATA_KEYS = [
+  'results',
+  'current_result_id',
+  'images',
+  'imageUrl',
+  'previewImageUrl',
+  'thumbnailUrl',
+  'generationBatch',
+  'avatar',
+  'image',
+  'historyImages',
+  'frames',
+  'video',
+  'videoUrl',
+  'resultVideoUrl',
+  'url',
+  'audio',
+  'audioUrl',
+  'previewUrl',
+  'outputUrl',
+  'isGenerating',
+  'generationError',
+  'generationCompletedAt',
+  'status',
+  '__lastRunResult',
+] as const
+
+function parseNodeData(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {}
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function preserveGeneratedData(
+  incoming: Record<string, unknown> | undefined,
+  storedJson: string | null | undefined,
+) {
+  const next = { ...(incoming ?? {}) }
+  const stored = parseNodeData(storedJson)
+  const storedResults = Array.isArray(stored.results) ? stored.results : []
+  if (storedResults.length === 0) return next
+
+  for (const key of SERVER_GENERATED_DATA_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(stored, key)) next[key] = stored[key]
+  }
+  return next
+}
+
 /**
  * 前端发送的 React Flow 格式节点
  */
@@ -86,10 +140,15 @@ export class CanvasSaveService {
 
       // 2. 保存是前端可见图的全量覆盖；隐藏执行节点/边由后端生成链路持有，不能被草稿保存误删。
       const existingNodes = await tx
-        .select({ id: canvasNodes.id, isHidden: canvasNodes.isHidden })
+        .select({ id: canvasNodes.id, isHidden: canvasNodes.isHidden, dataJson: canvasNodes.dataJson })
         .from(canvasNodes)
         .where(eq(canvasNodes.canvasId, canvasId))
       const hiddenNodeIds = new Set(existingNodes.filter((node) => node.isHidden).map((node) => node.id))
+      const existingNodeById = new Map(existingNodes.map((node) => [node.id, node]))
+      const mergedNodes = nodesToSave.map((node) => ({
+        ...node,
+        data: preserveGeneratedData(node.data, existingNodeById.get(node.id)?.dataJson),
+      }))
 
       await tx.delete(canvasNodes).where(and(eq(canvasNodes.canvasId, canvasId), eq(canvasNodes.isHidden, false)))
 
@@ -113,9 +172,9 @@ export class CanvasSaveService {
       }
 
       // 3. 插入节点（React Flow format → DB format）
-      if (nodesToSave.length > 0) {
+      if (mergedNodes.length > 0) {
         await tx.insert(canvasNodes).values(
-          nodesToSave.map((n) => ({
+          mergedNodes.map((n) => ({
             id: n.id,
             canvasId,
             nodeDefId: n.type,
@@ -171,7 +230,7 @@ export class CanvasSaveService {
       if (!source || !target || target.type !== 'storyboard') continue
 
       const targetPort = edge.target_port || ''
-      if (source.type === 'character' && targetPort.includes('role')) {
+      if (source.type === 'character' && (targetPort.includes('role') || targetPort.includes('character'))) {
         contextByStoryboard.set(target.id, {
           ...(contextByStoryboard.get(target.id) || {}),
           main_character_ref: {

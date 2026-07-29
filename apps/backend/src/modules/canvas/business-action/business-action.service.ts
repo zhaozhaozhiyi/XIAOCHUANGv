@@ -309,6 +309,7 @@ export class BusinessActionService {
       actionLabel: string
       userInput?: string
       renderedPrompt?: string
+      style?: string
       outputMode?: 'current_node' | 'insert_new_node'
       positionX?: number
       positionY?: number
@@ -326,6 +327,31 @@ export class BusinessActionService {
 
     const sourceData = sourceNode ? JSON.parse(sourceNode.dataJson || '{}') as Record<string, unknown> : {}
     const sourceMedia = collectSourceMedia(sourceNode?.nodeDefId, sourceData)
+    const contextualImageRefs: string[] = []
+    if (sourceNode?.nodeDefId === 'storyboard') {
+      const referenceEdges = await this.db.db
+        .select()
+        .from(canvasEdges)
+        .where(and(
+          eq(canvasEdges.canvasId, canvasId),
+          eq(canvasEdges.targetNodeId, sourceNode.id),
+          eq(canvasEdges.edgeKind, 'dataflow'),
+        ))
+      const referenceNodeIds = referenceEdges
+        .filter((edge) => edge.relationType === 'character_ref' || edge.relationType === 'scene_ref')
+        .map((edge) => edge.sourceNodeId)
+      const referenceNodes = referenceNodeIds.length
+        ? await this.db.db
+            .select()
+            .from(canvasNodes)
+            .where(and(eq(canvasNodes.canvasId, canvasId), inArray(canvasNodes.id, referenceNodeIds)))
+        : []
+      for (const referenceNode of referenceNodes) {
+        const data = JSON.parse(referenceNode.dataJson || '{}') as Record<string, unknown>
+        const media = collectSourceMedia(referenceNode.nodeDefId, data)
+        for (const image of media.imageRefs) pushUnique(contextualImageRefs, image)
+      }
+    }
     const action = resolveActionForSource(baseAction, sourceMedia)
     const executeData: Record<string, unknown> = {
       prompt: input.renderedPrompt || input.userInput || sourceMedia.text || '',
@@ -334,7 +360,12 @@ export class BusinessActionService {
       outputKind: action.outputKind,
       sourceNodeId: sourceNode?.id ?? null,
     }
-    if (sourceMedia.imageRefs.length) executeData.references = sourceMedia.imageRefs
+    if (input.style?.trim()) executeData.style = input.style.trim()
+    for (const key of ['dramaId', 'episodeId', 'storyboardId', 'sceneId', 'characterId']) {
+      if (sourceData[key] !== undefined && sourceData[key] !== null) executeData[key] = sourceData[key]
+    }
+    const imageReferences = Array.from(new Set([...sourceMedia.imageRefs, ...contextualImageRefs]))
+    if (imageReferences.length) executeData.references = imageReferences
     if (sourceMedia.videoRefs.length) executeData.videoUrls = sourceMedia.videoRefs
     if (sourceMedia.audioRefs.length) executeData.audioUrl = sourceMedia.audioRefs[0]
 
@@ -362,13 +393,15 @@ export class BusinessActionService {
       sourceNode,
     })
 
-    const requestKey = JSON.stringify([
+    const requestKeyParts: unknown[] = [
       sourceNode?.id ?? null,
       input.actionLabel,
       executeData.prompt,
       insertNewNode,
       targetNodeType,
-    ])
+    ]
+    if (executeData.style) requestKeyParts.push(executeData.style)
+    const requestKey = JSON.stringify(requestKeyParts)
     executeData.requestKey = requestKey
 
     let hiddenNodeId = uid('node')
@@ -474,12 +507,15 @@ export class BusinessActionService {
           await tx.insert(canvasRuns).values({
             id: runId, canvasId, versionId, status: 'pending', totalNodes: 1, createdAt: now(),
           })
-          await tx.update(canvases).set({ currentVersionId: versionId }).where(eq(canvases.id, canvasId))
         }
         await tx.insert(canvasTasks).values({
           id: taskId, runId, canvasId, nodeId: hiddenNodeId, nodeDefId: action.executeNodeDefId,
           status: 'pending', paramsJson: JSON.stringify(executeData), createdAt: now(),
         })
+        await tx.update(canvases).set({
+          ...(joinedActiveRun ? {} : { currentVersionId: versionId }),
+          updatedAt: now(),
+        }).where(eq(canvases.id, canvasId))
       })
     } catch (error) {
       if (isCanvasRunActiveViolation(error)) {

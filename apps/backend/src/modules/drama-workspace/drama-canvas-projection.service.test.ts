@@ -36,6 +36,7 @@ describe('DramaCanvasProjectionService', () => {
       deletedAt: null,
     }
     const insertedNodes: Row[] = []
+    const insertedEdges: Row[] = []
     const rowsFor = (table: unknown) => {
       if (table === dramas) return [{ id: 282, userId: 7, title: '剑鞘里的梨花', deletedAt: null }]
       if (table === episodes) return [episode]
@@ -47,6 +48,7 @@ describe('DramaCanvasProjectionService', () => {
       insert: vi.fn((table: unknown) => ({
         values: vi.fn((values: Row[]) => {
           if (table === canvasNodes) insertedNodes.push(...values)
+          if (table === canvasEdges) insertedEdges.push(...values)
           return Promise.resolve()
         }),
       })),
@@ -83,5 +85,20 @@ describe('DramaCanvasProjectionService', () => {
     expect(insertedNodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ nodeDefId: 'scene', label: '竹屋院子' }),
     ]))
+    expect(insertedEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        edgeKind: 'dataflow',
+        relationType: 'character_ref',
+        sourcePort: 'out:character',
+        targetPort: 'in:character',
+      }),
+      expect.objectContaining({
+        edgeKind: 'dataflow',
+        relationType: 'scene_ref',
+        sourcePort: 'out:scene',
+        targetPort: 'in:scene',
+      }),
+    ]))
+    expect(result.created_edges).toBe(insertedEdges.length)
   })
 })

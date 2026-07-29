@@ -79,7 +79,7 @@ function DataflowEdgeComponent(props: EdgeProps) {
           opacity: selected ? 1 : 0.85,
         }}
       />
-      {d.label && (
+      {d.label && selected && (
         <EdgeLabelRenderer>
           <div
             style={{

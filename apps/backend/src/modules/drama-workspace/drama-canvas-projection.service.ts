@@ -90,6 +90,26 @@ function edgeId(canvasId: string, source: string, target: string, relation: stri
   return `${canvasId}__edge_${seed}`
 }
 
+function normalizedMatchText(value: unknown) {
+  return String(value ?? '').toLocaleLowerCase().replace(/[\s\p{P}\p{S}]/gu, '')
+}
+
+function textMentions(value: unknown, candidate: unknown) {
+  const text = normalizedMatchText(value)
+  const term = normalizedMatchText(candidate)
+  return term.length >= 2 && text.includes(term)
+}
+
+const ROOM_SCENE_ALIASES = ['房间', '卧室', '堂屋', '屋内', '室内']
+
+function sceneMentioned(location: string, text: string) {
+  if (textMentions(text, location)) return true
+  if (ROOM_SCENE_ALIASES.some((alias) => textMentions(location, alias))) {
+    return ROOM_SCENE_ALIASES.some((alias) => textMentions(text, alias))
+  }
+  return false
+}
+
 @Injectable()
 export class DramaCanvasProjectionService {
   constructor(
@@ -153,6 +173,7 @@ export class DramaCanvasProjectionService {
       sourceDramaTitle: drama.title,
       productionContext: {
         source: 'episode_projection',
+        projection_version: 2,
         episode_id: episode.id,
         sync_mode: input.syncMode ?? 'append_missing',
         include: Array.from(resolveProjectionIncludes(input.include)),
@@ -241,6 +262,8 @@ export class DramaCanvasProjectionService {
         targetNodeId: edge.target,
         edgeKind: edge.edgeKind,
         relationType: edge.relationType,
+        sourcePort: edge.sourcePort ?? null,
+        targetPort: edge.targetPort ?? null,
         label: edge.label,
         createdAt: now(),
       })))
@@ -252,6 +275,7 @@ export class DramaCanvasProjectionService {
       sourceEpisodeId: String(episode.id),
       productionContextJson: JSON.stringify({
         source: 'episode_projection',
+        projection_version: 2,
         episode_id: episode.id,
         last_sync_at: new Date().toISOString(),
         sync_mode: input.syncMode,
@@ -458,8 +482,25 @@ export class DramaCanvasProjectionService {
       })
     }
 
-    const edges: Array<{ id: string; source: string; target: string; edgeKind: string; relationType: string; label: string }> = []
-    const addEdge = (sourceKey: string, targetKey: string, relationType: string, label: string, edgeKind = 'dataflow') => {
+    const edges: Array<{
+      id: string
+      source: string
+      target: string
+      edgeKind: string
+      relationType: string
+      label: string
+      sourcePort?: string
+      targetPort?: string
+    }> = []
+    const addEdge = (
+      sourceKey: string,
+      targetKey: string,
+      relationType: string,
+      label: string,
+      edgeKind = 'dataflow',
+      sourcePort?: string,
+      targetPort?: string,
+    ) => {
       const source = nodeIdByKey.get(sourceKey)
       const target = nodeIdByKey.get(targetKey)
       if (!source || !target) return
@@ -470,19 +511,78 @@ export class DramaCanvasProjectionService {
         edgeKind,
         relationType,
         label,
+        sourcePort,
+        targetPort,
       })
     }
 
     for (const storyboard of sortedStoryboards) {
       for (const relation of storyboardCharacterRows.filter((row) => row.storyboardId === storyboard.id)) {
-        addEdge(`character_${relation.characterId}`, `storyboard_${storyboard.id}`, 'character_ref', '角色')
+        addEdge(
+          `character_${relation.characterId}`,
+          `storyboard_${storyboard.id}`,
+          'character_ref',
+          '角色',
+          'dataflow',
+          'out:character',
+          'in:character',
+        )
       }
-      if (storyboard.sceneId) addEdge(`scene_${storyboard.sceneId}`, `storyboard_${storyboard.id}`, 'scene_ref', '场景')
+      if (storyboard.sceneId) {
+        addEdge(
+          `scene_${storyboard.sceneId}`,
+          `storyboard_${storyboard.id}`,
+          'scene_ref',
+          '场景',
+          'dataflow',
+          'out:scene',
+          'in:scene',
+        )
+      }
       if (includeExecutionNodes) {
         addEdge(`storyboard_${storyboard.id}`, `exec_t2i_${storyboard.id}`, 'prompt_source', '提示词')
         addEdge(`storyboard_${storyboard.id}`, `exec_tts_${storyboard.id}`, 'dialogue_source', '台词')
         addEdge(`exec_t2i_${storyboard.id}`, `exec_i2v_${storyboard.id}`, 'image_source', '首帧')
       }
+    }
+
+    if (scriptFallback) {
+      scriptFallback.shots.forEach((shot, shotIndex) => {
+        const shotText = `${shot.title || ''}\n${shot.description || ''}`
+        scriptFallback.characters.forEach((character, characterIndex) => {
+          if (!textMentions(shotText, character.name)) return
+          addEdge(
+            `script_character_${characterIndex + 1}`,
+            `script_storyboard_${shotIndex + 1}`,
+            'character_ref',
+            '角色',
+            'dataflow',
+            'out:character',
+            'in:character',
+          )
+        })
+      })
+
+      let activeSceneIndex: number | null = null
+      scriptFallback.shots.forEach((shot, shotIndex) => {
+        const shotText = `${shot.title || ''}\n${shot.description || ''}`
+        const mentionedSceneIndex = scriptFallback.scenes.findIndex((scene) => (
+          sceneMentioned(scene.location, shotText)
+        ))
+        const startsNewScene = /【\s*场景\s*\d*\s*[：:]/u.test(shotText)
+        if (mentionedSceneIndex >= 0) activeSceneIndex = mentionedSceneIndex
+        else if (startsNewScene) activeSceneIndex = null
+        if (activeSceneIndex === null) return
+        addEdge(
+          `script_scene_${activeSceneIndex + 1}`,
+          `script_storyboard_${shotIndex + 1}`,
+          'scene_ref',
+          '场景',
+          'dataflow',
+          'out:scene',
+          'in:scene',
+        )
+      })
     }
 
     return { nodes, edges }

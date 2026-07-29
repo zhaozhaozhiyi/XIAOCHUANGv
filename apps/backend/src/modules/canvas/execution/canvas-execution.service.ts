@@ -46,12 +46,16 @@ export class CanvasExecutionService {
     if (!claimed) return 'failed'
 
     const params = safeJsonParse<Record<string, unknown>>(task.paramsJson, {})
+    const [canvas] = await this.db.db.select().from(canvases).where(eq(canvases.id, task.canvasId))
     const context: CanvasGenerateContext = {
       source: 'canvas',
       userId: String(userId),
       canvasId: task.canvasId,
       versionId: run.versionId,
       nodeId: task.nodeId,
+      dramaId: canvas?.sourceDramaId ?? undefined,
+      episodeId: canvas?.sourceEpisodeId ?? undefined,
+      storyboardId: canvas?.sourceStoryboardId ?? undefined,
     }
 
     try {
