@@ -42,6 +42,7 @@ export class CanvasBusinessActionController {
       actionLabel: body.actionLabel,
       userInput: body.userInput || '',
       renderedPrompt: body.userInput || '',
+      style: body.style,
       outputMode: body.output_mode,
       positionX: body.position_x,
       positionY: body.position_y,

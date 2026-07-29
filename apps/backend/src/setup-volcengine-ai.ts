@@ -23,10 +23,11 @@ function getSetupUserId() {
 const TEXT_PRIORITY_PRO = 1_000_002
 const TEXT_PRIORITY_DEEPSEEK = 1_000_001
 const TEXT_PRIORITY_MINI = 1_000_000
+const IMAGE_PRIORITY = 1_000_000
 const VIDEO_PRIORITY = 1_000_000
 
 interface VolcPreset {
-  serviceType: 'text' | 'video'
+  serviceType: 'text' | 'image' | 'video'
   name: string
   description: string
   model: string | undefined
@@ -55,6 +56,13 @@ function buildPresets(): VolcPreset[] {
       description: '文本 · 豆包 Seed 2.0 Mini，轻量对话',
       model: process.env.VOLC_TEXT_MODEL_MINI,
       priority: TEXT_PRIORITY_MINI,
+    },
+    {
+      serviceType: 'image',
+      name: 'Doubao-Seedream-5.0-pro',
+      description: '图片 · 豆包 Seedream 5.0 Pro，角色与场景图',
+      model: process.env.VOLC_IMAGE_MODEL_SEEDREAM,
+      priority: IMAGE_PRIORITY,
     },
     {
       serviceType: 'video',

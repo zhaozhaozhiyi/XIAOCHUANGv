@@ -576,7 +576,7 @@ async function generateForNode(
   nodeType: string,
   data: Record<string, unknown>,
   patch: (next: Record<string, unknown>) => void,
-  startRunPolling: (hiddenNodeId: string) => void,
+  startRunPolling: (hiddenNodeId: string, runId?: string) => void,
 ) {
   const canvasId = useCanvasStore.getState().canvasId
   if (!canvasId) return
@@ -626,8 +626,8 @@ async function generateForNode(
         },
       })
     }
-    startRunPolling(result.hidden_node_id)
-    toast.success('已开始生成')
+    startRunPolling(result.hidden_node_id, result.run_id)
+    toast.success(result.deduplicated ? '该任务已在队列中' : result.queued ? '已加入生成队列' : '已开始生成')
   } catch (error) {
     patch({ generationError: error instanceof Error ? error.message : '生成失败' })
     toast.error(error instanceof Error ? error.message : '生成失败')

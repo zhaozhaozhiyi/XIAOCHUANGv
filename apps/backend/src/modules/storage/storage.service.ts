@@ -146,6 +146,26 @@ export class StorageService {
     return raw.startsWith(LOCAL_STORAGE_PREFIX) || raw.startsWith('/static/')
   }
 
+  usesLocalDriver() {
+    return this.driver === 'local'
+  }
+
+  publicUrlToLocalStoragePath(value: string | null | undefined) {
+    const raw = String(value || '').trim()
+    if (!raw || !this.publicBaseUrl) return null
+
+    try {
+      const base = new URL(`${this.publicBaseUrl.replace(/\/+$/, '')}/`)
+      const target = new URL(raw)
+      if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname)) return null
+
+      const relativePath = decodeURIComponent(target.pathname.slice(base.pathname.length)).replace(/^\/+/, '')
+      return relativePath ? `${LOCAL_STORAGE_PREFIX}${relativePath}` : null
+    } catch {
+      return null
+    }
+  }
+
   toPublicUrl(value: string | null | undefined) {
     return toPublicMediaUrl(value, this.publicBaseUrl)
   }
@@ -214,6 +234,15 @@ export class StorageService {
 
     if (path.isAbsolute(raw) && fs.existsSync(raw)) {
       return raw
+    }
+
+    const publicLocalPath = this.publicUrlToLocalStoragePath(raw)
+    if (publicLocalPath) {
+      const absolutePath = this.getAbsolutePath(publicLocalPath)
+      if (!fs.existsSync(absolutePath)) {
+        throw new Error(`Local storage file not found: ${publicLocalPath}`)
+      }
+      return absolutePath
     }
 
     if (this.isLocalStoragePath(raw)) {

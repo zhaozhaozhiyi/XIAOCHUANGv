@@ -68,6 +68,22 @@ export class TaskDomainRegistry {
     return this.requireHandler(task, '重试').retry(task, payload)
   }
 
+  async prepareAutomaticRetry(task: TaskRecord) {
+    const handler = this.getHandler(task)
+    if (!handler?.automaticRetrySafe) return false
+    let payload: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(task.payloadJson || '{}') as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        payload = parsed as Record<string, unknown>
+      }
+    } catch {
+      return false
+    }
+    await handler.retry(task, payload)
+    return true
+  }
+
   async cancel(task: TaskRecord, currentUserId: number): Promise<TaskActionResponse> {
     return this.requireHandler(task, '取消').cancel(task, currentUserId)
   }

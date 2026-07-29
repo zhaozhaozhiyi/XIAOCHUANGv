@@ -58,6 +58,7 @@ const updateConfigSchema = z.object({
 })
 
 const aiConfigTestSchema = z.object({
+  config_id: z.coerce.number().int().positive().optional(),
   service_type: z.string().trim(),
   provider: z.string().trim(),
   base_url: z.string().trim(),
@@ -295,15 +296,32 @@ export class AiConfigsController {
   }
 
   @Post('test')
-  async test(@Body() body: Record<string, unknown>) {
+  async test(@Body() body: Record<string, unknown>, @CurrentUser() currentUser: CurrentUserType) {
     const payload = aiConfigTestSchema.parse(body)
     const model = Array.isArray(payload.model) ? String(payload.model[0] || '') : String(payload.model || '')
+    let apiKey = payload.api_key
+
+    if (payload.config_id && (!apiKey || apiKey.includes('*'))) {
+      const [storedConfig] = await this.databaseService.db
+        .select({ apiKey: aiServiceConfigs.apiKey })
+        .from(aiServiceConfigs)
+        .where(and(
+          eq(aiServiceConfigs.id, payload.config_id),
+          configAccessFilter(currentUser.id),
+        ))
+
+      if (!storedConfig) {
+        return { error: 'not_found' }
+      }
+      apiKey = maybeDecryptAiConfigSecret(storedConfig.apiKey)
+    }
+
     let probe
     try {
       const settings = payload.settings && typeof payload.settings === 'object' && !Array.isArray(payload.settings)
         ? payload.settings as Record<string, unknown>
         : undefined
-      probe = buildProbe(payload.service_type, payload.provider, payload.base_url, model, payload.api_key, settings)
+      probe = buildProbe(payload.service_type, payload.provider, payload.base_url, model, apiKey, settings)
     } catch (error) {
       return { error: error instanceof Error ? error.message : 'Invalid AI config' }
     }

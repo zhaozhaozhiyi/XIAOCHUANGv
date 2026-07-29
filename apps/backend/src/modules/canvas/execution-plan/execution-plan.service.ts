@@ -14,7 +14,7 @@ const EXECUTE_TYPES = ['text-to-image', 'image-to-video', 'text-to-speech', 'con
 export class ExecutionPlanService {
   constructor(
     @Inject(DatabaseService) private readonly db: DatabaseService,
-    private readonly engine: ExecutionPlanEngine,
+    @Inject(ExecutionPlanEngine) private readonly engine: ExecutionPlanEngine,
   ) {}
 
   async buildAndStart(runId: string): Promise<ExecutionPlan> {

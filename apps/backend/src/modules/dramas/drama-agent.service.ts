@@ -15,6 +15,7 @@ type DramaAgentTaskType =
 
 type DramaAdaptationSkillMode =
   | 'source_chunk_analyze'
+  | 'source_chunk_reduce'
   | 'source_analysis'
   | 'source_analysis_from_chunks'
   | 'strategy_generate'
@@ -63,6 +64,18 @@ type SourceAnalysisLike = {
   protagonist_goal: string
   target_episode_count?: number | null
   episode_duration?: string | null
+  adaptation_mode?: 'faithful' | 'moderate_expansion' | 'continuation'
+  source_completeness?: 'complete' | 'incomplete' | 'uncertain'
+  major_beat_count?: number
+  supported_duration_seconds?: { min: number; max: number }
+  recommended_episode_count?: { min: number; preferred: number; max: number }
+  episode_duration_seconds?: { min: number; max: number }
+  recommendation_confidence?: number
+  recommendation_basis?: Array<{
+    claim: string
+    source_trace: Array<Record<string, unknown>>
+  }>
+  expansion_notes?: string[]
   relationship_map: Array<Record<string, unknown>>
   world_rules: string[]
   emotional_curve: Array<Record<string, unknown>>
@@ -80,6 +93,29 @@ type SourceChunkAnalysisLike = {
   scenes: string[]
   risks: string[]
   source_trace: Array<Record<string, unknown>>
+}
+
+const SOURCE_CHUNK_SUMMARY_MAX_CHARS = 1_800
+const SOURCE_CHUNK_LIST_ITEM_MAX_CHARS = 300
+const SOURCE_CHUNK_MAX_TRACE_ITEMS = 64
+const SOURCE_PROFILE_MAX_CHAPTERS = 80
+const REMOTE_AGENT_REQUEST_TIMEOUT_MS = 120_000
+const REMOTE_AGENT_REQUEST_ATTEMPTS = 3
+
+function waitForRemoteRetry(attempt: number) {
+  if (process.env.NODE_ENV === 'test') return Promise.resolve()
+  const delayMs = 750 * 2 ** Math.max(0, attempt - 1)
+  return new Promise((resolve) => setTimeout(resolve, delayMs))
+}
+
+function isRetryableRemoteStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500
+}
+
+function isRemoteTimeoutError(error: unknown) {
+  const name = error instanceof Error ? error.name : ''
+  const message = error instanceof Error ? error.message : String(error || '')
+  return name === 'TimeoutError' || /timed?\s*out|aborted due to timeout/i.test(message)
 }
 
 type AdaptationBriefLike = {
@@ -246,6 +282,37 @@ function normalizeSourceAnalysisPayload(value: unknown) {
   const raw = Object.keys(sourceWrapped).length ? { ...rawCandidate, ...sourceWrapped } : rawCandidate
   const nested = toRecord(raw.analysis || raw.overview || raw.summary || raw['分析'])
   const merged = Object.keys(nested).length ? { ...raw, ...nested } : raw
+  const recommendedEpisodes = toRecord(
+    merged.recommended_episode_count || merged.episode_count_range || merged['推荐集数区间'],
+  )
+  const episodeDurationSeconds = toRecord(
+    merged.episode_duration_seconds || merged.episode_duration_range || merged['单集时长秒数'],
+  )
+  const supportedDurationSeconds = toRecord(
+    merged.supported_duration_seconds || merged.total_duration_range || merged['原稿支撑时长秒数'],
+  )
+  const preferredEpisodeCount = positiveIntFromUnknown(
+    recommendedEpisodes.preferred || merged.target_episode_count || merged.episode_count || merged.episodes || merged['目标集数'] || merged['集数'],
+    0,
+  )
+  const recommendedEpisodeCount = {
+    min: positiveIntFromUnknown(recommendedEpisodes.min, 0),
+    preferred: preferredEpisodeCount,
+    max: positiveIntFromUnknown(recommendedEpisodes.max, 0),
+  }
+  const normalizedEpisodeDurationSeconds = {
+    min: positiveIntFromUnknown(episodeDurationSeconds.min, 0),
+    max: positiveIntFromUnknown(episodeDurationSeconds.max, 0),
+  }
+  const normalizedSupportedDurationSeconds = {
+    min: positiveIntFromUnknown(supportedDurationSeconds.min, 0),
+    max: positiveIntFromUnknown(supportedDurationSeconds.max, 0),
+  }
+  const canonicalEpisodeDuration = normalizedEpisodeDurationSeconds.min > 0 && normalizedEpisodeDurationSeconds.max > 0
+    ? normalizedEpisodeDurationSeconds.min === normalizedEpisodeDurationSeconds.max
+      ? `${normalizedEpisodeDurationSeconds.min} 秒`
+      : `${normalizedEpisodeDurationSeconds.min}-${normalizedEpisodeDurationSeconds.max} 秒`
+    : firstString(merged.episode_duration, merged.duration, merged['单集时长'], merged['时长'])
 
   return {
     ...merged,
@@ -254,11 +321,17 @@ function normalizeSourceAnalysisPayload(value: unknown) {
     protagonist: firstString(merged.protagonist, merged.hero, merged.main_character, merged['主角'], merged['主人公']),
     antagonist: firstString(merged.antagonist, merged.villain, merged['反派'], merged['对立面']) || null,
     protagonist_goal: firstString(merged.protagonist_goal, merged.goal, merged['主角目标'], merged['人物目标']),
-    target_episode_count: positiveIntFromUnknown(
-      merged.target_episode_count || merged.episode_count || merged.episodes || merged['目标集数'] || merged['集数'],
-      0,
-    ),
-    episode_duration: firstString(merged.episode_duration, merged.duration, merged['单集时长'], merged['时长'], '60-90 秒'),
+    target_episode_count: preferredEpisodeCount,
+    episode_duration: canonicalEpisodeDuration,
+    adaptation_mode: firstString(merged.adaptation_mode, merged['改编模式']),
+    source_completeness: firstString(merged.source_completeness, merged['源稿完整性']),
+    major_beat_count: positiveIntFromUnknown(merged.major_beat_count || merged['主要情节点数量'], 0),
+    supported_duration_seconds: normalizedSupportedDurationSeconds,
+    recommended_episode_count: recommendedEpisodeCount,
+    episode_duration_seconds: normalizedEpisodeDurationSeconds,
+    recommendation_confidence: Number(merged.recommendation_confidence ?? merged.confidence ?? merged['建议置信度']),
+    recommendation_basis: normalizeEvidence(merged.recommendation_basis || merged['推荐依据']),
+    expansion_notes: stringArray(merged.expansion_notes || merged['扩写说明']),
     relationship_map: recordArray(merged.relationship_map || merged.relationships || merged['人物关系']),
     world_rules: stringArray(merged.world_rules || merged.rules || merged['世界规则']),
     emotional_curve: recordArray(merged.emotional_curve || merged.emotion_curve || merged['情绪曲线']),
@@ -303,8 +376,8 @@ function normalizeAdaptationBriefPayload(value: unknown) {
         name,
         claim: firstString(raw.claim, raw.pitch, raw.summary, raw.description, raw['核心主张'], raw['策略主张'], raw['一句话卖点'], raw['简介'], name),
         rhythm_model: firstString(raw.rhythm_model, raw.rhythm, raw.pacing, raw['节奏模型'], raw['叙事节奏'], raw['节奏'], '强钩子三段式'),
-        target_episode_count: positiveIntFromUnknown(raw.target_episode_count || raw.episode_count || raw.episodes || raw['目标集数'] || raw['集数'], 24),
-        episode_duration: firstString(raw.episode_duration, raw.duration, raw['单集时长'], raw['时长'], '60-90 秒'),
+        target_episode_count: positiveIntFromUnknown(raw.target_episode_count || raw.episode_count || raw.episodes || raw['目标集数'] || raw['集数'], 0),
+        episode_duration: firstString(raw.episode_duration, raw.duration, raw['单集时长'], raw['时长']),
         style_direction: firstString(raw.style_direction, raw.style, raw.tone, raw['风格方向'], raw['风格'], name),
         hook_density: firstString(raw.hook_density, raw.hooks, raw['钩子密度'], raw['爽点密度'], '中'),
         retained_points: stringArray(raw.retained_points || raw.keep || raw['保留点'] || raw['保留内容']),
@@ -392,8 +465,25 @@ function parseAgentSchema<T>(schema: z.ZodType<T>, value: unknown, schemaName: s
 }
 
 const sourceTraceSchema = z.preprocess((value) => {
-  if (typeof value === 'string') return { excerpt: value }
-  return value
+  if (typeof value === 'string') {
+    return { excerpt: compactText(value, SOURCE_CHUNK_LIST_ITEM_MAX_CHARS) }
+  }
+  const raw = toRecord(value)
+  return {
+    source_id: raw.source_id,
+    chunk_id: raw.chunk_id,
+    chapter_no: raw.chapter_no,
+    chapter_title:
+      raw.chapter_title == null
+        ? raw.chapter_title
+        : compactText(raw.chapter_title, 200),
+    content_start: raw.content_start,
+    content_end: raw.content_end,
+    excerpt:
+      raw.excerpt == null
+        ? raw.excerpt
+        : compactText(raw.excerpt, SOURCE_CHUNK_LIST_ITEM_MAX_CHARS),
+  }
 }, z.object({
   source_id: z.union([z.number(), z.string()]).nullish(),
   chunk_id: z.union([z.number(), z.string()]).nullish(),
@@ -402,7 +492,7 @@ const sourceTraceSchema = z.preprocess((value) => {
   content_start: z.number().nullable().optional(),
   content_end: z.number().nullable().optional(),
   excerpt: z.string().nullable().optional(),
-}).passthrough())
+}))
 
 const relationshipMapItemSchema = z.object({
   subject: z.string().trim().optional(),
@@ -425,26 +515,72 @@ const sourceAnalysisSchema = z.object({
   protagonist: z.string().trim().min(1),
   antagonist: z.string().trim().nullable().optional(),
   protagonist_goal: z.string().trim().min(1),
-  target_episode_count: z.number().int().nonnegative().default(0),
-  episode_duration: z.string().trim().min(1).default('60-90 秒'),
+  target_episode_count: z.number().int().positive(),
+  episode_duration: z.string().trim().min(1),
+  adaptation_mode: z.enum(['faithful', 'moderate_expansion', 'continuation']),
+  source_completeness: z.enum(['complete', 'incomplete', 'uncertain']),
+  major_beat_count: z.number().int().positive(),
+  supported_duration_seconds: z.object({
+    min: z.number().int().positive(),
+    max: z.number().int().positive(),
+  }).refine((range) => range.max >= range.min, 'supported_duration_range_invalid'),
+  recommended_episode_count: z.object({
+    min: z.number().int().positive(),
+    preferred: z.number().int().positive(),
+    max: z.number().int().positive(),
+  }).refine(
+    (range) => range.min <= range.preferred && range.preferred <= range.max,
+    'recommended_episode_range_invalid',
+  ),
+  episode_duration_seconds: z.object({
+    min: z.number().int().positive(),
+    max: z.number().int().positive(),
+  }).refine((range) => range.max >= range.min, 'episode_duration_range_invalid'),
+  recommendation_confidence: z.number().min(0).max(1),
+  recommendation_basis: z.array(z.object({
+    claim: z.string().trim().min(1),
+    source_trace: z.array(sourceTraceSchema).min(1),
+  }).passthrough()).min(1),
+  expansion_notes: z.array(z.string()).default([]),
   relationship_map: z.array(relationshipMapItemSchema).default([]),
   world_rules: z.array(z.string()).default([]),
   emotional_curve: z.array(z.record(z.unknown())).default([]),
   adaptation_risks: z.array(z.string()).default([]),
   evidence: z.array(z.object({
     claim: z.string().trim().min(1),
-    source_trace: z.array(sourceTraceSchema).default([]),
-  }).passthrough()).default([]),
-}).passthrough()
+    source_trace: z.array(sourceTraceSchema).min(1),
+  }).passthrough()).min(1),
+}).passthrough().superRefine((analysis, context) => {
+  if (analysis.target_episode_count !== analysis.recommended_episode_count.preferred) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'target_episode_count_must_match_preferred',
+      path: ['target_episode_count'],
+    })
+  }
+})
+
+function boundedTextArraySchema(maxItems: number, maxChars = SOURCE_CHUNK_LIST_ITEM_MAX_CHARS) {
+  return z.array(z.string()).default([]).transform((items) =>
+    items
+      .map((item) => compactText(item, maxChars))
+      .filter(Boolean)
+      .slice(0, maxItems),
+  )
+}
 
 const sourceChunkAnalysisSchema = z.object({
-  summary: z.string().trim().min(1),
-  key_events: z.array(z.string()).default([]),
-  characters: z.array(z.string()).default([]),
-  scenes: z.array(z.string()).default([]),
-  risks: z.array(z.string()).default([]),
-  source_trace: z.array(sourceTraceSchema).default([]),
-}).passthrough()
+  summary: z.string().trim().min(1).transform((value) =>
+    compactText(value, SOURCE_CHUNK_SUMMARY_MAX_CHARS),
+  ),
+  key_events: boundedTextArraySchema(16),
+  characters: boundedTextArraySchema(40, 120),
+  scenes: boundedTextArraySchema(32, 180),
+  risks: boundedTextArraySchema(16),
+  source_trace: z.array(sourceTraceSchema).default([]).transform((items) =>
+    items.slice(0, SOURCE_CHUNK_MAX_TRACE_ITEMS),
+  ),
+})
 
 const adaptationBriefSchema = z.object({
   id: z.string().trim().min(1),
@@ -543,45 +679,64 @@ export class RemoteDramaAgentAdapter {
     const config = await this.resolveConfig(input.userId)
     const url = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`
 
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.apiKey}`,
-          'X-Drama-Agent-Task': input.taskType,
-          'X-Idempotency-Key': input.idempotencyKey,
-        },
-        body: JSON.stringify(withTextProviderRequestOptions(config, {
-          model: config.model,
-          temperature: 0.35,
-          messages: [
-            { role: 'system', content: input.systemPrompt },
-            { role: 'user', content: input.userPrompt },
-          ],
-        })),
-      })
+    for (let attempt = 1; attempt <= REMOTE_AGENT_REQUEST_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${config.apiKey}`,
+            'X-Drama-Agent-Task': input.taskType,
+            'X-Idempotency-Key': input.idempotencyKey,
+          },
+          body: JSON.stringify(withTextProviderRequestOptions(config, {
+            model: config.model,
+            temperature: 0.35,
+            messages: [
+              { role: 'system', content: input.systemPrompt },
+              { role: 'user', content: input.userPrompt },
+            ],
+          })),
+          signal: AbortSignal.timeout(REMOTE_AGENT_REQUEST_TIMEOUT_MS),
+        })
 
-      const text = await response.text()
-      if (!response.ok) {
-        throw new BadRequestException(`remote_agent_failed:${response.status}:${compactText(text, 300)}`)
+        const text = await response.text()
+        if (!response.ok) {
+          if (
+            isRetryableRemoteStatus(response.status) &&
+            attempt < REMOTE_AGENT_REQUEST_ATTEMPTS
+          ) {
+            await waitForRemoteRetry(attempt)
+            continue
+          }
+          throw new BadRequestException(`remote_agent_failed:${response.status}:${compactText(text, 300)}`)
+        }
+        const body = text ? JSON.parse(text) as unknown : {}
+        const assistantText = extractChatText(body)
+        if (!assistantText.trim()) throw new BadRequestException('remote_agent_empty_response')
+        const result = extractJsonPayload(assistantText)
+        const raw = toRecord(body)
+        return {
+          result,
+          remoteRunId: String(raw.id || `${input.taskType}:${Date.now()}`),
+          usage: toRecord(raw.usage),
+          warnings: [],
+        }
+      } catch (error) {
+        if (isRemoteTimeoutError(error)) {
+          throw new BadRequestException('remote_agent_timeout')
+        }
+        if (error instanceof BadRequestException) throw error
+        if (attempt < REMOTE_AGENT_REQUEST_ATTEMPTS) {
+          await waitForRemoteRetry(attempt)
+          continue
+        }
+        const message = error instanceof Error ? error.message : 'remote_agent_failed'
+        throw new BadRequestException(message)
       }
-      const body = text ? JSON.parse(text) as unknown : {}
-      const assistantText = extractChatText(body)
-      if (!assistantText.trim()) throw new BadRequestException('remote_agent_empty_response')
-      const result = extractJsonPayload(assistantText)
-      const raw = toRecord(body)
-      return {
-        result,
-        remoteRunId: String(raw.id || `${input.taskType}:${Date.now()}`),
-        usage: toRecord(raw.usage),
-        warnings: [],
-      }
-    } catch (error) {
-      if (error instanceof BadRequestException) throw error
-      const message = error instanceof Error ? error.message : 'remote_agent_failed'
-      throw new BadRequestException(message)
     }
+
+    throw new BadRequestException('remote_agent_failed')
   }
 
   async canExecute(userId: number) {
@@ -742,6 +897,37 @@ export class DramaAgentService {
     }
   }
 
+  async reduceSourceChunkAnalyses(input: {
+    userId: number
+    dramaId: number
+    sourceId: number
+    level: number
+    batchNo: number
+    chunkAnalyses: SourceChunkAnalysisLike[]
+  }) {
+    const result = await this.adapter.executeJson({
+      userId: input.userId,
+      taskType: 'source_chunk_analyze',
+      outputSchemaName: 'SourceChunkAnalysis',
+      idempotencyKey: `drama:${input.dramaId}:source:${input.sourceId}:reduce:${input.level}:${input.batchNo}`,
+      systemPrompt: this.buildSkillPrompt('source_chunk_reduce', 'SourceChunkAnalysis'),
+      userPrompt: serializeRuntimeContext({
+        source: {
+          id: input.sourceId,
+          reduction: {
+            level: input.level,
+            batch_no: input.batchNo,
+            chunk_analyses: input.chunkAnalyses,
+          },
+        },
+      }),
+    })
+    return {
+      ...result,
+      chunkAnalysis: this.validator.validateSourceChunkAnalysis(result.result),
+    }
+  }
+
   async generateAdaptationBriefs(input: {
     userId: number
     dramaId: number
@@ -789,12 +975,21 @@ export class DramaAgentService {
     analysis: SourceAnalysisLike
     health: SourceHealthLike
     brief: AdaptationBriefLike
+    episodeStart?: number
+    episodeEnd?: number
+    previousBlueprint?: EpisodeBlueprintLike | null
   }) {
+    const episodeStart = input.episodeStart ?? 1
+    const episodeEnd = input.episodeEnd ?? input.brief.target_episode_count
+    const requiredEpisodeNumbers = Array.from(
+      { length: Math.max(0, episodeEnd - episodeStart + 1) },
+      (_, index) => episodeStart + index,
+    )
     const result = await this.adapter.executeJson({
       userId: input.userId,
       taskType: 'episode_blueprint_generate',
       outputSchemaName: 'EpisodeBlueprint[]',
-      idempotencyKey: `drama:${input.dramaId}:brief:${input.brief.id}:blueprint`,
+      idempotencyKey: `drama:${input.dramaId}:brief:${input.brief.id}:blueprint:${episodeStart}-${episodeEnd}`,
       systemPrompt: this.buildSkillPrompt('blueprint_generate', 'EpisodeBlueprint[]'),
       userPrompt: serializeRuntimeContext({
         project: {
@@ -806,11 +1001,32 @@ export class DramaAgentService {
           analysis: input.analysis,
         },
         selected_brief: input.brief,
+        request: {
+          episode_range: {
+            start: episodeStart,
+            end: episodeEnd,
+          },
+          episode_start: episodeStart,
+          episode_end: episodeEnd,
+          required_episode_numbers: requiredEpisodeNumbers,
+          target_episode_count: input.brief.target_episode_count,
+        },
+        previous_blueprint: input.previousBlueprint || null,
       }),
     })
+    const blueprints = this.validator.validateEpisodeBlueprints(result.result)
+    const returnedEpisodeNumbers = blueprints.map((blueprint) => blueprint.episode_number)
+    if (
+      returnedEpisodeNumbers.length !== requiredEpisodeNumbers.length
+      || returnedEpisodeNumbers.some((episodeNumber, index) => episodeNumber !== requiredEpisodeNumbers[index])
+    ) {
+      throw new BadRequestException(
+        `remote_agent_blueprint_range_mismatch:${episodeStart}-${episodeEnd}:${returnedEpisodeNumbers.join(',') || 'empty'}`,
+      )
+    }
     return {
       ...result,
-      blueprints: this.validator.validateEpisodeBlueprints(result.result),
+      blueprints,
     }
   }
 
@@ -908,10 +1124,25 @@ export class DramaAgentService {
 }
 
 function buildSourceProfile(health: SourceHealthLike) {
+  const chapterIndex = health.chapter_index || []
+  const sampledChapterIndex = chapterIndex.length <= SOURCE_PROFILE_MAX_CHAPTERS
+    ? chapterIndex
+    : Array.from({ length: SOURCE_PROFILE_MAX_CHAPTERS }, (_, index) => {
+        const sourceIndex = Math.round(
+          (index * (chapterIndex.length - 1)) /
+            (SOURCE_PROFILE_MAX_CHAPTERS - 1),
+        )
+        return chapterIndex[sourceIndex]
+      })
   return {
     word_count: health.word_count,
     chapter_count: health.chapter_count,
-    chapter_index: health.chapter_index || [],
+    chapter_index: sampledChapterIndex.map((chapter) => ({
+      ...chapter,
+      title: compactText(chapter.title, 120),
+      brief: compactText(chapter.brief, 160),
+    })),
+    chapter_index_truncated: chapterIndex.length > sampledChapterIndex.length,
     anomalies: health.anomalies || [],
   }
 }

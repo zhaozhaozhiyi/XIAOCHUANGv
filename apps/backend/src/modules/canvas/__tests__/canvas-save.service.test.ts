@@ -287,6 +287,67 @@ describe('CanvasSaveService', () => {
     expect(capturedEdges.map((edge) => edge.id)).toEqual(['edge_visible_new'])
   })
 
+  it('旧前端快照不会覆盖服务端已回填的生成结果', async () => {
+    let savedData: Record<string, unknown> = {}
+    const storedResult = {
+      id: 'res_server',
+      kind: 'image',
+      url: 'https://example.com/generated.png',
+      created_at: '2026-07-29T08:00:00.000Z',
+    }
+
+    db.transaction.mockImplementation(async (fn: any) => {
+      const tx: any = {
+        select: vi.fn(() => ({
+          from: vi.fn(() => ({
+            where: vi.fn().mockResolvedValue([{
+              id: 'node_1',
+              isHidden: false,
+              dataJson: JSON.stringify({
+                prompt: '旧提示词',
+                results: [storedResult],
+                current_result_id: storedResult.id,
+                images: [storedResult.url],
+                imageUrl: storedResult.url,
+                isGenerating: false,
+                status: 'completed',
+              }),
+            }]),
+          })),
+        })),
+        update: vi.fn().mockReturnThis(),
+        set: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        insert: vi.fn(() => ({
+          values: (rows: any[]) => {
+            if (rows[0]?.nodeDefId) savedData = JSON.parse(rows[0].dataJson)
+            return tx
+          },
+        })),
+        delete: vi.fn().mockReturnThis(),
+        execute: vi.fn().mockResolvedValue(undefined),
+      }
+      return fn(tx)
+    })
+
+    await service.save('cnv_1', {
+      nodes: [{
+        id: 'node_1',
+        type: 'image',
+        position: { x: 100, y: 100 },
+        data: { prompt: '用户刚编辑的新提示词', images: [], isGenerating: true },
+      }],
+      edges: [],
+    })
+
+    expect(savedData.prompt).toBe('用户刚编辑的新提示词')
+    expect(savedData.results).toEqual([storedResult])
+    expect(savedData.images).toEqual([storedResult.url])
+    expect(savedData.imageUrl).toBe(storedResult.url)
+    expect(savedData.isGenerating).toBe(false)
+    expect(savedData.status).toBe('completed')
+  })
+
   // ═══════════════════════════════════════════════
   // 响应格式
   // ═══════════════════════════════════════════════

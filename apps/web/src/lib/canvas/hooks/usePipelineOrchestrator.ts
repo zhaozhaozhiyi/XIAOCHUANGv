@@ -21,7 +21,7 @@ import {
   type FlowNode,
 } from '@/lib/canvas/store'
 import { usePipelineStore } from '@/lib/canvas/store/pipelineStore'
-import { splitStoryIntoStoryboard, type PipelineResult } from '@/lib/canvas/api/pipeline'
+import { buildLocalStoryboardResult, splitStoryIntoStoryboard } from '@/lib/canvas/api/pipeline'
 import { getCanvasFitPadding, layoutCanvasNodes, columnPositions, layeredPosition } from '@/lib/canvas/utils/autoLayout'
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -75,27 +75,6 @@ function makeEdge(
   }
 }
 
-/** AI 不可达 / 未配置时的本地兜底草稿（与一期 mock 行为一致）。 */
-function fallbackResult(text: string): PipelineResult {
-  return {
-    outline: `${text.slice(0, 80)}${text.length > 80 ? '…' : ''}`,
-    characters: [
-      { name: '女主角', description: '由剧本自动生成，待细化' },
-      { name: '男主角', description: '由剧本自动生成，待细化' },
-    ],
-    scenes: [
-      { location: '城市夜景', description: '由剧本自动生成，待细化' },
-      { location: '室内客厅', description: '由剧本自动生成，待细化' },
-    ],
-    shots: [
-      { title: '开场建立镜头', shotType: '全景', cameraMove: '推', description: '交代环境与氛围', duration: 4 },
-      { title: '主角登场', shotType: '中景', cameraMove: '跟', description: '主角进入画面', duration: 5 },
-      { title: '冲突爆发', shotType: '近景', cameraMove: '摇', description: '情绪转折点', duration: 6 },
-      { title: '收尾留白', shotType: '远景', cameraMove: '固定', description: '余韵与悬念', duration: 4 },
-    ],
-  }
-}
-
 export function usePipelineOrchestrator() {
   const reactFlow = useReactFlow()
   const runningRef = useRef(false)
@@ -144,7 +123,7 @@ export function usePipelineOrchestrator() {
 
         // ── 1. 剧本拆解（真实 script.split → /ai/runs；失败回退本地草稿）──────
         pipeline.updateStep('script', { status: 'active' })
-        const data = (await splitStoryIntoStoryboard(text)) ?? fallbackResult(text)
+        const data = (await splitStoryIntoStoryboard(text)) ?? buildLocalStoryboardResult(text)
 
         const scriptNode = makeNode('note', layeredPosition(0, 0, { originY: baseY }), {
           text: `📄 剧本大纲\n${data.outline || text.slice(0, 80)}`,
@@ -161,7 +140,7 @@ export function usePipelineOrchestrator() {
         // ── 2. 角色设定（角色设计师）────────────────────────────────────────
         pipeline.updateStep('character', { status: 'active' })
         await delay(400)
-        const characters = (data.characters.length ? data.characters : fallbackResult(text).characters).slice(0, 4)
+        const characters = data.characters.slice(0, 4)
         const charNodes = characters.map((c, i) =>
           makeNode('character', layeredPosition(1, i, { originY: baseY - 240 }), {
             name: c.name,
@@ -179,7 +158,7 @@ export function usePipelineOrchestrator() {
         // ── 3. 场景设定（美术指导）──────────────────────────────────────────
         pipeline.updateStep('scene', { status: 'active' })
         await delay(400)
-        const scenes = (data.scenes.length ? data.scenes : fallbackResult(text).scenes).slice(0, 4)
+        const scenes = data.scenes.slice(0, 4)
         const sceneNodes = scenes.map((s, i) =>
           makeNode('scene', layeredPosition(2, i, { originY: baseY - 240 }), {
             name: s.time ? `${s.time}·${s.location}` : s.location,

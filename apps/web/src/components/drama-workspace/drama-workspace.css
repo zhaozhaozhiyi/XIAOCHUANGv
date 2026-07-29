@@ -1586,6 +1586,8 @@ button.drama-filter-chip {
   position: relative;
   display: flex;
   flex: 1 1 0;
+  min-height: 40px;
+  align-self: stretch;
   align-items: center;
   justify-content: center;
   gap: 7px;
@@ -2272,6 +2274,33 @@ button.drama-filter-chip {
   font-size: 11px;
   font-weight: 590;
   padding: 4px 8px;
+}
+
+.drama-source-glance-reliability {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 48%, transparent);
+  padding-top: 9px;
+}
+
+.drama-source-glance-reliability strong,
+.drama-source-glance-reliability p,
+.drama-source-glance-reliability small {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.drama-source-glance-reliability strong {
+  color: var(--color-text-1);
+}
+
+.drama-source-glance-reliability p {
+  color: var(--color-text-2);
+}
+
+.drama-source-glance-reliability small {
+  color: var(--color-warning);
 }
 
 .drama-source-glance-edges {
@@ -3107,12 +3136,51 @@ button.drama-filter-chip {
   line-height: 1.6;
 }
 
-.drama-canvas-empty-actions,
-.drama-canvas-from-episode {
-  display: flex;
-  flex-wrap: wrap;
+.drama-canvas-empty-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 10px;
   align-items: center;
+}
+
+.drama-canvas-from-episode {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) max-content;
+  min-width: 0;
+  gap: 10px;
+  align-items: center;
+}
+
+.drama-canvas-episode-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.drama-canvas-from-episode > button,
+.drama-canvas-create-blank {
+  min-height: 40px;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .drama-canvas-empty-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .drama-canvas-create-blank {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 520px) {
+  .drama-canvas-from-episode {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .drama-canvas-from-episode > button,
+  .drama-canvas-create-blank {
+    width: 100%;
+  }
 }
 
 .drama-canvas-list {

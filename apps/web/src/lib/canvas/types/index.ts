@@ -195,6 +195,7 @@ export interface CanvasEdge {
   /** 仅 dataflow 边带端口字段 */
   source_port?: string
   target_port?: string
+  label?: string
   /** 仅 narrative 边用；PRD §8.3 8 种 */
   relation_type?: RelationType
 }
@@ -294,6 +295,7 @@ export interface CanvasRunStatusResponse {
   canvas_id: string
   version_id: string
   run_id: string | null
+  state: 'idle' | 'running' | 'completed' | 'failed'
   /** 整体进度 */
   progress: { current: number; total: number; eta_seconds?: number }
   /** 各节点状态（按 nodeId 索引） */

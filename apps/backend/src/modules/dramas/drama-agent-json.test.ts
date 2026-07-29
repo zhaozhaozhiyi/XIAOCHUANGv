@@ -33,6 +33,21 @@ describe('DramaAgentSchemaValidator source analysis', () => {
         protagonist: '林夏',
         antagonist: '顾沉',
         protagonist_goal: '拿回继承权',
+        adaptation_mode: 'faithful',
+        source_completeness: 'complete',
+        major_beat_count: 6,
+        supported_duration_seconds: { min: 600, max: 900 },
+        recommended_episode_count: { min: 8, preferred: 10, max: 12 },
+        episode_duration_seconds: { min: 60, max: 90 },
+        recommendation_confidence: 0.8,
+        recommendation_basis: [{
+          claim: '六个主要冲突节点可支撑八至十二集。',
+          source_trace: [{ chapter_no: 1, excerpt: '顾沉递出录音证据。' }],
+        }],
+        evidence: [{
+          claim: '顾沉掌握遗嘱证据。',
+          source_trace: [{ chapter_no: 1, excerpt: '顾沉递出录音证据。' }],
+        }],
         relationship_map: [{
           subject: '林夏',
           object: '顾沉',

@@ -15,6 +15,7 @@ import {
   storyboards,
 } from '../../db/schema'
 import { CanvasService } from '../canvas/canvas.service'
+import { buildHeuristicResult } from '../ai/skill-handlers/storyboard-from-text.handler'
 
 type CreateDramaCanvasInput = {
   title?: string
@@ -89,6 +90,26 @@ function edgeId(canvasId: string, source: string, target: string, relation: stri
   return `${canvasId}__edge_${seed}`
 }
 
+function normalizedMatchText(value: unknown) {
+  return String(value ?? '').toLocaleLowerCase().replace(/[\s\p{P}\p{S}]/gu, '')
+}
+
+function textMentions(value: unknown, candidate: unknown) {
+  const text = normalizedMatchText(value)
+  const term = normalizedMatchText(candidate)
+  return term.length >= 2 && text.includes(term)
+}
+
+const ROOM_SCENE_ALIASES = ['房间', '卧室', '堂屋', '屋内', '室内']
+
+function sceneMentioned(location: string, text: string) {
+  if (textMentions(text, location)) return true
+  if (ROOM_SCENE_ALIASES.some((alias) => textMentions(location, alias))) {
+    return ROOM_SCENE_ALIASES.some((alias) => textMentions(text, alias))
+  }
+  return false
+}
+
 @Injectable()
 export class DramaCanvasProjectionService {
   constructor(
@@ -152,6 +173,7 @@ export class DramaCanvasProjectionService {
       sourceDramaTitle: drama.title,
       productionContext: {
         source: 'episode_projection',
+        projection_version: 2,
         episode_id: episode.id,
         sync_mode: input.syncMode ?? 'append_missing',
         include: Array.from(resolveProjectionIncludes(input.include)),
@@ -183,7 +205,7 @@ export class DramaCanvasProjectionService {
     }
     const episode = await this.requireEpisode(dramaId, userId, episodeId)
     const productionContext = parseNodeData(canvas.productionContextJson)
-    const projection = await this.buildProjection(dramaId, userId, episode.id, canvasId, {
+    const projection = await this.buildProjection(dramaId, userId, episode, canvasId, {
       include: input.include ?? (Array.isArray(productionContext.include) ? productionContext.include as ProjectionInclude[] : undefined),
       layout: input.layout ?? resolveProjectionLayout(productionContext.layout),
     })
@@ -240,6 +262,8 @@ export class DramaCanvasProjectionService {
         targetNodeId: edge.target,
         edgeKind: edge.edgeKind,
         relationType: edge.relationType,
+        sourcePort: edge.sourcePort ?? null,
+        targetPort: edge.targetPort ?? null,
         label: edge.label,
         createdAt: now(),
       })))
@@ -251,6 +275,7 @@ export class DramaCanvasProjectionService {
       sourceEpisodeId: String(episode.id),
       productionContextJson: JSON.stringify({
         source: 'episode_projection',
+        projection_version: 2,
         episode_id: episode.id,
         last_sync_at: new Date().toISOString(),
         sync_mode: input.syncMode,
@@ -273,10 +298,11 @@ export class DramaCanvasProjectionService {
   private async buildProjection(
     dramaId: number,
     userId: number,
-    episodeId: number,
+    episode: typeof episodes.$inferSelect,
     canvasId: string,
     options: { include?: ProjectionInclude[]; layout?: ProjectionLayout } = {},
   ) {
+    const episodeId = episode.id
     const include = resolveProjectionIncludes(options.include)
     const [characterRows, sceneRows, storyboardRows] = await Promise.all([
       this.db.db.select().from(characters).where(and(eq(characters.dramaId, dramaId), eq(characters.userId, userId), isNull(characters.deletedAt))),
@@ -300,6 +326,10 @@ export class DramaCanvasProjectionService {
       : []
     const includeStoryboards = include.has('storyboards')
     const includeExecutionNodes = includeStoryboards && include.has('execution_nodes')
+    const scriptContent = String(episode.scriptContent || episode.content || '').trim()
+    const scriptFallback = includeStoryboards && sortedStoryboards.length === 0 && scriptContent
+      ? buildHeuristicResult(scriptContent)
+      : null
 
     const nodeIdByKey = new Map<string, string>()
     const nodes: Array<{
@@ -342,22 +372,59 @@ export class DramaCanvasProjectionService {
     projectedCharacters.forEach((character, index) => {
       addNode(`character_${character.id}`, 'character', character.name, {
         characterId: character.id,
+        name: character.name,
+        label: character.name,
         title: character.name,
         description: character.description ?? character.appearance ?? '',
         imageUrl: character.imageUrl ?? null,
+        images: character.imageUrl ? [character.imageUrl] : [],
         assetScope: 'project',
       }, 0, index * 230)
     })
 
+    if (include.has('characters') && projectedCharacters.length === 0) {
+      scriptFallback?.characters.forEach((character, index) => {
+        addNode(`script_character_${index + 1}`, 'character', character.name, {
+          name: character.name,
+          label: character.name,
+          title: character.name,
+          role: character.role ?? '',
+          description: character.description ?? '',
+          images: [],
+          assetScope: 'episode',
+          generatedFromScript: true,
+        }, 0, index * 230)
+      })
+    }
+
     projectedScenes.forEach((scene, index) => {
       addNode(`scene_${scene.id}`, 'scene', scene.location, {
         sceneId: scene.id,
+        name: scene.location,
+        label: scene.location,
         title: scene.location,
         description: scene.prompt,
         imageUrl: scene.imageUrl ?? null,
+        images: scene.imageUrl ? [scene.imageUrl] : [],
         assetScope: 'episode',
       }, 0, projectedCharacters.length * 230 + 80 + index * 230)
     })
+
+    if (include.has('scenes') && projectedScenes.length === 0) {
+      const characterCount = projectedCharacters.length || scriptFallback?.characters.length || 0
+      scriptFallback?.scenes.forEach((scene, index) => {
+        addNode(`script_scene_${index + 1}`, 'scene', scene.location, {
+          name: scene.location,
+          label: scene.location,
+          title: scene.location,
+          time: scene.time ?? '',
+          description: scene.description ?? '',
+          images: [],
+          assetScope: 'episode',
+          generatedFromScript: true,
+        }, 0, characterCount * 230 + 80 + index * 230)
+      })
+    }
 
     if (includeStoryboards) sortedStoryboards.forEach((storyboard, index) => {
       const y = index * 280
@@ -396,8 +463,44 @@ export class DramaCanvasProjectionService {
       }
     })
 
-    const edges: Array<{ id: string; source: string; target: string; edgeKind: string; relationType: string; label: string }> = []
-    const addEdge = (sourceKey: string, targetKey: string, relationType: string, label: string, edgeKind = 'dataflow') => {
+    if (includeStoryboards && sortedStoryboards.length === 0) {
+      scriptFallback?.shots.forEach((shot, index) => {
+        const description = shot.description ?? ''
+        addNode(`script_storyboard_${index + 1}`, 'storyboard', shot.title || `镜头 ${index + 1}`, {
+          shotIndex: index + 1,
+          storyboardNumber: index + 1,
+          title: shot.title || `镜头 ${index + 1}`,
+          shotType: shot.shotType ?? '',
+          cameraMove: shot.cameraMove ?? '',
+          shotDescription: description,
+          description,
+          prompt: description,
+          duration: shot.duration ?? 4,
+          images: [],
+          generatedFromScript: true,
+        }, 360, index * 280, 300, 220)
+      })
+    }
+
+    const edges: Array<{
+      id: string
+      source: string
+      target: string
+      edgeKind: string
+      relationType: string
+      label: string
+      sourcePort?: string
+      targetPort?: string
+    }> = []
+    const addEdge = (
+      sourceKey: string,
+      targetKey: string,
+      relationType: string,
+      label: string,
+      edgeKind = 'dataflow',
+      sourcePort?: string,
+      targetPort?: string,
+    ) => {
       const source = nodeIdByKey.get(sourceKey)
       const target = nodeIdByKey.get(targetKey)
       if (!source || !target) return
@@ -408,19 +511,78 @@ export class DramaCanvasProjectionService {
         edgeKind,
         relationType,
         label,
+        sourcePort,
+        targetPort,
       })
     }
 
     for (const storyboard of sortedStoryboards) {
       for (const relation of storyboardCharacterRows.filter((row) => row.storyboardId === storyboard.id)) {
-        addEdge(`character_${relation.characterId}`, `storyboard_${storyboard.id}`, 'character_ref', '角色')
+        addEdge(
+          `character_${relation.characterId}`,
+          `storyboard_${storyboard.id}`,
+          'character_ref',
+          '角色',
+          'dataflow',
+          'out:character',
+          'in:character',
+        )
       }
-      if (storyboard.sceneId) addEdge(`scene_${storyboard.sceneId}`, `storyboard_${storyboard.id}`, 'scene_ref', '场景')
+      if (storyboard.sceneId) {
+        addEdge(
+          `scene_${storyboard.sceneId}`,
+          `storyboard_${storyboard.id}`,
+          'scene_ref',
+          '场景',
+          'dataflow',
+          'out:scene',
+          'in:scene',
+        )
+      }
       if (includeExecutionNodes) {
         addEdge(`storyboard_${storyboard.id}`, `exec_t2i_${storyboard.id}`, 'prompt_source', '提示词')
         addEdge(`storyboard_${storyboard.id}`, `exec_tts_${storyboard.id}`, 'dialogue_source', '台词')
         addEdge(`exec_t2i_${storyboard.id}`, `exec_i2v_${storyboard.id}`, 'image_source', '首帧')
       }
+    }
+
+    if (scriptFallback) {
+      scriptFallback.shots.forEach((shot, shotIndex) => {
+        const shotText = `${shot.title || ''}\n${shot.description || ''}`
+        scriptFallback.characters.forEach((character, characterIndex) => {
+          if (!textMentions(shotText, character.name)) return
+          addEdge(
+            `script_character_${characterIndex + 1}`,
+            `script_storyboard_${shotIndex + 1}`,
+            'character_ref',
+            '角色',
+            'dataflow',
+            'out:character',
+            'in:character',
+          )
+        })
+      })
+
+      let activeSceneIndex: number | null = null
+      scriptFallback.shots.forEach((shot, shotIndex) => {
+        const shotText = `${shot.title || ''}\n${shot.description || ''}`
+        const mentionedSceneIndex = scriptFallback.scenes.findIndex((scene) => (
+          sceneMentioned(scene.location, shotText)
+        ))
+        const startsNewScene = /【\s*场景\s*\d*\s*[：:]/u.test(shotText)
+        if (mentionedSceneIndex >= 0) activeSceneIndex = mentionedSceneIndex
+        else if (startsNewScene) activeSceneIndex = null
+        if (activeSceneIndex === null) return
+        addEdge(
+          `script_scene_${activeSceneIndex + 1}`,
+          `script_storyboard_${shotIndex + 1}`,
+          'scene_ref',
+          '场景',
+          'dataflow',
+          'out:scene',
+          'in:scene',
+        )
+      })
     }
 
     return { nodes, edges }

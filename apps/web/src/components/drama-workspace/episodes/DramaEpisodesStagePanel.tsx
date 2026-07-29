@@ -110,6 +110,32 @@ function formatGenerationMode(value: string | null | undefined) {
   return "";
 }
 
+function formatAdaptationMode(value: SourceAnalysis["adaptation_mode"]) {
+  if (value === "faithful") return "忠实改编";
+  if (value === "moderate_expansion") return "适度扩写";
+  if (value === "continuation") return "续写改编";
+  return "改编边界未说明";
+}
+
+function formatSourceCompleteness(value: SourceAnalysis["source_completeness"]) {
+  if (value === "complete") return "源稿完整";
+  if (value === "incomplete") return "源稿不完整";
+  if (value === "uncertain") return "完整性待确认";
+  return "完整性未评估";
+}
+
+function formatConfidence(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "未提供置信度";
+  const normalized = Math.min(1, Math.max(0, value));
+  const label = normalized >= 0.75 ? "高" : normalized >= 0.5 ? "中" : "低";
+  return `${label}置信度 ${Math.round(normalized * 100)}%`;
+}
+
+function formatSecondsRange(range: { min: number; max: number } | null | undefined) {
+  if (!range) return "";
+  return range.min === range.max ? `${range.min} 秒` : `${range.min}-${range.max} 秒`;
+}
+
 function normalizeSourceGlance(analysis: SourceAnalysis) {
   const protagonist = firstText(analysis.protagonist) || "主角";
   const nodes = new Map<string, { name: string; role: string }>();
@@ -224,6 +250,18 @@ function SourceGlanceMap({
       ? analysis.target_episode_count
       : targetEpisodeCount;
   const analyzedEpisodeDuration = analysis.episode_duration || episodeDuration;
+  const recommendationRange = analysis.recommended_episode_count;
+  const episodeRangeLabel = recommendationRange
+    ? recommendationRange.min === recommendationRange.max
+      ? `${recommendationRange.min} 集`
+      : `${recommendationRange.min}-${recommendationRange.max} 集`
+    : `${analyzedTargetEpisodeCount} 集`;
+  const preferredLabel = recommendationRange
+    ? `优先 ${recommendationRange.preferred} 集`
+    : "历史单值";
+  const durationLabel =
+    formatSecondsRange(analysis.episode_duration_seconds) || analyzedEpisodeDuration;
+  const hasReliabilityBasis = Boolean(analysis.recommendation_basis?.length);
   const supportingNodes = glance.nodes
     .filter((node) => node.name !== (analysis.protagonist || "主角"))
     .slice(0, 5);
@@ -247,9 +285,13 @@ function SourceGlanceMap({
           <p className="drama-source-glance-meta">{analysisMeta}</p>
         </div>
         <div className="drama-source-glance-plan">
-          <strong>目标 {analyzedTargetEpisodeCount} 集</strong>
-          <span>{analyzedEpisodeDuration}</span>
-          <small>源稿理解建议</small>
+          <strong>建议 {episodeRangeLabel}</strong>
+          <span>{preferredLabel} · {durationLabel}</span>
+          <small>
+            {hasReliabilityBasis
+              ? `${formatAdaptationMode(analysis.adaptation_mode)} · ${formatConfidence(analysis.recommendation_confidence)}`
+              : "历史建议 · 未提供推导依据"}
+          </small>
         </div>
       </div>
 
@@ -279,13 +321,30 @@ function SourceGlanceMap({
         <div className="drama-source-glance-copy">
           <p>{analysis.core_conflict}</p>
           <div className="drama-source-glance-tags">
-            {(visualStyle ? [visualStyle] : [])
-              .concat(aspectRhythm ? [aspectRhythm] : [])
-              .slice(0, 2)
+            {[
+              formatAdaptationMode(analysis.adaptation_mode),
+              formatSourceCompleteness(analysis.source_completeness),
+              analysis.major_beat_count ? `${analysis.major_beat_count} 个主要情节点` : "",
+              visualStyle,
+              aspectRhythm,
+            ]
+              .filter(Boolean)
+              .slice(0, 5)
               .map((tag) => (
                 <span key={tag}>{tag}</span>
               ))}
           </div>
+          {hasReliabilityBasis ? (
+            <div className="drama-source-glance-reliability">
+              <strong>推荐依据</strong>
+              {analysis.recommendation_basis?.slice(0, 3).map((item, index) => (
+                <p key={`${item.claim}-${index}`}>{item.claim}</p>
+              ))}
+              {analysis.expansion_notes?.length ? (
+                <small>扩写假设：{analysis.expansion_notes.join("；")}</small>
+              ) : null}
+            </div>
+          ) : null}
           <div className="drama-source-glance-edges">
             {glance.edges.length ? (
               glance.edges.slice(0, 4).map((edge) => (
@@ -698,7 +757,13 @@ function SourceStage({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => setEditing(true)}
+            onClick={() => {
+              controller.setSourceTitleDraft(
+                source.title || controller.drama?.title || "",
+              );
+              controller.setSourceContentDraft("");
+              setEditing(true);
+            }}
           >
             <RefreshCw size={14} />
             重新导入
@@ -847,16 +912,25 @@ function PlanStage({
             <div>
               <dt>推荐集数</dt>
               <dd>
-                {controller.sourceAnalysis.target_episode_count ||
-                  controller.planTargetEpisodes}{" "}
-                集
+                {controller.sourceAnalysis.recommended_episode_count
+                  ? `${controller.sourceAnalysis.recommended_episode_count.min}-${controller.sourceAnalysis.recommended_episode_count.max} 集（优先 ${controller.sourceAnalysis.recommended_episode_count.preferred} 集）`
+                  : `${controller.sourceAnalysis.target_episode_count || controller.planTargetEpisodes} 集（历史单值）`}
               </dd>
             </div>
             <div>
               <dt>推荐单集时长</dt>
               <dd>
-                {controller.sourceAnalysis.episode_duration ||
+                {formatSecondsRange(controller.sourceAnalysis.episode_duration_seconds) ||
+                  controller.sourceAnalysis.episode_duration ||
                   controller.planEpisodeDuration}
+              </dd>
+            </div>
+            <div>
+              <dt>可靠性</dt>
+              <dd>
+                {controller.sourceAnalysis.recommendation_basis?.length
+                  ? `${formatAdaptationMode(controller.sourceAnalysis.adaptation_mode)} · ${formatConfidence(controller.sourceAnalysis.recommendation_confidence)}`
+                  : "未提供推导依据，建议重新理解源稿"}
               </dd>
             </div>
           </dl>

@@ -2926,15 +2926,21 @@ function ComposeTab() {
         {wb.storyboards.map((sb, i) => {
           const task = wb.entityTasks[`shot-compose:${sb.id}`];
           const hasComposedVideo = !!sb.composed_video_url;
+          const currentTask = hasComposedVideo ? null : task;
           const isLocalPending = wb.pendingComposes.has(sb.id);
           const isServerPending =
             !hasComposedVideo &&
             (sb.status === "compose_queued" ||
               sb.status === "compose_processing");
           const isPending =
-            isLocalPending || isServerPending || isActiveWorkbenchTask(task);
+            !hasComposedVideo &&
+            (isLocalPending ||
+              isServerPending ||
+              isActiveWorkbenchTask(currentTask));
           const isFailed =
-            isFailedWorkbenchTask(task) || sb.status === "compose_failed";
+            !hasComposedVideo &&
+            (isFailedWorkbenchTask(currentTask) ||
+              sb.status === "compose_failed");
           return (
             <div key={sb.id} className="card prod-card">
               <div className="prod-info">
@@ -3043,7 +3049,7 @@ function ComposeTab() {
                 </Button>
               )}
               <EntityTaskNotice
-                task={task}
+                task={currentTask}
                 label="镜头合成"
                 onRetry={
                   isContinuityProduction ? undefined : wb.retryEntityTask

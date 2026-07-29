@@ -72,7 +72,16 @@ export async function processBackendQueueJob(
     }
 
     if (job.name === DRAMA_TASK_JOB_NAME || 'taskId' in job.data) {
-      const result = await deps.dramaExecutor.executeTaskById((job.data as { taskId: number }).taskId, `${deps.workerId}:${job.id}`)
+      const configuredAttempts = Math.max(
+        1,
+        Number(job.opts.attempts ?? TASK_QUEUE_DEFAULT_JOB_OPTIONS.attempts) || 1,
+      )
+      const retryOnFailure = (job.attemptsMade ?? 0) + 1 < configuredAttempts
+      const result = await deps.dramaExecutor.executeTaskById(
+        (job.data as { taskId: number }).taskId,
+        `${deps.workerId}:${job.id}`,
+        { retryOnFailure },
+      )
       if (isTerminalFailureResult(result)) throw new UnrecoverableError(result)
       return result
     }

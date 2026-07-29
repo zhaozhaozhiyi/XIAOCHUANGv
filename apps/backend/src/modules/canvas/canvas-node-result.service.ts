@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 
 import { DatabaseService } from '../../db/database.service'
-import { canvasNodes } from '../../db/schema'
+import { canvasNodes, canvases } from '../../db/schema'
 import { canvasAdvisoryLockSql } from './canvas-lock.util'
 import {
   AUDIO_RESULT_NODE_TYPES,
@@ -121,6 +121,7 @@ export class CanvasNodeResultService {
         .update(canvasNodes)
         .set({ dataJson: JSON.stringify(nextData), updatedAt: new Date() })
         .where(eq(canvasNodes.id, node.id))
+      await tx.update(canvases).set({ updatedAt: new Date() }).where(eq(canvases.id, canvasId))
 
       return {
         result,
@@ -167,6 +168,7 @@ export class CanvasNodeResultService {
         .update(canvasNodes)
         .set({ dataJson: JSON.stringify(nextData), updatedAt: new Date() })
         .where(eq(canvasNodes.id, node.id))
+      await tx.update(canvases).set({ updatedAt: new Date() }).where(eq(canvases.id, canvasId))
 
       return {
         result,
@@ -198,6 +200,7 @@ export class CanvasNodeResultService {
         .update(canvasNodes)
         .set({ dataJson: JSON.stringify(nextData), updatedAt: new Date() })
         .where(eq(canvasNodes.id, node.id))
+      await tx.update(canvases).set({ updatedAt: new Date() }).where(eq(canvases.id, canvasId))
 
       return toFlowNode(node, nextData)
     })

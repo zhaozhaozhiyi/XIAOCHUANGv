@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, NotFoundException, Param, Post, Put, Query, UseGuards } from '@nestjs/common'
+import { BadRequestException, Body, Controller, Delete, Inject, NotFoundException, Param, Post, Put, Query, UseGuards } from '@nestjs/common'
 import { and, eq, isNull } from 'drizzle-orm'
 import { ApiTags } from '@nestjs/swagger'
 
@@ -27,8 +27,8 @@ const characterFields = ['name', 'role', 'description', 'appearance', 'personali
 @UseGuards(SessionAuthGuard)
 export class CharactersController {
   constructor(
-    private readonly databaseService: DatabaseService,
-    private readonly imagesService: ImagesService,
+    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @Inject(ImagesService) private readonly imagesService: ImagesService,
   ) {}
 
   @Post('batch-generate-images')

@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
 import { DatabaseService } from '../../../db/database.service'
 import { canvasRuns, canvasTasks, canvases } from '../../../db/schema'
@@ -31,6 +31,32 @@ export class CanvasRunOrchestratorService {
     await this.enqueueStage(plan, 0, userId)
   }
 
+  /** 将运行期间追加的独立业务任务立即入队。BullMQ worker 负责受控并发。 */
+  async enqueueAddedTask(canvasTaskId: string, userId: number): Promise<void> {
+    const [task] = await this.db.db.select().from(canvasTasks).where(eq(canvasTasks.id, canvasTaskId))
+    if (!task || TERMINAL.has(task.status) || task.status === 'running' || task.status === 'queued') return
+
+    const inline = process.env.CANVAS_EXECUTION_INLINE === '1'
+    await this.db.db
+      .update(canvasTasks)
+      .set({ status: 'queued' })
+      .where(eq(canvasTasks.id, canvasTaskId))
+
+    if (inline) {
+      void this.canvasExecutionService
+        .executeCanvasTaskById(canvasTaskId, userId, `inline-${process.pid}`)
+        .then(() => this.onTaskSettled(canvasTaskId))
+        .catch((err) => this.logger.error(`inline canvas task failed: ${canvasTaskId}`, err))
+      return
+    }
+
+    const jobId = await this.taskQueueService.enqueueCanvasTask({ canvasTaskId, userId })
+    await this.db.db
+      .update(canvasTasks)
+      .set({ bullmqJobId: jobId ?? null })
+      .where(eq(canvasTasks.id, canvasTaskId))
+  }
+
   /** Worker 或同步执行完成后回调，推进下一阶段 / 终结 run */
   async onTaskSettled(canvasTaskId: string): Promise<void> {
     const [task] = await this.db.db.select().from(canvasTasks).where(eq(canvasTasks.id, canvasTaskId))
@@ -53,9 +79,14 @@ export class CanvasRunOrchestratorService {
       const [run] = await this.db.db.select().from(canvasRuns).where(eq(canvasRuns.id, task.runId))
       if (run?.status === 'cancelled') return
 
-      const userId = await this.resolveRunUserId(task.runId)
-      if (stageIndex + 1 < plan.stages.length) {
-        await this.enqueueStage(plan, stageIndex + 1, userId)
+      const stageFailed = stageTasks.some((stageTask) => stageTask.status === 'failed')
+      if (stageFailed) {
+        await this.skipRemainingStages(plan, stageIndex)
+      } else {
+        const userId = await this.resolveRunUserId(task.runId)
+        if (stageIndex + 1 < plan.stages.length) {
+          await this.enqueueStage(plan, stageIndex + 1, userId)
+        }
       }
     }
 
@@ -73,6 +104,18 @@ export class CanvasRunOrchestratorService {
     if (!run) return 0
     const [canvas] = await this.db.db.select().from(canvases).where(eq(canvases.id, run.canvasId))
     return canvas?.userId ?? 0
+  }
+
+  private async skipRemainingStages(plan: ExecutionPlan, completedStageIndex: number): Promise<void> {
+    const remainingTaskIds = plan.stages
+      .slice(completedStageIndex + 1)
+      .flatMap((stage) => stage.tasks.map((task) => task.taskId))
+    if (!remainingTaskIds.length) return
+
+    await this.db.db
+      .update(canvasTasks)
+      .set({ status: 'skipped', completedAt: now() })
+      .where(and(inArray(canvasTasks.id, remainingTaskIds), eq(canvasTasks.status, 'pending')))
   }
 
   private async enqueueStage(plan: ExecutionPlan, stageIndex: number, userId: number): Promise<void> {
@@ -125,7 +168,7 @@ export class CanvasRunOrchestratorService {
       const failed = tasks.filter((t) => t.status === 'failed').length
       const skipped = tasks.filter((t) => t.status === 'skipped').length
       const pending = tasks.filter((t) => !TERMINAL.has(t.status)).length
-      const progress = tasks.length ? completed / tasks.length : 0
+      const progress = tasks.length ? (completed + failed + skipped) / tasks.length : 0
 
       // 计数/进度在锁内更新，不会被并发 finalizeRun clobber
       await tx

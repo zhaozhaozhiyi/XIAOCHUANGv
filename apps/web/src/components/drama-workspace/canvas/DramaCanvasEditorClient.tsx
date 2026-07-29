@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { AudioLines, Boxes, ChevronLeft, ChevronRight, FolderHeart, ImageIcon, Loader2, Network, RefreshCw, Video } from 'lucide-react'
@@ -315,6 +315,7 @@ export function DramaCanvasEditorClient({
   canvasId: string
 }) {
   const { loading, error, canvas } = useCanvas(canvasId)
+  const projectionMigrationStarted = useRef(false)
   const searchParams = useSearchParams()
   const { data: workspace } = useDramaWorkspace(dramaId)
   const setChatOpen = usePipelineStore((s) => s.setChatOpen)
@@ -340,6 +341,25 @@ export function DramaCanvasEditorClient({
     setChatOpen(false)
     setRailOpen(false)
   }, [setChatOpen, setRailOpen])
+
+  useEffect(() => {
+    if (!canvas || projectionMigrationStarted.current) return
+    const projectionVersion = Number(canvas.production_context?.projection_version || 0)
+    const hasHeuristicNodes = canvas.nodes.some((node) => node.data?.generatedFromScript === true)
+    const episodeId = numberFromData(canvas.source_episode_id)
+    if (projectionVersion >= 2 || !hasHeuristicNodes || !episodeId) return
+
+    projectionMigrationStarted.current = true
+    void dramaWorkspaceAPI.syncCanvas(dramaId, canvasId, {
+      episode_id: episodeId,
+      sync_mode: 'append_missing',
+      preserve_user_nodes: true,
+    }).then((result) => {
+      if (Number(result.created_edges || 0) > 0) window.location.reload()
+    }).catch((migrationError) => {
+      toast.error(migrationError instanceof Error ? migrationError.message : '画布关联同步失败')
+    })
+  }, [canvas, canvasId, dramaId])
 
   if (loading) {
     return (

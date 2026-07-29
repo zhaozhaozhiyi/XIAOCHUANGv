@@ -29,6 +29,10 @@ const DIRECT_TOKEN_LIMIT = 60_000;
 const ASYNC_TOKEN_LIMIT = 400_000;
 const DEFAULT_CHUNK_TOKENS = 12_000;
 const SOURCE_PREVIEW_CHARS = 12_000;
+const SOURCE_GLOBAL_SUMMARY_MAX_INPUT_CHARS = 60_000;
+const SOURCE_SUMMARY_REDUCE_BATCH_SIZE = 6;
+const DEFAULT_EPISODE_BLUEPRINT_BATCH_SIZE = 4;
+const MAX_EPISODE_BLUEPRINT_BATCH_SIZE = 8;
 const REMOTE_AGENT_MODE = "remote_agent";
 const AI_FIRST_TASK_TYPE = "source_analysis";
 const AI_FIRST_BRIEF_TASK_TYPE = "adaptation_briefs";
@@ -100,6 +104,18 @@ type SourceAnalysisPayload = {
   protagonist_goal: string;
   target_episode_count?: number | null;
   episode_duration?: string | null;
+  adaptation_mode?: "faithful" | "moderate_expansion" | "continuation";
+  source_completeness?: "complete" | "incomplete" | "uncertain";
+  major_beat_count?: number;
+  supported_duration_seconds?: { min: number; max: number };
+  recommended_episode_count?: { min: number; preferred: number; max: number };
+  episode_duration_seconds?: { min: number; max: number };
+  recommendation_confidence?: number;
+  recommendation_basis?: Array<{
+    claim: string;
+    source_trace: Array<Record<string, unknown>>;
+  }>;
+  expansion_notes?: string[];
   relationship_map: Array<Record<string, unknown>>;
   world_rules: string[];
   emotional_curve: Array<Record<string, unknown>>;
@@ -124,6 +140,12 @@ type SourceChunkAnalysisPayload = {
   ai_run_id?: number | null;
   remote_run_id?: string | null;
   generated_at?: string | null;
+};
+
+type SourceChunkAnalysisAggregate = SourceChunkAnalysisPayload & {
+  chunk_id?: number;
+  chunk_no?: number;
+  reduction_level?: number;
 };
 
 type AdaptationBriefPayload = {
@@ -323,6 +345,29 @@ function hashText(content: string) {
   return createHash("sha256").update(content).digest("hex");
 }
 
+function mergeSourceTraces(
+  analyses: SourceChunkAnalysisPayload[],
+  maxItems = 64,
+) {
+  const traces: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+  for (const analysis of analyses) {
+    for (const trace of analysis.source_trace || []) {
+      const key = JSON.stringify(trace);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      traces.push(trace);
+    }
+  }
+  if (traces.length <= maxItems) return traces;
+  return Array.from({ length: maxItems }, (_, index) => {
+    const sourceIndex = Math.round(
+      (index * (traces.length - 1)) / Math.max(1, maxItems - 1),
+    );
+    return traces[sourceIndex];
+  });
+}
+
 function normalizeSourceType(
   value: SourceType | string | null | undefined,
 ): SourceType {
@@ -376,6 +421,27 @@ export function resolveWholePlanBlueprintState(
       : generatedBlueprintMode,
     status: hasScript ? "script_ready" : "blueprint",
   };
+}
+
+export function buildEpisodeBlueprintBatchRanges(
+  targetEpisodeCount: number,
+  batchSize = DEFAULT_EPISODE_BLUEPRINT_BATCH_SIZE,
+) {
+  const target = Math.max(0, Math.trunc(targetEpisodeCount));
+  const normalizedBatchSize = Number.isFinite(batchSize)
+    ? Math.min(
+        MAX_EPISODE_BLUEPRINT_BATCH_SIZE,
+        Math.max(1, Math.trunc(batchSize)),
+      )
+    : DEFAULT_EPISODE_BLUEPRINT_BATCH_SIZE;
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let start = 1; start <= target; start += normalizedBatchSize) {
+    ranges.push({
+      start,
+      end: Math.min(target, start + normalizedBatchSize - 1),
+    });
+  }
+  return ranges;
 }
 
 async function markEpisodeOutputsStale(
@@ -905,6 +971,13 @@ function readBooleanEnv(name: string, defaultValue: boolean) {
   if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
   return defaultValue;
+}
+
+function readEpisodeBlueprintBatchSize() {
+  const configured = Number(process.env.DRAMA_AGENT_BLUEPRINT_BATCH_SIZE);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.min(MAX_EPISODE_BLUEPRINT_BATCH_SIZE, Math.trunc(configured))
+    : DEFAULT_EPISODE_BLUEPRINT_BATCH_SIZE;
 }
 
 function readAiFirst(metadataValue: string | null | undefined) {
@@ -2478,43 +2551,77 @@ export class DramaAiFirstService {
     const useRemoteAgent = await this.shouldUseRemoteAgent(input.userId);
 
     if (useRemoteAgent) {
-      try {
-        const agent = await this.dramaAgentService!.generateEpisodeBlueprints({
-          userId: input.userId,
-          dramaId: input.dramaId,
-          sourceId,
-          health,
-          analysis,
-          brief: effectiveBrief,
-        });
-        const run = await this.recordRemoteRun({
-          userId: input.userId,
-          dramaId: input.dramaId,
-          skillId: "drama_episode_blueprint_generator",
-          mode: "episode_blueprints",
-          userMessage: `Generate episode blueprints for brief ${effectiveBrief.id}`,
-          remoteRunId: agent.remoteRunId,
-          usage: agent.usage,
-          result: agent.blueprints,
-        });
-        blueprints = agent.blueprints.map((blueprint) => ({
-          ...blueprint,
-          brief_id: blueprint.brief_id || effectiveBrief.id,
-          ai_run_id: run.id,
-          remote_run_id: agent.remoteRunId,
-          generated_at: generatedAt,
-          generation_mode: REMOTE_AGENT_MODE,
-        }));
-      } catch (error) {
-        await this.recordRemoteFailure({
-          userId: input.userId,
-          dramaId: input.dramaId,
-          skillId: "drama_episode_blueprint_generator",
-          mode: "episode_blueprints",
-          userMessage: `Generate episode blueprints for brief ${effectiveBrief.id}`,
-          error,
-        });
-        throw error;
+      blueprints = [];
+      const ranges = buildEpisodeBlueprintBatchRanges(
+        effectiveBrief.target_episode_count,
+        readEpisodeBlueprintBatchSize(),
+      );
+      let previousBlueprint: EpisodeBlueprintPayload | null = null;
+
+      for (const range of ranges) {
+        await this.assertAiFirstTaskNotCanceled(input.taskId);
+        const userMessage = `Generate episode blueprints ${range.start}-${range.end} for brief ${effectiveBrief.id}`;
+        try {
+          const agent = await this.dramaAgentService!.generateEpisodeBlueprints({
+            userId: input.userId,
+            dramaId: input.dramaId,
+            sourceId,
+            health,
+            analysis,
+            brief: effectiveBrief,
+            episodeStart: range.start,
+            episodeEnd: range.end,
+            previousBlueprint,
+          });
+          const run = await this.recordRemoteRun({
+            userId: input.userId,
+            dramaId: input.dramaId,
+            skillId: "drama_episode_blueprint_generator",
+            mode: "episode_blueprints",
+            userMessage,
+            remoteRunId: agent.remoteRunId,
+            usage: agent.usage,
+            result: agent.blueprints,
+          });
+          const batch: EpisodeBlueprintPayload[] = agent.blueprints.map((blueprint) => ({
+            ...blueprint,
+            brief_id: blueprint.brief_id || effectiveBrief.id,
+            ai_run_id: run.id,
+            remote_run_id: agent.remoteRunId,
+            generated_at: generatedAt,
+            generation_mode: REMOTE_AGENT_MODE,
+          }));
+          blueprints.push(...batch);
+          previousBlueprint = batch[batch.length - 1] || previousBlueprint;
+        } catch (error) {
+          await this.recordRemoteFailure({
+            userId: input.userId,
+            dramaId: input.dramaId,
+            skillId: "drama_episode_blueprint_generator",
+            mode: "episode_blueprints",
+            userMessage,
+            error,
+          });
+          throw error;
+        }
+
+        await this.assertAiFirstTaskNotCanceled(input.taskId);
+        if (input.taskId) {
+          await this.updateEpisodeBlueprintsTask(input.taskId, {
+            status: "running",
+            progress: 12 + Math.round(
+              (blueprints.length / effectiveBrief.target_episode_count) * 60,
+            ),
+            resultSummaryJson: JSON.stringify({
+              phase: "blueprint_generate",
+              drama_id: input.dramaId,
+              selected_brief_id: effectiveBrief.id,
+              target_episodes: effectiveBrief.target_episode_count,
+              generated_episodes: blueprints.length,
+              current_range: [range.start, range.end],
+            }),
+          });
+        }
       }
     } else if (this.shouldUseLocalRuleFallback()) {
       const run = await this.recordLocalRun({
@@ -4035,23 +4142,28 @@ export class DramaAiFirstService {
     if (!drafts.length) return [];
 
     const ts = new Date();
-    await this.databaseService.db.insert(dramaSourceChunks).values(
-      drafts.map((chunk) => ({
-        userId: source.userId,
-        dramaId: source.dramaId,
-        sourceId: chunk.sourceId,
-        chunkNo: chunk.chunkNo,
-        title: chunk.title,
-        contentStart: chunk.contentStart,
-        contentEnd: chunk.contentEnd,
-        contentHash: chunk.contentHash,
-        estimatedTokens: chunk.estimatedTokens,
-        sourceTrace: chunk.sourceTrace,
-        status: "pending",
-        createdAt: ts,
-        updatedAt: ts,
-      })),
-    );
+    await this.databaseService.db
+      .insert(dramaSourceChunks)
+      .values(
+        drafts.map((chunk) => ({
+          userId: source.userId,
+          dramaId: source.dramaId,
+          sourceId: chunk.sourceId,
+          chunkNo: chunk.chunkNo,
+          title: chunk.title,
+          contentStart: chunk.contentStart,
+          contentEnd: chunk.contentEnd,
+          contentHash: chunk.contentHash,
+          estimatedTokens: chunk.estimatedTokens,
+          sourceTrace: chunk.sourceTrace,
+          status: "pending",
+          createdAt: ts,
+          updatedAt: ts,
+        })),
+      )
+      .onConflictDoNothing({
+        target: [dramaSourceChunks.sourceId, dramaSourceChunks.chunkNo],
+      });
 
     return this.databaseService.db
       .select()
@@ -4077,9 +4189,7 @@ export class DramaAiFirstService {
     const chunks = await this.ensureSourceChunks(input.source, input.health);
     if (!chunks.length) throw new BadRequestException("source_chunks_required");
 
-    const chunkAnalyses: Array<
-      SourceChunkAnalysisPayload & { chunk_id: number; chunk_no: number }
-    > = [];
+    const chunkAnalyses: SourceChunkAnalysisAggregate[] = [];
     const reportChunkProgress = async (
       phase: "chunk_analysis" | "global_summary" = "chunk_analysis",
     ) => {
@@ -4239,20 +4349,91 @@ export class DramaAiFirstService {
     }
 
     await reportChunkProgress("global_summary");
+    let globalSummaryInput = chunkAnalyses;
+    let reductionLevel = 0;
+    while (
+      JSON.stringify(globalSummaryInput).length >
+        SOURCE_GLOBAL_SUMMARY_MAX_INPUT_CHARS &&
+      globalSummaryInput.length > 1
+    ) {
+      reductionLevel += 1;
+      const reduced: SourceChunkAnalysisAggregate[] = [];
+      for (
+        let offset = 0;
+        offset < globalSummaryInput.length;
+        offset += SOURCE_SUMMARY_REDUCE_BATCH_SIZE
+      ) {
+        const batch = globalSummaryInput.slice(
+          offset,
+          offset + SOURCE_SUMMARY_REDUCE_BATCH_SIZE,
+        );
+        if (batch.length === 1) {
+          reduced.push(batch[0]);
+          continue;
+        }
+        const batchNo = Math.floor(offset / SOURCE_SUMMARY_REDUCE_BATCH_SIZE) + 1;
+        const agent = await this.dramaAgentService!.reduceSourceChunkAnalyses({
+          userId: input.userId,
+          dramaId: input.dramaId,
+          sourceId: input.source.id,
+          level: reductionLevel,
+          batchNo,
+          chunkAnalyses: batch,
+        });
+        const run = await this.recordRemoteRun({
+          userId: input.userId,
+          dramaId: input.dramaId,
+          skillId: "drama_source_chunk_reducer",
+          mode: "source_chunk_reduce",
+          userMessage: `Reduce source ${input.source.id} summaries at level ${reductionLevel}, batch ${batchNo}`,
+          remoteRunId: agent.remoteRunId,
+          usage: agent.usage,
+          result: agent.chunkAnalysis,
+        });
+        reduced.push({
+          ...agent.chunkAnalysis,
+          source_trace: mergeSourceTraces([
+            ...batch,
+            agent.chunkAnalysis,
+          ]),
+          ai_run_id: run.id,
+          remote_run_id: agent.remoteRunId,
+          generated_at: input.generatedAt,
+          chunk_id: batch[0]?.chunk_id,
+          chunk_no: batch[0]?.chunk_no,
+          reduction_level: reductionLevel,
+        });
+      }
+      globalSummaryInput = reduced;
+      if (input.taskId) {
+        await this.updateSourceAnalysisTask(input.taskId, {
+          status: "running",
+          progress: Math.min(92, 87 + reductionLevel),
+          resultSummaryJson: JSON.stringify({
+            phase: "global_summary_reduce",
+            source_id: input.source.id,
+            total_chunks: chunks.length,
+            ready_chunks: chunkAnalyses.length,
+            reduction_level: reductionLevel,
+            summary_batches: reduced.length,
+          }),
+        });
+      }
+    }
     const globalAgent = await this.dramaAgentService!.analyzeSourceFromChunks({
       userId: input.userId,
       dramaId: input.dramaId,
       dramaTitle: input.dramaTitle,
       sourceId: input.source.id,
       health: input.health,
-      chunkAnalyses,
+      chunkAnalyses: globalSummaryInput,
     });
     const run = await this.recordRemoteRun({
       userId: input.userId,
       dramaId: input.dramaId,
       skillId: "drama_source_analyzer",
       mode: "source_analysis",
-      userMessage: `Analyze drama source ${input.source.id} from ${chunkAnalyses.length} chunk(s)`,
+      userMessage: `Analyze drama source ${input.source.id} from ${chunkAnalyses.length} chunk(s) in ${globalSummaryInput.length} summary input(s)`,
       remoteRunId: globalAgent.remoteRunId,
       usage: globalAgent.usage,
       result: globalAgent.analysis,
@@ -4363,6 +4544,24 @@ export class DramaAiFirstService {
     const firstChapter = chapterIndex[0];
     const lastChapter = chapterIndex[chapterIndex.length - 1];
     const generatedAt = new Date().toISOString();
+    const preferredEpisodeCount = estimateTargetEpisodeCountFromSourceHealth(
+      input.health,
+    );
+    const minEpisodeCount = Math.max(
+      1,
+      Math.floor(preferredEpisodeCount * 0.75),
+    );
+    const maxEpisodeCount = Math.max(
+      preferredEpisodeCount,
+      Math.ceil(preferredEpisodeCount * 1.25),
+    );
+    const durationMinSeconds = 60;
+    const durationMaxSeconds = 90;
+    const recommendationTrace = createSourceTrace(
+      input.sourceId,
+      input.health,
+      0,
+    );
 
     return {
       theme: `${input.dramaTitle}的核心情绪与关系冲突`,
@@ -4374,10 +4573,35 @@ export class DramaAiFirstService {
       protagonist_goal: lastChapter?.brief
         ? `推动剧情抵达“${compactText(lastChapter.brief, 48)}”所代表的阶段性结果。`
         : "完成自我目标并解决核心冲突。",
-      target_episode_count: estimateTargetEpisodeCountFromSourceHealth(
-        input.health,
-      ),
-      episode_duration: "60-90 秒",
+      target_episode_count: preferredEpisodeCount,
+      episode_duration: `${durationMinSeconds}-${durationMaxSeconds} 秒`,
+      adaptation_mode: "faithful",
+      source_completeness: "uncertain",
+      major_beat_count: Math.max(1, chapterIndex.length * 2),
+      supported_duration_seconds: {
+        min: minEpisodeCount * durationMinSeconds,
+        max: maxEpisodeCount * durationMaxSeconds,
+      },
+      recommended_episode_count: {
+        min: minEpisodeCount,
+        preferred: preferredEpisodeCount,
+        max: maxEpisodeCount,
+      },
+      episode_duration_seconds: {
+        min: durationMinSeconds,
+        max: durationMaxSeconds,
+      },
+      recommendation_confidence: 0.2,
+      recommendation_basis: [
+        {
+          claim:
+            "本地规则仅依据源稿规模和章节索引给出粗略区间，必须在分集规划阶段复核。",
+          source_trace: recommendationTrace,
+        },
+      ],
+      expansion_notes: [
+        "本地规则无法判断故事是否完整，也无法可靠区分对白、动作与描写时长。",
+      ],
       relationship_map: characterNames.slice(0, 4).map((name, index) => {
         const trace = createSourceTrace(input.sourceId, input.health, index);
         if (index === 0) {

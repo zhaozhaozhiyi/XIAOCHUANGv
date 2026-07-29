@@ -142,7 +142,11 @@ export class TaskExecutionService {
     }
   }
 
-  async executeTaskById(taskId: number, workerId: string) {
+  async executeTaskById(
+    taskId: number,
+    workerId: string,
+    options: { retryOnFailure?: boolean } = {},
+  ) {
     const [task] = await this.databaseService.db
       .select()
       .from(tasks)
@@ -155,8 +159,20 @@ export class TaskExecutionService {
     try {
       return await this.executeTask(task, workerId)
     } catch (error) {
+      let automaticRetryPrepared = false
+      if (!isCanceledError(error) && options.retryOnFailure) {
+        automaticRetryPrepared = await this.taskDomainRegistry
+          .prepareAutomaticRetry(task)
+          .catch(() => false)
+      }
       if (isCanceledError(error)) {
         await this.markTaskCanceled(task)
+      } else if (automaticRetryPrepared) {
+        this.log(task, '任务执行失败，已恢复为排队状态等待自动重试', 'warn', {
+          domain_table: task.domainTable,
+          domain_id: task.domainId,
+          error: error instanceof Error ? error.message : 'task failed',
+        })
       } else {
         await this.markTaskFailed(task, error)
       }

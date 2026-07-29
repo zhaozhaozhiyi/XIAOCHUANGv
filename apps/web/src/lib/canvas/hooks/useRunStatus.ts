@@ -18,7 +18,13 @@
 import { useCallback, useEffect, useRef } from 'react'
 
 import { canvasApi } from '@/lib/canvas/api/canvas'
-import { useRuntimeStore } from '@/lib/canvas/store'
+import {
+  useEdgesStore,
+  useNodesStore,
+  useRuntimeStore,
+  type FlowEdge,
+  type FlowNode,
+} from '@/lib/canvas/store'
 import { scheduleProgressUpdate } from '@/lib/canvas/utils/progressBuffer'
 
 const POLL_INTERVAL_MS = 5_000
@@ -42,6 +48,36 @@ export function useRunStatus(canvasId: string | null): UseRunStatusReturn {
   const setNodeStates = useRuntimeStore((s) => s.setNodeStates)
   const setRunState = useRuntimeStore((s) => s.setRunState)
   const setRunProgress = useRuntimeStore((s) => s.setRunProgress)
+  const replaceNodes = useNodesStore((s) => s.replaceAll)
+  const replaceEdges = useEdgesStore((s) => s.replaceAll)
+
+  const refreshCanvas = useCallback(async (signal: AbortSignal) => {
+    if (!canvasId) return
+    const detail = await canvasApi.get(canvasId, { signal })
+    replaceNodes(detail.nodes.map((node) => ({
+      id: node.id,
+      type: node.type,
+      position: node.position,
+      width: node.width,
+      data: node.data,
+      hidden: node.hidden,
+    })) as FlowNode[])
+    replaceEdges(detail.edges.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: edge.source_port,
+      targetHandle: edge.target_port,
+      type: edge.edge_kind,
+      data: {
+        edge_kind: edge.edge_kind,
+        relation_type: edge.relation_type,
+        source_port: edge.source_port,
+        target_port: edge.target_port,
+        label: edge.label,
+      },
+    })) as FlowEdge[])
+  }, [canvasId, replaceEdges, replaceNodes])
 
   const stop = useCallback(() => {
     if (timerRef.current !== null) {
@@ -74,18 +110,19 @@ export function useRunStatus(canvasId: string | null): UseRunStatusReturn {
         eta_seconds: status.progress.eta_seconds,
       })
       const states = Object.values(status.node_states)
-      const hasFailed = states.some((s) => s.status === 'failed')
       const hasRunning = states.some(
         (s) => s.status === 'running' || s.status === 'queued',
       )
       const allDone =
         status.progress.total > 0 && status.progress.current === status.progress.total
-      if (hasFailed) {
+      if (status.state === 'failed') {
         setRunState('failed')
+        await refreshCanvas(ctrlRef.current.signal)
         onFailedRef.current?.()
         stop()
-      } else if (allDone && !hasRunning) {
+      } else if (status.state === 'completed' && allDone && !hasRunning) {
         setRunState('completed')
+        await refreshCanvas(ctrlRef.current.signal)
         onCompleteRef.current?.()
         stop()
       } else if (hasRunning) {
@@ -96,7 +133,7 @@ export function useRunStatus(canvasId: string | null): UseRunStatusReturn {
         // 静默
       }
     }
-  }, [canvasId, setNodeStates, setRunProgress, setRunState, stop])
+  }, [canvasId, refreshCanvas, setNodeStates, setRunProgress, setRunState, stop])
 
   const start = useCallback(
     (_rid: string, opts?: StartOpts) => {
@@ -110,7 +147,22 @@ export function useRunStatus(canvasId: string | null): UseRunStatusReturn {
     [setRunState, stop, tick],
   )
 
-  useEffect(() => stop, [stop])
+  useEffect(() => {
+    if (!canvasId) return stop
+    let cancelled = false
+
+    void canvasApi.runStatus(canvasId)
+      .then((status) => {
+        if (cancelled || status.state !== 'running' || !status.run_id) return
+        start(status.run_id)
+      })
+      .catch(() => undefined)
+
+    return () => {
+      cancelled = true
+      stop()
+    }
+  }, [canvasId, start, stop])
 
   return { start, stop }
 }

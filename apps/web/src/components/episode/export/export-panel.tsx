@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
 import { getAiErrorCopy } from '@/lib/ai-error-copy'
 import { episodeContinuityAPI } from '@/lib/api'
+import { staticUrl } from '@/lib/utils'
 
 export function ExportPanel() {
   const wb = useWorkbench()
@@ -19,6 +20,7 @@ export function ExportPanel() {
   const mergeTask = wb.episode ? wb.entityTasks[`episode-merge:${wb.episode.id}`] : null
   const failedMergeTask = mergeTask && ['failed', 'canceled'].includes(String(mergeTask.status || '')) ? mergeTask : null
   const isMergePending = isActiveWorkbenchTask(mergeTask) || (wb.mergeStatus as { status?: string } | null)?.status === 'pending'
+  const mergedMediaUrl = staticUrl(wb.mergeUrl)
   const fallbackAction = requiresEditRevision
     ? { label: '前往连续性', step: 'prod-continuity' }
     : totalShots === 0
@@ -67,14 +69,14 @@ export function ExportPanel() {
         {wb.mergeUrl ? (
           <>
             <video
-              src={wb.mergeUrl.startsWith('/') ? wb.mergeUrl : `/${wb.mergeUrl}`}
+              src={mergedMediaUrl}
               className="w-full rounded-xl border border-border shadow-shadow-lg"
               controls
               preload="metadata"
             />
             <div className="export-actions">
               <a
-                href={wb.mergeUrl.startsWith('/') ? wb.mergeUrl : `/${wb.mergeUrl}`}
+                href={mergedMediaUrl}
                 download
                 className="panel-btn panel-btn-primary export-download-link"
               >

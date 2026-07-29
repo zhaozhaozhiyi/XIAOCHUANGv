@@ -33,7 +33,7 @@ const POLL_MS = 800
 
 export function useRunPolling() {
   const timerRef = useRef<number | null>(null)
-  const watchingRef = useRef<string | null>(null)
+  const watchingRef = useRef(new Map<string, string | null>())
   const mergeNodeState = useRuntimeStore((s) => s.mergeNodeState)
   const clearPendingAction = useUiStore((s) => s.clearPendingAction)
 
@@ -42,7 +42,7 @@ export function useRunPolling() {
       window.clearTimeout(timerRef.current)
       timerRef.current = null
     }
-    watchingRef.current = null
+    watchingRef.current.clear()
   }, [])
 
   /** 拉一次完整 detail → 字段级 merge nodes（保留本地编辑）+ 全量替换 edges，让回填生效 */
@@ -89,6 +89,7 @@ export function useRunPolling() {
           relation_type: e.relation_type,
           source_port: e.source_port,
           target_port: e.target_port,
+          label: e.label,
         },
       }))
       useNodesStore.getState().replaceAll(flowNodes)
@@ -99,13 +100,13 @@ export function useRunPolling() {
   }, [])
 
   const start = useCallback(
-    (hiddenNodeId: string) => {
-      stop()
-      watchingRef.current = hiddenNodeId
+    (hiddenNodeId: string, runId?: string) => {
+      watchingRef.current.set(hiddenNodeId, runId ?? null)
+      if (timerRef.current !== null) return
 
       const poll = async () => {
         const canvasId = useCanvasStore.getState().canvasId
-        if (!canvasId || watchingRef.current !== hiddenNodeId) return
+        if (!canvasId || watchingRef.current.size === 0) return
         try {
           const status = await canvasApi.runStatus(canvasId)
           // 把全量 node_states merge 进 runtime（驱动 6 状态）
@@ -115,13 +116,22 @@ export function useRunPolling() {
               scheduleProgressUpdate(id, st.progress)
             }
           }
-          const own = status.node_states[hiddenNodeId]
-          if (own?.status === 'completed' || own?.status === 'failed') {
-            // 完成 → 拉一次完整画布让 sourceNode 数据回填
+          const settled = [...watchingRef.current].filter(([nodeId, watchedRunId]) => {
+            const own = status.node_states[nodeId]
+            return own?.status === 'completed'
+              || own?.status === 'failed'
+              || Boolean(watchedRunId && status.run_id && watchedRunId !== status.run_id)
+          }).map(([nodeId]) => nodeId)
+          if (settled.length > 0) {
+            // 每个任务完成后立即拉画布，不必等同批次的其他任务。
             await reloadCanvas()
+            settled.forEach((nodeId) => watchingRef.current.delete(nodeId))
             clearPendingAction()
-            stop()
-            return
+            if (watchingRef.current.size === 0) {
+              if (timerRef.current !== null) window.clearTimeout(timerRef.current)
+              timerRef.current = null
+              return
+            }
           }
         } catch {
           // 网络错暂忽略
@@ -131,7 +141,7 @@ export function useRunPolling() {
       }
       timerRef.current = window.setTimeout(poll, POLL_MS)
     },
-    [clearPendingAction, mergeNodeState, reloadCanvas, stop],
+    [clearPendingAction, mergeNodeState, reloadCanvas],
   )
 
   useEffect(() => stop, [stop])

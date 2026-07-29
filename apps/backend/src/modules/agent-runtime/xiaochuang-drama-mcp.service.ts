@@ -183,6 +183,16 @@ function integerOrNull(value: unknown) {
   return Number.isInteger(parsed) ? parsed : null;
 }
 
+function requiredPositiveIntegerRange(value: unknown, label: string) {
+  const raw = record(value);
+  const min = integerOrNull(raw.min);
+  const max = integerOrNull(raw.max);
+  if (!min || !max || min < 1 || max < min) {
+    throw new BadRequestException(`source_analysis_${label}_invalid`);
+  }
+  return { min, max };
+}
+
 function safeMetadataValue(value: unknown) {
   if (value == null) return null;
   if (typeof value === "string") return stringValue(value, 500);
@@ -1899,8 +1909,90 @@ export class XiaochuangDramaMcpService {
       );
     }
 
-    const targetEpisodeCount = integerOrNull(payload.target_episode_count);
-    const episodeDuration = nullableTextValue(payload.episode_duration);
+    const recommendationBasis = normalizeEvidence(
+      payload.recommendation_basis,
+    );
+    if (!recommendationBasis.length) {
+      throw new BadRequestException(
+        "source_analysis_recommendation_basis_required",
+      );
+    }
+    for (const item of recommendationBasis) {
+      if (!item.claim) {
+        throw new BadRequestException(
+          "source_analysis_recommendation_basis_claim_required",
+        );
+      }
+      this.validateSourceTraceScope(
+        sourceId,
+        availableChunkNumbers,
+        item.source_trace,
+        "source_analysis_recommendation_basis",
+      );
+      if (!item.source_trace.length) {
+        throw new BadRequestException(
+          "source_analysis_recommendation_basis_trace_required",
+        );
+      }
+    }
+
+    const adaptationMode = textValue(payload.adaptation_mode);
+    if (
+      !["faithful", "moderate_expansion", "continuation"].includes(
+        adaptationMode,
+      )
+    ) {
+      throw new BadRequestException("source_analysis_adaptation_mode_invalid");
+    }
+    const sourceCompleteness = textValue(payload.source_completeness);
+    if (!["complete", "incomplete", "uncertain"].includes(sourceCompleteness)) {
+      throw new BadRequestException(
+        "source_analysis_source_completeness_invalid",
+      );
+    }
+    const majorBeatCount = integerOrNull(payload.major_beat_count);
+    if (!majorBeatCount || majorBeatCount < 1) {
+      throw new BadRequestException("source_analysis_major_beat_count_invalid");
+    }
+    const supportedDurationSeconds = requiredPositiveIntegerRange(
+      payload.supported_duration_seconds,
+      "supported_duration_range",
+    );
+    const episodeDurationSeconds = requiredPositiveIntegerRange(
+      payload.episode_duration_seconds,
+      "episode_duration_range",
+    );
+    const recommendedEpisodeRange = record(payload.recommended_episode_count);
+    const recommendedEpisodeCount = {
+      ...requiredPositiveIntegerRange(
+        recommendedEpisodeRange,
+        "recommended_episode_range",
+      ),
+      preferred: integerOrNull(recommendedEpisodeRange.preferred),
+    };
+    if (
+      !recommendedEpisodeCount.preferred ||
+      recommendedEpisodeCount.preferred < recommendedEpisodeCount.min ||
+      recommendedEpisodeCount.preferred > recommendedEpisodeCount.max
+    ) {
+      throw new BadRequestException(
+        "source_analysis_recommended_episode_preferred_invalid",
+      );
+    }
+    const recommendationConfidence = Number(payload.recommendation_confidence);
+    if (
+      !Number.isFinite(recommendationConfidence) ||
+      recommendationConfidence < 0 ||
+      recommendationConfidence > 1
+    ) {
+      throw new BadRequestException(
+        "source_analysis_recommendation_confidence_invalid",
+      );
+    }
+    const targetEpisodeCount = recommendedEpisodeCount.preferred;
+    const episodeDuration = episodeDurationSeconds.min === episodeDurationSeconds.max
+      ? `${episodeDurationSeconds.min} 秒`
+      : `${episodeDurationSeconds.min}-${episodeDurationSeconds.max} 秒`;
     const analysis = {
       theme: textValue(payload.theme),
       core_conflict: textValue(payload.core_conflict),
@@ -1909,6 +2001,15 @@ export class XiaochuangDramaMcpService {
       protagonist_goal: textValue(payload.protagonist_goal),
       target_episode_count: targetEpisodeCount,
       episode_duration: episodeDuration,
+      adaptation_mode: adaptationMode,
+      source_completeness: sourceCompleteness,
+      major_beat_count: majorBeatCount,
+      supported_duration_seconds: supportedDurationSeconds,
+      recommended_episode_count: recommendedEpisodeCount,
+      episode_duration_seconds: episodeDurationSeconds,
+      recommendation_confidence: recommendationConfidence,
+      recommendation_basis: recommendationBasis,
+      expansion_notes: stringArray(payload.expansion_notes),
       relationship_map: this.normalizeRelationshipMap(
         payload.relationship_map,
         sourceId,
@@ -1935,16 +2036,6 @@ export class XiaochuangDramaMcpService {
       throw new BadRequestException(
         "source_analysis_protagonist_goal_required",
       );
-    if (!targetEpisodeCount || targetEpisodeCount < 1) {
-      throw new BadRequestException(
-        "source_analysis_target_episode_count_required",
-      );
-    }
-    if (!episodeDuration) {
-      throw new BadRequestException(
-        "source_analysis_episode_duration_required",
-      );
-    }
     if (!analysis.evidence.length) {
       throw new BadRequestException("source_analysis_evidence_required");
     }

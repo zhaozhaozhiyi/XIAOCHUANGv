@@ -9,102 +9,7 @@
  */
 
 import { HttpResponse, http } from 'msw'
-
-interface PipelineCharacter {
-  name: string
-  role?: string
-  description?: string
-}
-
-interface PipelineScene {
-  location: string
-  time?: string
-  description?: string
-}
-
-interface PipelineShot {
-  title: string
-  shotType?: string
-  cameraMove?: string
-  description?: string
-  duration?: number
-}
-
-interface PipelineResult {
-  outline: string
-  characters: PipelineCharacter[]
-  scenes: PipelineScene[]
-  shots: PipelineShot[]
-}
-
-const SHOT_TYPES = ['全景', '中景', '近景', '远景']
-const CAMERA_MOVES = ['推', '跟', '摇', '固定']
-
-function splitSentences(text: string): string[] {
-  return text
-    .replace(/\r/g, '')
-    .split(/(?<=[。！？!?])|\n+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-}
-
-function extractCharacters(text: string): PipelineCharacter[] {
-  const banned = new Set(['旁白', '画外音', '字幕', '音效', '系统'])
-  const matches = text.matchAll(/([^\s，,。！？!?：:()（）]{2,8})/g)
-  const seen = new Set<string>()
-  const result: PipelineCharacter[] = []
-  for (const match of matches) {
-    const name = (match[1] || '').trim()
-    if (!name || banned.has(name) || seen.has(name)) continue
-    if (/^(一个|一位|这家|两人|决定|遇到|深夜|店员)/.test(name)) continue
-    seen.add(name)
-    result.push({ name, description: '由文本自动识别，待细化' })
-    if (result.length >= 4) break
-  }
-  return result
-}
-
-function extractScenes(text: string): PipelineScene[] {
-  const scenes: PipelineScene[] = []
-  if (/便利店|超市|商店/.test(text)) {
-    scenes.push({ location: '便利店', time: '深夜', description: '主要发生地' })
-  }
-  if (/城市|街道|夜景/.test(text)) {
-    scenes.push({ location: '城市街道', time: '夜晚', description: '外景建立' })
-  }
-  if (/室内|客厅|房间/.test(text)) {
-    scenes.push({ location: '室内', time: '夜', description: '内景' })
-  }
-  if (!scenes.length) {
-    scenes.push({ location: '主要场景', description: '由文本推断，待细化' })
-  }
-  return scenes.slice(0, 4)
-}
-
-function buildHeuristicResult(text: string): PipelineResult {
-  const sentences = splitSentences(text)
-  const total = Math.min(8, Math.max(3, Math.ceil(sentences.length / 2) || 3))
-  const perShot = Math.max(1, Math.ceil(sentences.length / total))
-
-  const shots: PipelineShot[] = []
-  for (let i = 0; i < total; i += 1) {
-    const chunk = sentences.slice(i * perShot, (i + 1) * perShot).join(' ').trim()
-    shots.push({
-      title: chunk ? chunk.slice(0, 12) : `分镜 ${i + 1}`,
-      shotType: SHOT_TYPES[i % SHOT_TYPES.length],
-      cameraMove: CAMERA_MOVES[i % CAMERA_MOVES.length],
-      description: chunk || `第 ${i + 1} 段剧情`,
-      duration: 4,
-    })
-  }
-
-  return {
-    outline: text.slice(0, 120),
-    characters: extractCharacters(text),
-    scenes: extractScenes(text),
-    shots,
-  }
-}
+import { buildLocalStoryboardResult } from '@/lib/canvas/api/pipeline'
 
 export const aiHandlers = [
   http.post('/api/v1/ai/runs', async ({ request }) => {
@@ -130,7 +35,7 @@ export const aiHandlers = [
     // 模拟 LLM 延迟
     await new Promise((r) => setTimeout(r, 600))
 
-    const result = buildHeuristicResult(message)
+    const result = buildLocalStoryboardResult(message)
     return HttpResponse.json({
       type: 'done',
       text: JSON.stringify(result),

@@ -1299,7 +1299,8 @@ export class DramasController {
             eq(canvases.sourceDramaId, String(dramaId)),
             isNull(canvases.deletedAt),
           ),
-        ),
+        )
+        .orderBy(desc(canvases.updatedAt)),
       this.databaseService.db
         .select()
         .from(videoMerges)
@@ -1647,6 +1648,7 @@ export class DramasController {
         id: canvas.id,
         title: canvas.title,
         source: canvas.source,
+        source_episode_id: canvas.sourceEpisodeId,
         updated_at: canvas.updatedAt,
         href: `/drama/${dramaId}/canvas/${canvas.id}`,
       })),
@@ -2054,10 +2056,30 @@ export class DramasController {
       // Hard-delete video merges (no deletedAt)
       await tx.delete(videoMerges).where(eq(videoMerges.dramaId, dramaId));
 
-      // Hard-delete image generations (no deletedAt)
-      await tx
-        .delete(imageGenerations)
+      // Hard-delete image generations (no deletedAt). Soft-deleted assets and
+      // video generations still enforce their foreign keys, so unlink every
+      // dependent row before removing the generation records.
+      const imageGenerationRows = await tx
+        .select({ id: imageGenerations.id })
+        .from(imageGenerations)
         .where(eq(imageGenerations.dramaId, dramaId));
+      const imageGenerationIds = imageGenerationRows.map(
+        (generation) => generation.id,
+      );
+
+      if (imageGenerationIds.length) {
+        await tx
+          .update(assets)
+          .set({ imageGenerationId: null, updatedAt: now })
+          .where(inArray(assets.imageGenerationId, imageGenerationIds));
+        await tx
+          .update(videoGenerations)
+          .set({ imageGenId: null, updatedAt: now })
+          .where(inArray(videoGenerations.imageGenId, imageGenerationIds));
+        await tx
+          .delete(imageGenerations)
+          .where(inArray(imageGenerations.id, imageGenerationIds));
+      }
 
       // 8. Soft-delete canvases linked via source_drama_id
       await tx

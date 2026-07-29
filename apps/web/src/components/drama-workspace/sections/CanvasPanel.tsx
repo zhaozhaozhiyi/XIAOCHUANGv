@@ -25,8 +25,11 @@ export function CanvasPanel({ dramaId, data }: { dramaId: number; data: DramaWor
   const effectiveContext = {
     ...routeContext,
     episodeId: selectedEpisode?.id ?? routeContext.episodeId,
-    episodeNumber: sourceEpisode?.episode_number ?? selectedEpisode?.episode_number ?? routeContext.episodeNumber,
+    episodeNumber: selectedEpisode?.episode_number ?? sourceEpisode?.episode_number ?? routeContext.episodeNumber,
   }
+  const sortedCanvases = useMemo(() => [...data.canvases].sort((left, right) => (
+    new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()
+  )), [data.canvases])
 
   const createBlank = async () => {
     setCreatingCanvas(true)
@@ -37,7 +40,7 @@ export function CanvasPanel({ dramaId, data }: { dramaId: number; data: DramaWor
         scope: 'project',
         mode: 'blank',
       })
-      router.push(getDramaCanvasHref(dramaId, canvas.id, effectiveContext))
+      router.push(getDramaCanvasHref(dramaId, canvas.id))
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -73,15 +76,10 @@ export function CanvasPanel({ dramaId, data }: { dramaId: number; data: DramaWor
       </div>
 
       <div className="drama-canvas-empty-actions">
-        <Button type="button" onClick={() => void createBlank()} disabled={creatingCanvas}>
-          {creatingCanvas ? <Loader2 size={16} className="animate-spin" /> : <Network size={16} />}
-          新建空白画布
-        </Button>
-
         {data.episodes.length ? (
           <div className="drama-canvas-from-episode">
             <BaseSelect
-              className="min-w-[220px] [&_button]:h-10 [&_button]:rounded-[var(--radius-xs)]"
+              className="drama-canvas-episode-select [&_button]:h-10 [&_button]:rounded-[var(--radius-xs)]"
               value={selectedEpisodeId ? String(selectedEpisodeId) : ''}
               onValueChange={(value) => setSelectedEpisodeId(Number(value))}
               options={data.episodes.map((episode) => ({
@@ -89,27 +87,38 @@ export function CanvasPanel({ dramaId, data }: { dramaId: number; data: DramaWor
                 value: String(episode.id),
               }))}
             />
-            <Button type="button" variant="outline" onClick={() => void createFromEpisode()} disabled={!selectedEpisodeId || creatingCanvas}>
+            <Button type="button" onClick={() => void createFromEpisode()} disabled={!selectedEpisodeId || creatingCanvas}>
               {creatingCanvas ? <Loader2 size={15} className="animate-spin" /> : <Clapperboard size={15} />}
-              从当前剧集创建
+              {selectedEpisode ? `使用第 ${selectedEpisode.episode_number} 集创建画布` : '使用剧集创建画布'}
             </Button>
           </div>
         ) : null}
+
+        <Button
+          type="button"
+          variant="outline"
+          className="drama-canvas-create-blank"
+          onClick={() => void createBlank()}
+          disabled={creatingCanvas}
+        >
+          {creatingCanvas ? <Loader2 size={16} className="animate-spin" /> : <Network size={16} />}
+          创建无剧情空白画布
+        </Button>
       </div>
 
       {actionError ? <div className="drama-inline-error" role="alert">{actionError}</div> : null}
 
-      {data.canvases.length ? (
+      {sortedCanvases.length ? (
         <div className="drama-canvas-list" aria-label="已有画布">
-          <div className="drama-canvas-list-heading"><span>已有画布</span><small>{data.canvases.length} 个</small></div>
-          {data.canvases.map((canvas) => (
+          <div className="drama-canvas-list-heading"><span>已有画布</span><small>{sortedCanvases.length} 个</small></div>
+          {sortedCanvases.map((canvas) => (
             <Link
               key={canvas.id}
               href={getDramaCanvasHref(dramaId, canvas.id, effectiveContext)}
               className="drama-canvas-list-row"
             >
               <Network size={16} />
-              <span><strong>{canvas.title}</strong><small>{canvas.source === 'from-drama' ? '剧集画布' : '空白画布'} · {new Date(canvas.updated_at).toLocaleDateString('zh-CN')}</small></span>
+              <span><strong>{canvas.title}</strong><small>{canvas.source_episode_id ? '剧集画布' : '空白画布'} · {new Date(canvas.updated_at).toLocaleDateString('zh-CN')}</small></span>
               <ArrowUpRight size={15} />
             </Link>
           ))}

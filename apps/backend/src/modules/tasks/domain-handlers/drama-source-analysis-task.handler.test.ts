@@ -72,7 +72,9 @@ function createMemoryDatabase(
       insert: vi.fn((table: unknown) => ({
         values: vi.fn((values: Record<string, unknown>) => {
           inserts.push({ table, values });
-          return Promise.resolve();
+          return {
+            onConflictDoNothing: vi.fn(() => Promise.resolve()),
+          };
         }),
       })),
     },

@@ -560,7 +560,7 @@ export function DramaEpisodeWorkbenchPage({
         </div>
 
         <div className="studio-topbar-side">
-          <button className="studio-btn studio-btn-primary" onClick={goContinue}>
+          <button type="button" className="studio-btn studio-btn-primary" onClick={goContinue}>
             {continueAction.label}
             <ArrowRight size={14} aria-hidden="true" />
           </button>

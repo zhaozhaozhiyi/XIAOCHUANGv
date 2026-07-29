@@ -20,6 +20,8 @@ export const storyboardNode: CanvasNodeDefinition = {
   icon: '🎬',
   description: '一个镜头的描述、画面、元数据',
   inputs: [
+    { name: 'character', label: '角色参考', type: 'character', required: false, multiple: true },
+    { name: 'scene', label: '场景参考', type: 'scene', required: false },
     { name: 'image', label: '画面', type: 'image', required: false, multiple: true },
     { name: 'audio', label: '配音', type: 'audio', required: false },
     { name: 'video', label: '镜头视频', type: 'video', required: false },
